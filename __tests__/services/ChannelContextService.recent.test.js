@@ -81,3 +81,40 @@ describe('buildRecentContext', () => {
     expect(out).not.toBe('');
   });
 });
+
+describe('getRecentMessagesRaw', () => {
+  let svc;
+
+  beforeEach(() => {
+    svc = Object.create(ChannelContextService.prototype);
+    svc.channelBuffers = new Map();
+  });
+
+  it('returns raw non-bot message objects from the in-memory buffer', () => {
+    svc.channelBuffers.set('c1', {
+      messages: {
+        getRecent: jest.fn(() => [
+          { authorName: 'anna', content: 'hi', isBot: false },
+          { authorName: 'bot', content: 'beep', isBot: true },
+          { authorName: 'bob', content: 'deploy?', isBot: false },
+        ]),
+      },
+    });
+    const out = svc.getRecentMessagesRaw('c1');
+    expect(out).toEqual([
+      { authorName: 'anna', content: 'hi', isBot: false },
+      { authorName: 'bob', content: 'deploy?', isBot: false },
+    ]);
+  });
+
+  it('returns [] when the channel has no buffer', () => {
+    expect(svc.getRecentMessagesRaw('missing')).toEqual([]);
+  });
+
+  it('passes the limit through to the buffer', () => {
+    const getRecent = jest.fn(() => []);
+    svc.channelBuffers.set('c1', { messages: { getRecent } });
+    svc.getRecentMessagesRaw('c1', 5);
+    expect(getRecent).toHaveBeenCalledWith(5);
+  });
+});

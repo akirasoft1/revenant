@@ -344,6 +344,23 @@ class ChannelContextService {
   }
 
   /**
+   * Get recent messages as raw buffered message objects (NOT a formatted string).
+   * Mirrors getRecentContext's source + bot-filtering, but returns the underlying
+   * objects so callers (e.g. the v2 recall path) can read raw content/authorName
+   * and compute content hashes for cross-block exclusion.
+   * @param {string} channelId - Channel ID
+   * @param {number} limit - Number of messages to return
+   * @returns {Array<{authorName: string, content: string, isBot: boolean}>}
+   */
+  getRecentMessagesRaw(channelId, limit = 10) {
+    const buffer = this.channelBuffers.get(channelId);
+    if (!buffer) return [];
+
+    const messages = buffer.messages.getRecent(limit);
+    return messages.filter(m => !m.isBot);
+  }
+
+  /**
    * Get buffer size for a channel
    * @param {string} channelId - Channel ID
    * @returns {number} Number of messages in buffer
