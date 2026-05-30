@@ -25,4 +25,18 @@ function dedupeCandidates(candidates) {
   return [...byHash.values()];
 }
 
-module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates };
+function decayFactor(daysSinceAccess, halfLifeDays) {
+  return Math.exp(-(Math.LN2 / halfLifeDays) * Math.max(0, daysSinceAccess));
+}
+
+function scoreCandidate(candidate, opts, now = new Date()) {
+  const w = (opts.sourceWeights && opts.sourceWeights[candidate.source]) || 1.0;
+  const ref = candidate.lastAccessedAtUtc || candidate.timestamp;
+  const days = ref ? Math.max(0, (now.getTime() - new Date(ref).getTime()) / 86400000) : 0;
+  const decay = decayFactor(days, opts.halfLifeDays);
+  const accessBoost = 1 + opts.accessBoostAlpha * Math.log(1 + (candidate.accessCount || 0));
+  const importance = typeof candidate.importance === 'number' ? candidate.importance : 0.5;
+  return w * (candidate.similarity || 0) * decay * accessBoost * importance;
+}
+
+module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates, decayFactor, scoreCandidate };

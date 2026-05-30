@@ -1,6 +1,7 @@
 // __tests__/services/recall/ranking.test.js
 const { normalizeText, contentHash, normalizeSimilarity } = require('../../../services/recall/ranking');
 const { dedupeCandidates } = require('../../../services/recall/ranking');
+const { decayFactor, scoreCandidate } = require('../../../services/recall/ranking');
 
 describe('ranking: hashing & normalization', () => {
   it('normalizeText lowercases and collapses whitespace', () => {
@@ -30,5 +31,32 @@ describe('ranking: dedupe', () => {
     expect(out).toHaveLength(2);
     const kept = out.find(c => c.contentHash === 'h1');
     expect(kept.similarity).toBe(0.9);
+  });
+});
+
+describe('ranking: scoring', () => {
+  const weights = { 'mem0:explicit': 1.3, 'mem0:personal': 1.0, 'channel:semantic': 0.8 };
+  const opts = { sourceWeights: weights, halfLifeDays: 14, accessBoostAlpha: 0.1 };
+  const now = new Date('2026-05-30T00:00:00Z');
+
+  it('decayFactor halves at the half-life', () => {
+    expect(decayFactor(0, 14)).toBeCloseTo(1);
+    expect(decayFactor(14, 14)).toBeCloseTo(0.5);
+  });
+
+  it('recent + high-similarity outranks old + low', () => {
+    const fresh = { source: 'mem0:personal', similarity: 0.9, importance: 0.5, accessCount: 0,
+      lastAccessedAtUtc: '2026-05-29T00:00:00Z', timestamp: null };
+    const stale = { source: 'mem0:personal', similarity: 0.5, importance: 0.5, accessCount: 0,
+      lastAccessedAtUtc: '2026-01-01T00:00:00Z', timestamp: null };
+    expect(scoreCandidate(fresh, opts, now)).toBeGreaterThan(scoreCandidate(stale, opts, now));
+  });
+
+  it('source weight and access count both raise the score', () => {
+    const base = { source: 'channel:semantic', similarity: 0.6, importance: 0.5, accessCount: 0, lastAccessedAtUtc: null, timestamp: null };
+    const explicit = { ...base, source: 'mem0:explicit' };
+    const accessed = { ...base, accessCount: 10 };
+    expect(scoreCandidate(explicit, opts, now)).toBeGreaterThan(scoreCandidate(base, opts, now));
+    expect(scoreCandidate(accessed, opts, now)).toBeGreaterThan(scoreCandidate(base, opts, now));
   });
 });
