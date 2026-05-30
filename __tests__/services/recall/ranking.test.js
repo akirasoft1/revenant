@@ -3,6 +3,7 @@ const { normalizeText, contentHash, normalizeSimilarity } = require('../../../se
 const { dedupeCandidates } = require('../../../services/recall/ranking');
 const { decayFactor, scoreCandidate } = require('../../../services/recall/ranking');
 const { enrichWithLedger } = require('../../../services/recall/ranking');
+const { formatLine, formatMemoryBlock, rankAndBound } = require('../../../services/recall/ranking');
 
 describe('ranking: hashing & normalization', () => {
   it('normalizeText lowercases and collapses whitespace', () => {
@@ -81,5 +82,44 @@ describe('ranking: enrichWithLedger', () => {
     expect(p.accessCount).toBe(0);
     expect(p.lastAccessedAtUtc).toBeNull();
     expect(e.importance).toBe(0.7);
+  });
+});
+
+describe('ranking: formatting & bounding', () => {
+  const baseOpts = {
+    maxItems: 2, tokenBudget: 1000,
+    sourceWeights: { 'mem0:explicit': 1.3, 'mem0:personal': 1.0 },
+    halfLifeDays: 14, accessBoostAlpha: 0.1,
+    countTokens: (s) => s.split(/\s+/).length, // fake tokenizer
+    now: new Date('2026-05-30T00:00:00Z'),
+  };
+
+  it('formatLine renders provenance prefix', () => {
+    expect(formatLine({ provenance: { tag: 'history', when: '2026-05-18', who: '@anna' }, text: 'hi' }))
+      .toBe('[history · 2026-05-18 · @anna] hi');
+    expect(formatLine({ provenance: { tag: 'explicit' }, text: 'x' })).toBe('[explicit] x');
+  });
+
+  it('formatMemoryBlock returns empty string for no candidates', () => {
+    expect(formatMemoryBlock([])).toBe('');
+  });
+
+  it('rankAndBound caps to maxItems, highest score first', () => {
+    const cands = [
+      { key: 'a', source: 'mem0:personal', similarity: 0.4, importance: 0.5, accessCount: 0, provenance: { tag: 'fact' }, text: 'low' },
+      { key: 'b', source: 'mem0:explicit', similarity: 0.9, importance: 0.7, accessCount: 0, provenance: { tag: 'explicit' }, text: 'high' },
+      { key: 'c', source: 'mem0:personal', similarity: 0.6, importance: 0.5, accessCount: 0, provenance: { tag: 'fact' }, text: 'mid' },
+    ];
+    const out = rankAndBound(cands, baseOpts);
+    expect(out).toHaveLength(2);
+    expect(out[0].key).toBe('b');
+  });
+
+  it('rankAndBound respects the token budget', () => {
+    const tight = { ...baseOpts, maxItems: 10, tokenBudget: 1 };
+    const out = rankAndBound([
+      { key: 'a', source: 'mem0:personal', similarity: 0.9, importance: 0.5, accessCount: 0, provenance: { tag: 'fact' }, text: 'too many words here' },
+    ], tight);
+    expect(out).toHaveLength(0);
   });
 });

@@ -1,5 +1,6 @@
 // services/recall/ranking.js
 const crypto = require('crypto');
+const { countTokens } = require('../../utils/tokenCounter');
 
 function normalizeText(text) {
   return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -50,4 +51,37 @@ function enrichWithLedger(candidates, ledgerByKey, seeds) {
   });
 }
 
-module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates, decayFactor, scoreCandidate, enrichWithLedger };
+function formatLine(candidate) {
+  const p = candidate.provenance || {};
+  let tag = p.tag || candidate.type || 'memory';
+  if (p.when) tag += ` · ${p.when}`;
+  if (p.who) tag += ` · ${p.who}`;
+  return `[${tag}] ${candidate.text}`;
+}
+
+function formatMemoryBlock(selected) {
+  if (!selected || selected.length === 0) return '';
+  const lines = selected.map(formatLine).join('\n');
+  return `\n\n## Memory Context\n${lines}`;
+}
+
+function rankAndBound(candidates, opts) {
+  const now = opts.now || new Date();
+  const count = opts.countTokens || countTokens;
+  const scored = candidates
+    .map((c) => ({ ...c, score: scoreCandidate(c, opts, now) }))
+    .sort((a, b) => b.score - a.score);
+
+  const selected = [];
+  let tokens = 0;
+  for (const c of scored) {
+    if (selected.length >= opts.maxItems) break;
+    const lineTokens = count(formatLine(c));
+    if (tokens + lineTokens > opts.tokenBudget) continue;
+    selected.push(c);
+    tokens += lineTokens;
+  }
+  return selected;
+}
+
+module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates, decayFactor, scoreCandidate, enrichWithLedger, formatLine, formatMemoryBlock, rankAndBound };
