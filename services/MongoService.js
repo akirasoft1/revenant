@@ -64,6 +64,9 @@ class MongoService {
             this.db.collection('recall_ledger').createIndex(
               { expiresAt: 1 }
             ).catch(err => logger.debug(`Index creation (recall_ledger.expiresAt): ${err.message}`));
+            this.db.collection('recall_ledger').createIndex(
+              { contentHash: 1 }
+            ).catch(err => logger.debug(`Index creation (recall_ledger.contentHash): ${err.message}`));
             this.db.collection('recall_comparisons').createIndex(
               { ts: 1 }
             ).catch(err => logger.debug(`Index creation (recall_comparisons): ${err.message}`));

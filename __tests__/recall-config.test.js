@@ -17,6 +17,7 @@ describe('recall config', () => {
     expect(config.recall.sourceWeights['mem0:explicit']).toBeGreaterThan(
       config.recall.sourceWeights['channel:semantic']
     );
+    expect(config.recall.promptMaxTokens).toBe(4000);
   });
 
   it('reads overrides from env', () => {

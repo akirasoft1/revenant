@@ -274,7 +274,10 @@ ${context}`;
       scope: { userId: user.id, channelId, personalityId },
       oldBlock: `${oldCtx.memoryContext || ''}${oldCtx.sharedContext || ''}`,
       newBlock: newCtx.memoryContext || '',
+      // oldKeys intentionally omitted: the legacy path produces formatted strings,
+      // not structured candidate keys — synthesizing them would be misleading.
       newKeys: (newCtx.recallDebug?.candidates || []).map((c) => c.key),
+      weights: this.config?.recall?.sourceWeights || null,
       strategy: this.config?.recall?.queryStrategy || null,
       ts: new Date(),
     });

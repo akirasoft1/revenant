@@ -502,6 +502,13 @@ class DiscordBot {
         logger.info('Starting Voice Profile service...');
         await this.voiceProfileService.start();
       }
+
+      // Periodically prune expired recall_ledger rows (best-effort, non-blocking)
+      this.mongoService.pruneRecallLedger().catch(() => {});
+      const recallPruneTimer = setInterval(() => {
+        this.mongoService.pruneRecallLedger().catch(() => {});
+      }, 24 * 60 * 60 * 1000);
+      if (recallPruneTimer.unref) recallPruneTimer.unref();
     });
 
     this.client.on('messageReactionAdd', async (reaction, user) => {
