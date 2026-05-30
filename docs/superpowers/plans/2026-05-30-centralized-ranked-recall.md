@@ -712,7 +712,8 @@ describe('recall adapters', () => {
   });
 
   it('channelFactsAdapter normalizes channel facts', async () => {
-    const svc = { getChannelFacts: jest.fn().mockResolvedValue([{ id: '9', memory: 'toaster = build-01' }]) };
+    // NOTE: mock uses getChannelFactsRaw (not getChannelFacts — the real getChannelFacts returns a formatted string)
+    const svc = { getChannelFactsRaw: jest.fn().mockResolvedValue([{ id: '9', memory: 'toaster = build-01' }]) };
     const [c] = await adapters.channelFactsAdapter(svc, { channelId: 'c' });
     expect(c).toMatchObject({ key: 'channel:facts:9', source: 'channel:facts', type: 'channel-fact', text: 'toaster = build-01' });
     expect(c.provenance.tag).toBe('channel');
@@ -726,6 +727,10 @@ Run: `npm test -- --testPathPatterns="recall/adapters"`
 Expected: FAIL — `Cannot find module '.../adapters'`
 
 - [ ] **Step 3: Create the module**
+
+> **Note:** `ChannelContextService.getChannelFacts()` returns a pre-formatted string for the legacy prompt path.
+> `channelFactsAdapter` must call `getChannelFactsRaw()` instead — a structured accessor added to `ChannelContextService`
+> that returns the raw Mem0 results array (`{id, memory, ...}`). See `getChannelFactsRaw` in `services/ChannelContextService.js`.
 
 ```js
 // services/recall/adapters.js
@@ -796,10 +801,12 @@ async function channelSemanticAdapter(channelContextService, { query, channelId,
   } catch (e) { return []; }
 }
 
+// NOTE: calls getChannelFactsRaw (not getChannelFacts) — getChannelFacts returns a pre-formatted string,
+// while getChannelFactsRaw returns the raw Mem0 results array needed for structured recall.
 async function channelFactsAdapter(channelContextService, { channelId }) {
-  if (!channelContextService || !channelContextService.getChannelFacts) return [];
+  if (!channelContextService || !channelContextService.getChannelFactsRaw) return [];
   try {
-    const facts = await channelContextService.getChannelFacts(channelId);
+    const facts = await channelContextService.getChannelFactsRaw(channelId);
     return (facts || []).map((it) => mem0Candidate(it, 'channel:facts', 'channel-fact', 'channel'));
   } catch (e) { return []; }
 }

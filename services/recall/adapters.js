@@ -67,9 +67,9 @@ async function channelSemanticAdapter(channelContextService, { query, channelId,
 }
 
 async function channelFactsAdapter(channelContextService, { channelId }) {
-  if (!channelContextService || !channelContextService.getChannelFacts) return [];
+  if (!channelContextService || !channelContextService.getChannelFactsRaw) return [];
   try {
-    const facts = await channelContextService.getChannelFacts(channelId);
+    const facts = await channelContextService.getChannelFactsRaw(channelId);
     return (facts || []).map((it) => mem0Candidate(it, 'channel:facts', 'channel-fact', 'channel'));
   } catch (e) { return []; }
 }

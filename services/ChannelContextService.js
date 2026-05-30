@@ -784,6 +784,24 @@ class ChannelContextService {
     }
   }
 
+  /**
+   * Get channel-level facts from Mem0 as raw memory objects ({id, memory, ...}),
+   * for structured consumers like RecallService. getChannelFacts() returns a
+   * preformatted string for the legacy prompt path; this returns the array.
+   * @param {string} channelId
+   * @returns {Promise<Array>} raw Mem0 result items, or [] when unavailable
+   */
+  async getChannelFactsRaw(channelId) {
+    if (!this.mem0Service?.isEnabled()) return [];
+    try {
+      const result = await this.mem0Service.getUserMemories(`channel:${channelId}`, { limit: 5 });
+      return (result && result.results) ? result.results : [];
+    } catch (error) {
+      logger.debug(`Error getting raw channel facts: ${error.message}`);
+      return [];
+    }
+  }
+
   // ========== Hybrid Context Building ==========
 
   /**

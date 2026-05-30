@@ -37,9 +37,26 @@ describe('recall adapters', () => {
   });
 
   it('channelFactsAdapter normalizes channel facts', async () => {
-    const svc = { getChannelFacts: jest.fn().mockResolvedValue([{ id: '9', memory: 'toaster = build-01' }]) };
+    const svc = { getChannelFactsRaw: jest.fn().mockResolvedValue([{ id: '9', memory: 'toaster = build-01' }]) };
     const [c] = await adapters.channelFactsAdapter(svc, { channelId: 'c' });
     expect(c).toMatchObject({ key: 'channel:facts:9', source: 'channel:facts', type: 'channel-fact', text: 'toaster = build-01' });
     expect(c.provenance.tag).toBe('channel');
+  });
+
+  it('channelFactsAdapter returns [] when service has no getChannelFactsRaw', async () => {
+    // Simulates the old service object (only has getChannelFacts returning a string)
+    const legacySvc = { getChannelFacts: jest.fn().mockResolvedValue('- toaster = build-01') };
+    expect(await adapters.channelFactsAdapter(legacySvc, { channelId: 'c' })).toEqual([]);
+  });
+
+  it('mem0ExplicitAdapter calls searchMemories with personalityId explicit_memory and maps to mem0:explicit', async () => {
+    const mem0 = {
+      isEnabled: () => true,
+      searchMemories: jest.fn().mockResolvedValue({ results: [{ id: '5', memory: 'prefers dark mode', score: 0.75 }] }),
+    };
+    const out = await adapters.mem0ExplicitAdapter(mem0, { query: 'q', userId: 'u', limit: 5 });
+    expect(mem0.searchMemories).toHaveBeenCalledWith('q', 'u', { personalityId: 'explicit_memory', limit: 5 });
+    expect(out[0]).toMatchObject({ key: 'mem0:explicit:5', source: 'mem0:explicit', type: 'fact', text: 'prefers dark mode' });
+    expect(out[0].provenance.tag).toBe('explicit');
   });
 });
