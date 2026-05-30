@@ -855,6 +855,34 @@ class ChannelContextService {
     }
   }
 
+  /**
+   * Build ONLY the participant list + recent in-memory buffer for a channel.
+   * No semantic hits, no channel facts. Used by the v2 recall path, which
+   * sources semantic/fact recall through RecallService instead.
+   *
+   * Accessors used (matching buildHybridContext):
+   *   getParticipantContext(channelId) → formatted string
+   *   getRecentContext(channelId)      → formatted string ("[author]: content\n...")
+   *
+   * @param {string} channelId
+   * @returns {Promise<string>} formatted block, or '' when there is nothing
+   */
+  async buildRecentContext(channelId) {
+    const participantContext = this.getParticipantContext(channelId);
+    const recent = this.getRecentContext(channelId);
+
+    if (!participantContext && !recent) return '';
+
+    const parts = [];
+    if (participantContext) {
+      parts.push(participantContext);
+    }
+    if (recent) {
+      parts.push(`Recent channel conversation:\n${recent}`);
+    }
+    return `\n\n${parts.join('\n\n')}`;
+  }
+
   // ========== Stats and Diagnostics ==========
 
   /**
