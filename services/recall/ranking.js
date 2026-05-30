@@ -15,6 +15,15 @@ function normalizeSimilarity(score) {
   return Math.max(0, Math.min(1, n));
 }
 
+/**
+ * Deduplicates candidates by contentHash, keeping the entry with the highest raw similarity score.
+ *
+ * NOTE — tiebreak trade-off: ties are broken by RAW similarity (not source-weighted composite
+ * score), because source weights are not known at dedupe time. This can rarely cause a candidate
+ * with a higher composite score to be dropped in favour of one with equal or marginally higher
+ * raw similarity. This is an accepted trade-off for v1 and should be revisited if source-weighted
+ * deduplication becomes a measurable quality issue.
+ */
 function dedupeCandidates(candidates) {
   const byHash = new Map();
   for (const c of candidates) {
@@ -27,6 +36,7 @@ function dedupeCandidates(candidates) {
 }
 
 function decayFactor(daysSinceAccess, halfLifeDays) {
+  if (!halfLifeDays || halfLifeDays <= 0) return 1; // no decay when unconfigured
   return Math.exp(-(Math.LN2 / halfLifeDays) * Math.max(0, daysSinceAccess));
 }
 
@@ -40,7 +50,7 @@ function scoreCandidate(candidate, opts, now = new Date()) {
   return w * (candidate.similarity || 0) * decay * accessBoost * importance;
 }
 
-function enrichWithLedger(candidates, ledgerByKey, seeds) {
+function enrichWithLedger(candidates, ledgerByKey, seeds = {}) {
   return candidates.map((c) => {
     const row = ledgerByKey && ledgerByKey[c.key];
     if (row) {

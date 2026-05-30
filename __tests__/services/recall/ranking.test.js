@@ -61,6 +61,21 @@ describe('ranking: scoring', () => {
     expect(scoreCandidate(explicit, opts, now)).toBeGreaterThan(scoreCandidate(base, opts, now));
     expect(scoreCandidate(accessed, opts, now)).toBeGreaterThan(scoreCandidate(base, opts, now));
   });
+
+  it('decay alone determines ranking when all other dimensions are equal', () => {
+    const shared = { source: 'mem0:personal', similarity: 0.7, importance: 0.5, accessCount: 2 };
+    const recent = { ...shared, lastAccessedAtUtc: '2026-05-29T00:00:00Z', timestamp: null };
+    const old    = { ...shared, lastAccessedAtUtc: '2025-11-01T00:00:00Z', timestamp: null };
+    expect(scoreCandidate(recent, opts, now)).toBeGreaterThan(scoreCandidate(old, opts, now));
+  });
+
+  it('decayFactor midpoint and guard checks', () => {
+    // At exactly one half-life the factor should be 1/√2
+    expect(decayFactor(7, 14)).toBeCloseTo(Math.SQRT1_2);
+    // Guard: zero or missing half-life returns 1 (no decay)
+    expect(decayFactor(0, 0)).toBe(1);
+    expect(decayFactor(99, 0)).toBe(1);
+  });
 });
 
 describe('ranking: enrichWithLedger', () => {
@@ -121,5 +136,9 @@ describe('ranking: formatting & bounding', () => {
       { key: 'a', source: 'mem0:personal', similarity: 0.9, importance: 0.5, accessCount: 0, provenance: { tag: 'fact' }, text: 'too many words here' },
     ], tight);
     expect(out).toHaveLength(0);
+  });
+
+  it('rankAndBound returns empty array for empty input', () => {
+    expect(rankAndBound([], baseOpts)).toEqual([]);
   });
 });
