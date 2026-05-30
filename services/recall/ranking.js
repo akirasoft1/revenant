@@ -14,4 +14,15 @@ function normalizeSimilarity(score) {
   return Math.max(0, Math.min(1, n));
 }
 
-module.exports = { normalizeText, contentHash, normalizeSimilarity };
+function dedupeCandidates(candidates) {
+  const byHash = new Map();
+  for (const c of candidates) {
+    const existing = byHash.get(c.contentHash);
+    if (!existing || (c.similarity || 0) > (existing.similarity || 0)) {
+      byHash.set(c.contentHash, c);
+    }
+  }
+  return [...byHash.values()];
+}
+
+module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates };
