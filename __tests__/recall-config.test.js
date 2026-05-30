@@ -2,6 +2,11 @@
 describe('recall config', () => {
   beforeEach(() => { jest.resetModules(); });
 
+  afterEach(() => {
+    delete process.env.RECALL_V2_ENABLED;
+    delete process.env.RECALL_MAX_ITEMS;
+  });
+
   it('provides sane defaults', () => {
     delete process.env.RECALL_V2_ENABLED;
     const config = require('../config/config');
