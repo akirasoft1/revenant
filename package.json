@@ -1,8 +1,8 @@
 {
-  "name": "discord-article-archiver-bot",
+  "name": "revenant",
   "version": "2.16.1",
   "license": "MIT",
-  "description": "A Discord bot that integrates with Linkwarden for self-hosted article archiving and uses OpenAI-compatible APIs to automatically generate summaries of archived articles with support for authenticated/paywalled content.",
+  "description": "A Discord bot that talks in your channel's learned voice, with long-term memory, IRC history recall, an agentic code sandbox, and image/video/music generation.",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
