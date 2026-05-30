@@ -1,0 +1,233 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 860" font-family="'JetBrains Mono', ui-monospace, monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1110"/>
+      <stop offset="100%" stop-color="#120907"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#261c17"/>
+      <stop offset="100%" stop-color="#1d1410"/>
+    </linearGradient>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5cbfaf"/>
+    </marker>
+    <marker id="arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e89e5e"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="860" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="56" y="58" fill="#f0e6d2" font-size="26" font-family="'Fraunces', Georgia, serif" font-style="italic" letter-spacing="-0.5">channel-voice · chat flow &amp; memory store</text>
+  <text x="56" y="82" fill="#8a7c66" font-size="12" letter-spacing="2">DISCORD-ARTICLE-BOT — FIG. 01 — REQUEST PATH (TEAL) · WRITE-BACK PATH (AMBER)</text>
+  <line x1="56" y1="96" x2="1224" y2="96" stroke="#3a2a1f" stroke-width="1"/>
+
+  <!-- ============ ENTRY ============ -->
+  <g>
+    <rect x="56" y="150" width="150" height="74" rx="4" fill="url(#card)" stroke="#5cbfaf" stroke-width="1.4"/>
+    <text x="131" y="182" text-anchor="middle" fill="#5cbfaf" font-size="11" letter-spacing="1">DISCORD</text>
+    <text x="131" y="200" text-anchor="middle" fill="#f0e6d2" font-size="12" font-family="'Fraunces',serif" font-style="italic">@mention</text>
+    <text x="131" y="216" text-anchor="middle" fill="#c4b59a" font-size="9.5">user message</text>
+  </g>
+
+  <!-- ChatService orchestrator -->
+  <g>
+    <rect x="256" y="138" width="170" height="98" rx="4" fill="url(#card)" stroke="#e89e5e" stroke-width="1.6"/>
+    <text x="341" y="166" text-anchor="middle" fill="#e89e5e" font-size="11" letter-spacing="1">ORCHESTRATOR</text>
+    <text x="341" y="186" text-anchor="middle" fill="#f0e6d2" font-size="13" font-family="'Fraunces',serif" font-style="italic">ChatService</text>
+    <text x="341" y="204" text-anchor="middle" fill="#c4b59a" font-size="9.5">.chat()</text>
+    <text x="341" y="222" text-anchor="middle" fill="#8a7c66" font-size="9">parallel recall →</text>
+  </g>
+
+  <line x1="206" y1="187" x2="256" y2="187" stroke="#5cbfaf" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- ============ PARALLEL RECALL — 3 lanes ============ -->
+  <!-- fan-out node -->
+  <line x1="426" y1="187" x2="470" y2="187" stroke="#5cbfaf" stroke-width="1.4"/>
+  <line x1="470" y1="120" x2="470" y2="340" stroke="#5cbfaf" stroke-width="1.1"/>
+  <line x1="470" y1="135" x2="500" y2="135" stroke="#5cbfaf" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="470" y1="248" x2="500" y2="248" stroke="#5cbfaf" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="470" y1="338" x2="500" y2="338" stroke="#5cbfaf" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- Lane 1: Mem0 -->
+  <g>
+    <rect x="500" y="108" width="210" height="78" rx="4" fill="url(#card)" stroke="#3a2a1f"/>
+    <text x="514" y="130" fill="#5cbfaf" font-size="10.5" letter-spacing="0.6">Mem0Service</text>
+    <text x="514" y="148" fill="#c4b59a" font-size="9.5">user + explicit + shared</text>
+    <text x="514" y="162" fill="#c4b59a" font-size="9.5">3-way vector search,</text>
+    <text x="514" y="176" fill="#8a7c66" font-size="9.5">dedup: explicit&gt;shared&gt;pers.</text>
+  </g>
+
+  <!-- Lane 2: ChannelContext (3-tier) -->
+  <g>
+    <rect x="500" y="200" width="210" height="96" rx="4" fill="url(#card)" stroke="#3a2a1f"/>
+    <text x="514" y="222" fill="#5cbfaf" font-size="10.5" letter-spacing="0.6">ChannelContextService</text>
+    <text x="514" y="240" fill="#9bb87a" font-size="9.5">T1 hot · in-mem buffer (20)</text>
+    <text x="514" y="256" fill="#d4a574" font-size="9.5">T2 warm · semantic search</text>
+    <text x="514" y="272" fill="#c46d4e" font-size="9.5">T3 cold · channel facts</text>
+    <text x="514" y="288" fill="#8a7c66" font-size="9">buildHybridContext()</text>
+  </g>
+
+  <!-- Lane 3: VoiceProfile -->
+  <g>
+    <rect x="500" y="310" width="210" height="84" rx="4" fill="url(#card)" stroke="#3a2a1f"/>
+    <text x="514" y="332" fill="#5cbfaf" font-size="10.5" letter-spacing="0.6">VoiceProfileService</text>
+    <text x="514" y="350" fill="#c4b59a" font-size="9.5">cached style profile +</text>
+    <text x="514" y="364" fill="#c4b59a" font-size="9.5">few-shot IRC examples</text>
+    <text x="514" y="380" fill="#8a7c66" font-size="9.5">useVoiceProfile: true</text>
+  </g>
+
+  <!-- ============ STORES (right column) ============ -->
+  <text x="772" y="84" fill="#8a7c66" font-size="11" letter-spacing="2">STORES</text>
+
+  <!-- Qdrant cluster -->
+  <g>
+    <rect x="772" y="100" width="232" height="150" rx="4" fill="#15100d" stroke="#5cbfaf" stroke-width="1.2"/>
+    <text x="786" y="122" fill="#5cbfaf" font-size="11" letter-spacing="1">QDRANT · vectors (1536d)</text>
+    <line x1="786" y1="130" x2="990" y2="130" stroke="#2a1e16"/>
+    <text x="786" y="150" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">discord_memories</text>
+    <text x="990" y="150" text-anchor="end" fill="#8a7c66" font-size="9">Mem0 facts</text>
+    <text x="786" y="172" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">channel_conversations</text>
+    <text x="990" y="172" text-anchor="end" fill="#8a7c66" font-size="9">T2 · 30d</text>
+    <text x="786" y="194" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">irc_history</text>
+    <text x="990" y="194" text-anchor="end" fill="#8a7c66" font-size="9">few-shot</text>
+    <text x="786" y="222" fill="#8a7c66" font-size="9">embed: text-embedding-3-small</text>
+    <text x="786" y="238" fill="#8a7c66" font-size="9">cosine · top-k 3–5</text>
+  </g>
+
+  <!-- MongoDB cluster -->
+  <g>
+    <rect x="772" y="268" width="232" height="150" rx="4" fill="#15100d" stroke="#9bb87a" stroke-width="1.2"/>
+    <text x="786" y="290" fill="#9bb87a" font-size="11" letter-spacing="1">MONGODB · documents</text>
+    <line x1="786" y1="298" x2="990" y2="298" stroke="#2a1e16"/>
+    <text x="786" y="318" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">chat_conversations</text>
+    <text x="990" y="318" text-anchor="end" fill="#8a7c66" font-size="9">turns</text>
+    <text x="786" y="340" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">channel_messages</text>
+    <text x="990" y="340" text-anchor="end" fill="#8a7c66" font-size="9">archive</text>
+    <text x="786" y="362" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">voice_profiles</text>
+    <text x="990" y="362" text-anchor="end" fill="#8a7c66" font-size="9">versioned</text>
+    <text x="786" y="384" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">token_usage</text>
+    <text x="990" y="384" text-anchor="end" fill="#8a7c66" font-size="9">analytics</text>
+  </g>
+
+  <!-- recall reads (teal, lanes -> stores) -->
+  <path d="M710,147 C745,147 745,150 772,150" fill="none" stroke="#5cbfaf" stroke-width="1.2" marker-end="url(#arr)"/>
+  <path d="M710,248 C745,248 745,172 772,172" fill="none" stroke="#5cbfaf" stroke-width="1.2" marker-end="url(#arr)"/>
+  <path d="M710,352 C745,352 745,194 772,194" fill="none" stroke="#5cbfaf" stroke-width="1.2" marker-end="url(#arr)"/>
+  <path d="M710,360 C748,360 748,330 772,330" fill="none" stroke="#5cbfaf" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="724" y="408" fill="#5cbfaf" font-size="9" font-style="italic">voice_profiles read →</text>
+
+  <!-- ============ PROMPT + LLM ============ -->
+  <!-- merge back -->
+  <line x1="500" y1="470" x2="710" y2="470" stroke="#5cbfaf" stroke-width="0" />
+
+  <g>
+    <rect x="256" y="470" width="234" height="92" rx="4" fill="url(#card)" stroke="#5cbfaf" stroke-width="1.4"/>
+    <text x="373" y="496" text-anchor="middle" fill="#5cbfaf" font-size="11" letter-spacing="1">ASSEMBLE</text>
+    <text x="373" y="516" text-anchor="middle" fill="#f0e6d2" font-size="12.5" font-family="'Fraunces',serif" font-style="italic">system prompt</text>
+    <text x="373" y="534" text-anchor="middle" fill="#c4b59a" font-size="9">personality + memory + channel</text>
+    <text x="373" y="548" text-anchor="middle" fill="#c4b59a" font-size="9">+ shared + {VOICE_INSTRUCTIONS}</text>
+  </g>
+
+  <!-- recall results feed assemble -->
+  <path d="M605,394 C605,430 460,430 400,470" fill="none" stroke="#5cbfaf" stroke-width="1.1" marker-end="url(#arr)" opacity="0.8"/>
+  <text x="430" y="446" fill="#8a7c66" font-size="9" font-style="italic">merged context</text>
+
+  <g>
+    <rect x="540" y="470" width="200" height="92" rx="4" fill="url(#card)" stroke="#e89e5e" stroke-width="1.6"/>
+    <text x="640" y="496" text-anchor="middle" fill="#e89e5e" font-size="11" letter-spacing="1">GENERATE</text>
+    <text x="640" y="516" text-anchor="middle" fill="#f0e6d2" font-size="12.5" font-family="'Fraunces',serif" font-style="italic">OpenAI Responses</text>
+    <text x="640" y="534" text-anchor="middle" fill="#c4b59a" font-size="9.5">gpt-5.1 · tools: web_search</text>
+    <text x="640" y="550" text-anchor="middle" fill="#8a7c66" font-size="9">+ conversation history</text>
+  </g>
+  <line x1="490" y1="516" x2="540" y2="516" stroke="#5cbfaf" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- reply back to discord -->
+  <path d="M640,470 C640,300 200,300 131,224" fill="none" stroke="#e89e5e" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arrA)" opacity="0.85"/>
+  <text x="250" y="294" fill="#e89e5e" font-size="9" font-style="italic">styled reply →</text>
+
+  <!-- ============ WRITE-BACK ============ -->
+  <text x="56" y="630" fill="#8a7c66" font-size="11" letter-spacing="2">WRITE-BACK (post-response, mostly non-blocking)</text>
+  <line x1="56" y1="642" x2="1004" y2="642" stroke="#3a2a1f"/>
+
+  <g font-size="9.5">
+    <rect x="540" y="600" width="200" height="30" rx="3" fill="none" stroke="#e89e5e" stroke-width="0"/>
+  </g>
+
+  <!-- write boxes -->
+  <g>
+    <rect x="56" y="666" width="220" height="60" rx="4" fill="url(#card)" stroke="#9bb87a"/>
+    <text x="70" y="688" fill="#9bb87a" font-size="10">mongoService</text>
+    <text x="70" y="704" fill="#c4b59a" font-size="9">addMessageToConversation()</text>
+    <text x="70" y="718" fill="#8a7c66" font-size="9">user + assistant turn</text>
+  </g>
+  <g>
+    <rect x="292" y="666" width="220" height="60" rx="4" fill="url(#card)" stroke="#9bb87a"/>
+    <text x="306" y="688" fill="#9bb87a" font-size="10">mongoService</text>
+    <text x="306" y="704" fill="#c4b59a" font-size="9">recordTokenUsage()</text>
+    <text x="306" y="718" fill="#8a7c66" font-size="9">recordChannelMessage()</text>
+  </g>
+  <g>
+    <rect x="528" y="666" width="220" height="60" rx="4" fill="url(#card)" stroke="#5cbfaf"/>
+    <text x="542" y="688" fill="#5cbfaf" font-size="10">mem0Service</text>
+    <text x="542" y="704" fill="#c4b59a" font-size="9">addMemory() → extract facts</text>
+    <text x="542" y="718" fill="#8a7c66" font-size="9">→ discord_memories</text>
+  </g>
+  <g>
+    <rect x="764" y="666" width="240" height="60" rx="4" fill="url(#card)" stroke="#5cbfaf"/>
+    <text x="778" y="688" fill="#5cbfaf" font-size="10">channelContextService</text>
+    <text x="778" y="704" fill="#c4b59a" font-size="9">recordMessage() → buffer + queue</text>
+    <text x="778" y="718" fill="#8a7c66" font-size="9">batch index → channel_conversations</text>
+  </g>
+
+  <!-- generate -> write fan -->
+  <line x1="640" y1="562" x2="640" y2="600" stroke="#e89e5e" stroke-width="1.3"/>
+  <line x1="166" y1="600" x2="900" y2="600" stroke="#e89e5e" stroke-width="1.1"/>
+  <line x1="166" y1="600" x2="166" y2="666" stroke="#e89e5e" stroke-width="1.1" marker-end="url(#arrA)"/>
+  <line x1="402" y1="600" x2="402" y2="666" stroke="#e89e5e" stroke-width="1.1" marker-end="url(#arrA)"/>
+  <line x1="638" y1="600" x2="638" y2="666" stroke="#e89e5e" stroke-width="1.1" marker-end="url(#arrA)"/>
+  <line x1="884" y1="600" x2="884" y2="666" stroke="#e89e5e" stroke-width="1.1" marker-end="url(#arrA)"/>
+
+  <!-- write boxes -> stores -->
+  <path d="M276,696 C400,696 700,470 886,418" fill="none" stroke="#9bb87a" stroke-width="0" />
+  <text x="780" y="752" fill="#8a7c66" font-size="9" font-style="italic">MongoDB writes → documents · Qdrant writes → vectors</text>
+
+  <!-- ============ BACKGROUND JOBS ============ -->
+  <g>
+    <rect x="1036" y="100" width="188" height="318" rx="4" fill="#15100d" stroke="#3a2a1f"/>
+    <text x="1050" y="124" fill="#d4a574" font-size="11" letter-spacing="1">BACKGROUND</text>
+    <line x1="1050" y1="132" x2="1210" y2="132" stroke="#2a1e16"/>
+
+    <text x="1050" y="156" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">batch indexing</text>
+    <text x="1050" y="172" fill="#8a7c66" font-size="9">every 60 min · T2 upsert</text>
+
+    <text x="1050" y="200" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">channel memory extract</text>
+    <text x="1050" y="216" fill="#8a7c66" font-size="9">every 50 msgs → Mem0</text>
+
+    <text x="1050" y="244" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">voice profile regen</text>
+    <text x="1050" y="260" fill="#8a7c66" font-size="9">every 24h · IRC + Discord</text>
+    <text x="1050" y="274" fill="#8a7c66" font-size="9">→ voice_profiles</text>
+
+    <text x="1050" y="302" fill="#f0e6d2" font-size="10" font-family="'Fraunces',serif" font-style="italic">retention sweep</text>
+    <text x="1050" y="318" fill="#8a7c66" font-size="9">T2 30-day expiry</text>
+
+    <line x1="1050" y1="340" x2="1210" y2="340" stroke="#2a1e16"/>
+    <text x="1050" y="362" fill="#c4b59a" font-size="9">feeds the stores that</text>
+    <text x="1050" y="376" fill="#c4b59a" font-size="9">recall reads from on</text>
+    <text x="1050" y="390" fill="#c4b59a" font-size="9">the next turn.</text>
+  </g>
+  <path d="M1036,250 C1018,250 1018,150 1004,150" fill="none" stroke="#d4a574" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr)" opacity="0.7"/>
+
+  <!-- legend -->
+  <g font-size="10">
+    <line x1="56" y1="800" x2="86" y2="800" stroke="#5cbfaf" stroke-width="2"/>
+    <text x="92" y="804" fill="#c4b59a">read / recall path</text>
+    <line x1="240" y1="800" x2="270" y2="800" stroke="#e89e5e" stroke-width="2"/>
+    <text x="276" y="804" fill="#c4b59a">write-back / response path</text>
+    <line x1="500" y1="800" x2="530" y2="800" stroke="#d4a574" stroke-width="2" stroke-dasharray="3 3"/>
+    <text x="536" y="804" fill="#c4b59a">async background jobs</text>
+  </g>
+
+  <text x="1224" y="840" text-anchor="end" fill="#8a7c66" font-size="9.5">services/ChatService.js · Mem0Service · ChannelContextService · VoiceProfileService · MongoService · QdrantService</text>
+</svg>
