@@ -79,3 +79,4 @@ describe('RecallService ledger bump', () => {
     expect(entries[0]).toMatchObject({ memoryKey: 'mem0:personal:1', source: 'mem0:personal', importanceSeed: 0.5 });
   });
 });
+
