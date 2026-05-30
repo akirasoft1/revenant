@@ -51,6 +51,13 @@
 - **Graceful Degradation**: Bot works normally if memory service (Qdrant) is unavailable
 - **GDPR Compliance**: Users can request deletion of all their memories
 
+### Centralized Ranked Recall (v2)
+- **One recall step**: `RecallService` queries all content sources (Mem0 personal/explicit/shared, channel semantic hits, channel facts), dedupes across them, ranks by recency + importance with a 14-day decay half-life and access-count boosting, bounds to a token/item budget, and emits a single provenance-tagged `## Memory Context` block.
+- **Recall ledger**: MongoDB `recall_ledger` tracks per-memory importance, access count, and last-access (the signals Mem0 doesn't expose), lazily populated and pruned by expiry.
+- **Recent buffer + voice few-shot stay separate**: verbatim recency and style grounding are not run through the ranker; a cross-block exclusion-set prevents the buffer and semantic hits from double-injecting.
+- **Validation**: offline eval harness (`scripts/eval-recall.js`) over `eval/recall/*.json`, plus `recall_comparisons` A/B shadow logging.
+- **Flags**: `RECALL_V2_ENABLED` (default off), `RECALL_SHADOW_ENABLED`, `RECALL_SHADOW_INJECT`.
+
 ### Multiplayer Chat
 - **Participant Awareness**: Bot tracks who's active in each channel (30-minute window)
 - **Multi-User Context**: System prompt includes list of active participants and their recent topics
