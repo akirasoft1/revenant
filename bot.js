@@ -34,6 +34,7 @@ const ImagePromptAnalyzerService = require('./services/ImagePromptAnalyzerServic
 const CatchMeUpService = require('./services/CatchMeUpService');
 const VoiceSearchService = require('./services/VoiceSearchService');
 const MongoService = require('./services/MongoService');
+const RecallService = require('./services/RecallService');
 const ImageRetryHandler = require('./handlers/ImageRetryHandler');
 const TextUtils = require('./utils/textUtils');
 const localLlmService = require('./services/LocalLlmService');
@@ -193,11 +194,20 @@ class DiscordBot {
       }
     }
 
+    // RecallService - centralized ranked recall (v2 memory path)
+    this.recallService = new RecallService({
+      mem0Service: this.mem0Service,
+      channelContextService: this.channelContextService,
+      mongoService: this.mongoService,
+      config,
+      condenser: null, // llm-condense disabled by default
+    });
+
     // ChatService - all dependencies injected via constructor
     this.chatService = new ChatService(
       this.openaiClient, config, this.mongoService, this.mem0Service,
       this.channelContextService, this.voiceProfileService, this.qdrantService,
-      this.agentClient
+      this.agentClient, this.recallService
     );
 
     // Initialize Imagen (image generation) service
