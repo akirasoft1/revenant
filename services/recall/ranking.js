@@ -39,4 +39,15 @@ function scoreCandidate(candidate, opts, now = new Date()) {
   return w * (candidate.similarity || 0) * decay * accessBoost * importance;
 }
 
-module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates, decayFactor, scoreCandidate };
+function enrichWithLedger(candidates, ledgerByKey, seeds) {
+  return candidates.map((c) => {
+    const row = ledgerByKey && ledgerByKey[c.key];
+    if (row) {
+      return { ...c, importance: row.importance, accessCount: row.accessCount, lastAccessedAtUtc: row.lastAccessedAtUtc || null };
+    }
+    const seed = c.source === 'mem0:explicit' ? seeds.importanceSeedExplicit : seeds.importanceSeed;
+    return { ...c, importance: seed, accessCount: 0, lastAccessedAtUtc: null };
+  });
+}
+
+module.exports = { normalizeText, contentHash, normalizeSimilarity, dedupeCandidates, decayFactor, scoreCandidate, enrichWithLedger };

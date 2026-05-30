@@ -2,6 +2,7 @@
 const { normalizeText, contentHash, normalizeSimilarity } = require('../../../services/recall/ranking');
 const { dedupeCandidates } = require('../../../services/recall/ranking');
 const { decayFactor, scoreCandidate } = require('../../../services/recall/ranking');
+const { enrichWithLedger } = require('../../../services/recall/ranking');
 
 describe('ranking: hashing & normalization', () => {
   it('normalizeText lowercases and collapses whitespace', () => {
@@ -58,5 +59,27 @@ describe('ranking: scoring', () => {
     const accessed = { ...base, accessCount: 10 };
     expect(scoreCandidate(explicit, opts, now)).toBeGreaterThan(scoreCandidate(base, opts, now));
     expect(scoreCandidate(accessed, opts, now)).toBeGreaterThan(scoreCandidate(base, opts, now));
+  });
+});
+
+describe('ranking: enrichWithLedger', () => {
+  const seeds = { importanceSeed: 0.5, importanceSeedExplicit: 0.7 };
+
+  it('uses ledger row when present', () => {
+    const rows = { 'mem0:personal:1': { importance: 0.9, accessCount: 4, lastAccessedAtUtc: new Date('2026-05-01') } };
+    const [c] = enrichWithLedger([{ key: 'mem0:personal:1', source: 'mem0:personal' }], rows, seeds);
+    expect(c.importance).toBe(0.9);
+    expect(c.accessCount).toBe(4);
+  });
+
+  it('seeds first-sight candidates (explicit higher)', () => {
+    const [p, e] = enrichWithLedger(
+      [{ key: 'k1', source: 'mem0:personal' }, { key: 'k2', source: 'mem0:explicit' }],
+      {}, seeds
+    );
+    expect(p.importance).toBe(0.5);
+    expect(p.accessCount).toBe(0);
+    expect(p.lastAccessedAtUtc).toBeNull();
+    expect(e.importance).toBe(0.7);
   });
 });
