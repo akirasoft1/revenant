@@ -1,0 +1,1084 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>REVENANT — Fluent in your channel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        #05070d;
+    --bg-2:      #070a13;
+    --panel:     #0a0e1a;
+    --panel-2:   #0c1120;
+    --ink:       #e6f3ff;
+    --ink-soft:  #b3c4e0;
+    --ink-dim:   #6d7fa6;
+    --ink-faint: #43527a;
+    --rule:      rgba(112,150,220,0.16);
+    --rule-soft: rgba(112,150,220,0.08);
+
+    --cyan:      #00e6ff;
+    --cyan-dim:  #0a8aa0;
+    --magenta:   #ff2d83;
+    --violet:    #8a5cff;
+    --lime:      #c2ff42;
+
+    --glow-cyan:    0 0 18px rgba(0,230,255,0.45);
+    --glow-magenta: 0 0 18px rgba(255,45,131,0.45);
+    --shadow: 0 30px 70px -36px rgba(0,0,0,0.85);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink-soft);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 18px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100vh;
+    overflow-x: hidden;
+    background:
+      radial-gradient(1100px 700px at 88% -8%, rgba(0,230,255,0.08), transparent 60%),
+      radial-gradient(900px 600px at -12% 55%, rgba(138,92,255,0.10), transparent 60%),
+      radial-gradient(700px 500px at 50% 120%, rgba(255,45,131,0.07), transparent 60%),
+      var(--bg);
+  }
+
+  /* perspective grid floor */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(0,230,255,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,230,255,0.05) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: radial-gradient(900px 700px at 50% 0%, #000 0%, transparent 78%);
+    -webkit-mask-image: radial-gradient(900px 700px at 50% 0%, #000 0%, transparent 78%);
+  }
+
+  /* scanlines + grain */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 1px, transparent 1px 3px),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0.6  0 0 0 0 0.8  0 0 0 0.025 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity: 0.55;
+    mix-blend-mode: screen;
+  }
+
+  .page {
+    position: relative;
+    z-index: 1;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 40px 56px 120px;
+  }
+
+  /* ─── Topbar ──────────────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 20px;
+    margin-bottom: 84px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    color: var(--ink-dim);
+    border-bottom: 1px solid var(--rule);
+  }
+  .topbar .brand {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 700;
+    font-size: 21px;
+    letter-spacing: 0.22em;
+    color: var(--ink);
+    text-shadow: var(--glow-cyan);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand .blip {
+    width: 9px; height: 9px;
+    background: var(--cyan);
+    border-radius: 1px;
+    box-shadow: var(--glow-cyan);
+    animation: blink 1.6s steps(1) infinite;
+  }
+  @keyframes blink { 0%,70%{opacity:1} 71%,100%{opacity:.25} }
+  .topbar .nav { display: flex; gap: 26px; }
+  .topbar .nav a {
+    color: var(--ink-dim);
+    text-decoration: none;
+    transition: color .2s, text-shadow .2s;
+  }
+  .topbar .nav a:hover { color: var(--cyan); text-shadow: var(--glow-cyan); }
+  .topbar .nav a.current { color: var(--cyan); }
+
+  /* ─── Hero ────────────────────────────────────────────────────── */
+  .hero { margin-bottom: 96px; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--magenta);
+    margin-bottom: 30px;
+    text-shadow: var(--glow-magenta);
+  }
+  .eyebrow::before {
+    content: "";
+    width: 30px; height: 1px;
+    background: var(--magenta);
+    box-shadow: var(--glow-magenta);
+  }
+
+  h1.title {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: clamp(46px, 7.2vw, 96px);
+    line-height: 0.98;
+    letter-spacing: -0.01em;
+    margin: 0 0 34px;
+    color: var(--ink);
+    position: relative;
+    text-shadow: 0 0 30px rgba(0,230,255,0.25);
+  }
+  h1.title em {
+    font-style: normal;
+    color: var(--cyan);
+    position: relative;
+    display: inline-block;
+  }
+  /* glitch on the accent word */
+  h1.title em::before,
+  h1.title em::after {
+    content: attr(data-text);
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  h1.title em::before {
+    color: var(--magenta);
+    animation: glitchX 4.6s infinite steps(2);
+    clip-path: inset(0 0 62% 0);
+  }
+  h1.title em::after {
+    color: var(--violet);
+    animation: glitchY 5.3s infinite steps(2);
+    clip-path: inset(58% 0 0 0);
+  }
+  @keyframes glitchX {
+    0%,92%,100% { transform: translate(0,0); opacity:0 }
+    93% { transform: translate(-3px,-1px); opacity:.9 }
+    95% { transform: translate(2px,1px); opacity:.7 }
+    97% { transform: translate(-2px,0); opacity:.9 }
+  }
+  @keyframes glitchY {
+    0%,90%,100% { transform: translate(0,0); opacity:0 }
+    91% { transform: translate(3px,1px); opacity:.85 }
+    94% { transform: translate(-2px,-1px); opacity:.6 }
+    98% { transform: translate(2px,0); opacity:.85 }
+  }
+
+  .lede {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 300;
+    font-size: 23px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 720px;
+  }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .lede .hl { color: var(--cyan); font-weight: 500; }
+
+  /* ─── Section scaffolding ─────────────────────────────────────── */
+  section { margin: 0 0 100px; max-width: 760px; }
+  .chapter-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 12px;
+  }
+  .chapter-num b { color: var(--cyan); font-weight: 500; }
+  h2 {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 500;
+    font-size: clamp(30px, 4.4vw, 50px);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    margin: 0 0 24px;
+    color: var(--ink);
+  }
+  h2 .hl { color: var(--cyan); text-shadow: var(--glow-cyan); }
+  p {
+    font-size: 18px;
+    line-height: 1.7;
+    margin: 0 0 18px;
+    max-width: 680px;
+    color: var(--ink-soft);
+  }
+  p strong { color: var(--ink); font-weight: 600; }
+  code, .mono { font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: var(--cyan); }
+
+  /* ─── HUD corner framing utility ──────────────────────────────── */
+  .hud { position: relative; }
+  .hud::before, .hud::after {
+    content: "";
+    position: absolute;
+    width: 16px; height: 16px;
+    border: 1px solid var(--cyan);
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .hud::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .hud::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+  /* ─── Hero scene ──────────────────────────────────────────────── */
+  .scene {
+    margin: 60px 0 0;
+    background:
+      linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 30px 36px 28px;
+    box-shadow: var(--shadow);
+    position: relative;
+  }
+  .scene .chrome {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .scene .chrome .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .scene .chrome .dot.c { background: var(--cyan); box-shadow: var(--glow-cyan); }
+  .scene .chrome .dot.m { background: var(--magenta); }
+  .scene .chrome .dot.v { background: var(--violet); }
+  .scene .chrome span.path { margin-left: 8px; color: var(--ink-faint); }
+  .scene svg { width: 100%; height: auto; display: block; }
+  .scene .scene-cap {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule-soft);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+    color: var(--ink-dim);
+    line-height: 1.55;
+  }
+  .scene .scene-cap b { color: var(--cyan); font-weight: 600; }
+
+  /* ─── Conversation comparison ─────────────────────────────────── */
+  .convo-pair {
+    margin-top: 34px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+  }
+  .convo {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 26px 26px 30px;
+    position: relative;
+  }
+  .convo .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 22px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .convo .label::before {
+    content: "";
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+  .convo.bad { border-top: 2px solid var(--ink-faint); }
+  .convo.bad .label { color: var(--ink-dim); }
+  .convo.bad .label::before { background: var(--ink-faint); }
+  .convo.good { border-top: 2px solid var(--cyan); box-shadow: 0 0 40px -18px rgba(0,230,255,0.5) inset; }
+  .convo.good .label { color: var(--cyan); text-shadow: var(--glow-cyan); }
+  .convo.good .label::before { background: var(--cyan); box-shadow: var(--glow-cyan); }
+  .convo .stream { display: flex; flex-direction: column; }
+  .convo .bubble {
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 11px;
+    font-size: 15px;
+    line-height: 1.5;
+    max-width: 90%;
+  }
+  .convo .you {
+    background: rgba(138,92,255,0.14);
+    border: 1px solid rgba(138,92,255,0.3);
+    color: var(--ink);
+    align-self: flex-end;
+    margin-left: auto;
+    border-bottom-right-radius: 2px;
+  }
+  .convo .ai {
+    background: rgba(120,150,220,0.06);
+    border: 1px solid var(--rule-soft);
+    color: var(--ink-soft);
+    border-bottom-left-radius: 2px;
+  }
+  .convo.good .ai {
+    background: rgba(0,230,255,0.07);
+    border: 1px solid rgba(0,230,255,0.22);
+    color: var(--ink);
+  }
+  .convo .who {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin: 0 0 4px 2px;
+  }
+
+  .what-means {
+    margin-top: 34px;
+    background: linear-gradient(180deg, rgba(0,230,255,0.06), rgba(0,230,255,0.02));
+    border: 1px solid rgba(0,230,255,0.22);
+    border-left: 3px solid var(--cyan);
+    border-radius: 6px;
+    padding: 28px 32px;
+  }
+  .what-means .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 12px;
+    text-shadow: var(--glow-cyan);
+  }
+  .what-means p { margin: 0; color: var(--ink); font-size: 18px; line-height: 1.6; max-width: none; }
+  .what-means p strong { color: var(--cyan); }
+
+  /* ─── Pull quote ──────────────────────────────────────────────── */
+  .pull {
+    margin: 96px 0;
+    padding: 4px 0 4px 40px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 400;
+    font-size: clamp(26px, 3.6vw, 40px);
+    line-height: 1.28;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    max-width: 880px;
+    position: relative;
+  }
+  .pull em { color: var(--cyan); font-style: normal; text-shadow: var(--glow-cyan); }
+  .pull::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 4px;
+    width: 3px; height: calc(100% - 8px);
+    background: linear-gradient(var(--cyan), var(--magenta));
+    box-shadow: var(--glow-cyan);
+  }
+  .pull cite {
+    display: block;
+    margin-top: 22px;
+    font-family: 'JetBrains Mono', monospace;
+    font-style: normal;
+    font-size: 12px;
+    color: var(--ink-dim);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* ─── Capability cards ────────────────────────────────────────── */
+  .cards {
+    margin-top: 36px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 18px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 28px 28px 26px;
+    position: relative;
+    transition: transform .25s, border-color .25s, box-shadow .25s;
+    overflow: hidden;
+  }
+  .card::after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--cyan), transparent);
+    opacity: 0.5;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(0,230,255,0.4);
+    box-shadow: 0 24px 50px -28px rgba(0,230,255,0.6);
+  }
+  .card .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .card .glyph {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    color: var(--cyan);
+    border: 1px solid rgba(0,230,255,0.3);
+    width: 46px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+    margin-bottom: 18px;
+    background: rgba(0,230,255,0.06);
+    box-shadow: var(--glow-cyan);
+  }
+  .card h4 {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: 22px;
+    margin: 0 0 10px;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .card p { margin: 0 0 14px; color: var(--ink-soft); font-size: 15.5px; line-height: 1.55; max-width: none; }
+  .card .example {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--bg-2);
+    border: 1px solid var(--rule-soft);
+    border-left: 2px solid var(--magenta);
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    line-height: 1.5;
+  }
+  .card .example b { color: var(--magenta); font-weight: 500; }
+
+  /* ─── Media strip ─────────────────────────────────────────────── */
+  .strip {
+    margin-top: 30px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .strip .cell {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 20px 18px;
+    text-align: left;
+  }
+  .strip .cell .k {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--violet);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .strip .cell .t { font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 17px; color: var(--ink); margin-bottom: 4px; }
+  .strip .cell .d { font-size: 13px; color: var(--ink-dim); line-height: 1.45; }
+
+  /* ─── Timeline ────────────────────────────────────────────────── */
+  .moment { margin-top: 34px; }
+  .moment .item {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 32px;
+    padding: 30px 0;
+    border-top: 1px solid var(--rule);
+    align-items: start;
+  }
+  .moment .item:last-child { border-bottom: 1px solid var(--rule); }
+  .moment .item .when {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 500;
+    font-size: 21px;
+    color: var(--cyan);
+    line-height: 1.25;
+  }
+  .moment .item .when .day {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--magenta);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .moment .item h4 {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 500;
+    font-size: 21px;
+    margin: 0 0 10px;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .moment .item p { margin: 0 0 10px; color: var(--ink-soft); font-size: 16px; line-height: 1.6; max-width: 560px; }
+  .moment .item p:last-child { margin: 0; }
+  .moment .item p em { color: var(--cyan); font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 14px; }
+
+  /* ─── Stat band ───────────────────────────────────────────────── */
+  .stat-band {
+    margin: 80px 0;
+    padding: 50px 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 44px;
+  }
+  .stat-band .stat .v {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: 68px;
+    line-height: 0.9;
+    color: var(--cyan);
+    letter-spacing: -0.02em;
+    text-shadow: var(--glow-cyan);
+  }
+  .stat-band .stat .v .small { font-size: 22px; color: var(--ink-dim); font-weight: 400; margin-left: 6px; text-shadow: none; }
+  .stat-band .stat .l { margin-top: 16px; font-size: 14.5px; color: var(--ink-dim); line-height: 1.55; max-width: 260px; }
+
+  /* ─── Capability index ────────────────────────────────────────── */
+  .index {
+    margin-top: 56px;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 38px 40px;
+  }
+  .index .head {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 20px;
+    text-shadow: var(--glow-cyan);
+  }
+  .index ol { list-style: none; counter-reset: idx; padding: 0; margin: 0; }
+  .index li {
+    counter-increment: idx;
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 18px;
+    padding: 16px 0;
+    border-top: 1px solid var(--rule-soft);
+    align-items: center;
+  }
+  .index li:first-child { border-top: none; }
+  .index li::before {
+    content: counter(idx, decimal-leading-zero);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--magenta);
+  }
+  .index li b {
+    display: block;
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--ink);
+    margin-bottom: 2px;
+    letter-spacing: -0.01em;
+  }
+  .index li span { color: var(--ink-dim); font-size: 14.5px; }
+
+  /* ─── CTA ─────────────────────────────────────────────────────── */
+  .cta {
+    margin-top: 72px;
+    padding: 66px 56px;
+    border: 1px solid rgba(0,230,255,0.25);
+    border-radius: 8px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(600px 320px at 28% 0%, rgba(0,230,255,0.16), transparent 70%),
+      radial-gradient(500px 320px at 74% 100%, rgba(255,45,131,0.14), transparent 70%),
+      var(--panel-2);
+    box-shadow: var(--shadow);
+  }
+  .cta h3 {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: 42px;
+    color: var(--ink);
+    margin: 0 0 16px;
+    letter-spacing: -0.01em;
+    text-shadow: 0 0 26px rgba(0,230,255,0.3);
+  }
+  .cta p { color: var(--ink-soft); margin: 0 auto 32px; max-width: 540px; font-size: 17px; }
+  .cta .actions { display: inline-flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  .cta a {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 14px 26px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 500;
+    transition: transform .15s, box-shadow .15s, background .15s;
+  }
+  .cta a:hover { transform: translateY(-2px); }
+  .cta a.primary { background: var(--cyan); color: #03212a; box-shadow: var(--glow-cyan); }
+  .cta a.primary:hover { box-shadow: 0 0 30px rgba(0,230,255,0.7); }
+  .cta a.ghost { color: var(--ink); border: 1px solid rgba(255,255,255,0.18); }
+  .cta a.ghost:hover { background: rgba(255,255,255,0.06); border-color: var(--cyan); color: var(--cyan); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 26px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-dim);
+  }
+  footer b { color: var(--cyan); font-weight: 500; }
+
+  /* ─── Entrance animation ──────────────────────────────────────── */
+  @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+  .hero, section, .stat-band, .cta, footer { animation: rise 0.9s cubic-bezier(.2,.7,.2,1) both; }
+  section:nth-of-type(1) { animation-delay: .06s; }
+  section:nth-of-type(2) { animation-delay: .12s; }
+  section:nth-of-type(3) { animation-delay: .18s; }
+  section:nth-of-type(4) { animation-delay: .24s; }
+
+  @media (max-width: 820px) {
+    .page { padding: 28px 22px 80px; }
+    .scene { padding: 24px 20px; }
+    .convo-pair { grid-template-columns: 1fr; }
+    .cards { grid-template-columns: 1fr; }
+    .strip { grid-template-columns: 1fr 1fr; }
+    .moment .item { grid-template-columns: 1fr; gap: 12px; }
+    .stat-band { grid-template-columns: 1fr; gap: 34px; padding: 38px 0; }
+    .index { padding: 26px 22px; }
+    .cta { padding: 44px 24px; }
+    .cta h3 { font-size: 30px; }
+    .topbar .nav { display: none; }
+    .pull { padding-left: 26px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand"><span class="blip"></span>REVENANT</div>
+    <div class="nav">
+      <a href="#voice" class="current">Voice</a>
+      <a href="#memory">Memory</a>
+      <a href="#archive">The Archive</a>
+      <a href="#sandbox">Sandbox</a>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="eyebrow">Field Manual · Drop-in for your server</div>
+    <h1 class="title">Fluent in <em data-text="your channel">your channel</em>.</h1>
+    <p class="lede">
+      Most chat bots wander into your server sounding like a help desk on a corporate
+      retreat. <strong>REVENANT learned to talk somewhere else</strong> — from a
+      quarter-million lines of your channel's own history. It picked up the in-jokes, the
+      cadence, the way you actually argue at 2 a.m. <span class="hl">And it remembers
+      every conversation since.</span>
+    </p>
+  </div>
+
+  <!-- ──────── Hero scene ──────── -->
+  <div class="scene hud">
+    <div class="chrome">
+      <span class="dot c"></span><span class="dot m"></span><span class="dot v"></span>
+      <span class="path">revenant://core · request_trace</span>
+    </div>
+    <svg viewBox="0 0 820 250" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="wire" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0%" stop-color="#00e6ff" />
+          <stop offset="100%" stop-color="#8a5cff" />
+        </linearGradient>
+        <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="3" result="b" />
+          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+
+      <!-- incoming message -->
+      <g>
+        <rect x="24" y="92" width="172" height="66" rx="4" fill="#0c1120" stroke="#8a5cff" stroke-width="1.2" />
+        <text x="40" y="118" font-family="JetBrains Mono" font-size="12" fill="#b3c4e0">@you:</text>
+        <text x="40" y="138" font-family="JetBrains Mono" font-size="12.5" fill="#e6f3ff">"do the usual"</text>
+        <text x="40" y="80" font-family="JetBrains Mono" font-size="9.5" fill="#43527a" letter-spacing="2">INBOUND</text>
+      </g>
+
+      <!-- core -->
+      <g filter="url(#glow)">
+        <polygon points="372,125 410,98 448,125 410,152" fill="#0a0e1a" stroke="#00e6ff" stroke-width="1.6" />
+        <text x="410" y="129" text-anchor="middle" font-family="Chakra Petch" font-weight="700" font-size="13" fill="#00e6ff">CORE</text>
+      </g>
+      <path d="M196,125 H372" stroke="url(#wire)" stroke-width="1.6" fill="none" stroke-dasharray="3 5" filter="url(#glow)" />
+
+      <!-- four nodes -->
+      <g font-family="JetBrains Mono" font-size="11">
+        <g>
+          <rect x="560" y="22" width="224" height="40" rx="4" fill="#0c1120" stroke="#00e6ff" stroke-width="1.1" />
+          <text x="576" y="40" fill="#00e6ff">▸ VOICE</text>
+          <text x="576" y="54" fill="#6d7fa6">how the channel talks</text>
+        </g>
+        <g>
+          <rect x="560" y="72" width="224" height="40" rx="4" fill="#0c1120" stroke="#00e6ff" stroke-width="1.1" />
+          <text x="576" y="90" fill="#00e6ff">▸ MEMORY</text>
+          <text x="576" y="104" fill="#6d7fa6">what it learned about you</text>
+        </g>
+        <g>
+          <rect x="560" y="122" width="224" height="40" rx="4" fill="#0c1120" stroke="#00e6ff" stroke-width="1.1" />
+          <text x="576" y="140" fill="#00e6ff">▸ ARCHIVE</text>
+          <text x="576" y="154" fill="#6d7fa6">years of IRC history</text>
+        </g>
+        <g>
+          <rect x="560" y="172" width="224" height="40" rx="4" fill="#0c1120" stroke="#00e6ff" stroke-width="1.1" />
+          <text x="576" y="190" fill="#00e6ff">▸ SANDBOX</text>
+          <text x="576" y="204" fill="#6d7fa6">runs real code, disposable VM</text>
+        </g>
+      </g>
+
+      <!-- core to nodes -->
+      <g stroke="url(#wire)" stroke-width="1.3" fill="none" opacity="0.8">
+        <path d="M448,125 C510,110 520,42 560,42" />
+        <path d="M448,125 C510,116 520,92 560,92" />
+        <path d="M448,125 C510,128 520,142 560,142" />
+        <path d="M448,125 C510,140 520,192 560,192" />
+      </g>
+
+      <!-- styled reply returning -->
+      <path d="M372,140 C300,176 250,176 196,168" stroke="#ff2d83" stroke-width="1.5" fill="none" filter="url(#glow)" />
+      <text x="300" y="208" text-anchor="middle" font-family="JetBrains Mono" font-size="12" fill="#ff2d83">"same as friday — already queued. lmk."</text>
+    </svg>
+    <div class="scene-cap">
+      One ambiguous message. The core consults <b>voice</b>, <b>memory</b>, the <b>archive</b>,
+      and — when it has to — a throwaway VM that <b>actually runs the code</b>. What comes back
+      reads like a reply from someone who's been in the channel for years.
+    </div>
+  </div>
+
+  <!-- ──────── § 01 ──────── -->
+  <section>
+    <div class="chapter-num"><b>01</b> / The problem with strangers</div>
+    <h2>Why most bots feel like a tourist in your server.</h2>
+    <p>
+      You've added a bot before. It answered in that flat, focus-grouped register —
+      <em>"As an AI assistant, I'd be happy to help!"</em> — with no idea what
+      "the usual" meant, who's been feuding since 2014, or that the channel has called
+      the build server "the toaster" for a decade.
+    </p>
+    <p>
+      That's not a tuning problem. It's an architecture problem. Most bots are
+      <strong>stateless and styleless</strong>: every message starts from a blank slate,
+      in a voice borrowed from a customer-support manual. They drop into a room with years
+      of culture and refuse to read it.
+    </p>
+    <p>
+      <strong>REVENANT is built on the opposite premise.</strong> A channel has a
+      personality — accumulated over years of late nights, bad takes, and shared
+      references. A bot that lives there should sound like it belongs, and should know
+      what already happened.
+    </p>
+  </section>
+
+  <!-- ──────── § 02 ──────── -->
+  <section style="max-width:none" id="voice">
+    <div class="chapter-num"><b>02</b> / Same prompt, two bots</div>
+    <h2>One vague message. <span class="hl">Two very different rooms.</span></h2>
+    <p style="max-width:720px">
+      Someone types four lazy words into a busy channel. Here's the gap between a generic
+      assistant and one that's actually been paying attention.
+    </p>
+
+    <div class="convo-pair">
+      <div class="convo bad">
+        <div class="label">Generic assistant</div>
+        <div class="stream">
+          <div class="who">@you</div>
+          <div class="bubble you">deploy the usual?</div>
+          <div class="who">bot</div>
+          <div class="bubble ai">I'd be happy to help with a deployment! Could you clarify what "the usual" refers to, and provide the relevant configuration details?</div>
+          <div class="who">@you</div>
+          <div class="bubble you">…we do this every friday</div>
+          <div class="bubble ai">I'm sorry, I don't have access to previous conversations. Could you walk me through the steps?</div>
+        </div>
+      </div>
+
+      <div class="convo good">
+        <div class="label">REVENANT</div>
+        <div class="stream">
+          <div class="who">@you</div>
+          <div class="bubble you">deploy the usual?</div>
+          <div class="who">revenant</div>
+          <div class="bubble ai">friday push to the toaster, v2.16 → staging first like last time after the rollback fiasco? say the word and i'll kick it.</div>
+          <div class="who">@you</div>
+          <div class="bubble you">yeah but check the sort change first</div>
+          <div class="bubble ai">ran both branches in a sandbox — new one's 1.8× faster on the 10k case, no regressions. output's on the 🐛 react if you want it. shipping.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="what-means">
+      <div class="label">The difference</div>
+      <p>
+        The second bot isn't "smarter." It has <strong>three things the first one
+        doesn't</strong>: a voice learned from your channel, a memory of what happened
+        last Friday, and the ability to actually run the code before it answers. None of
+        that is prompt-engineering theatre — it's wired into how REVENANT works.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────── Pull quote ──────── -->
+  <blockquote class="pull">
+    Your channel's voice took years of in-jokes and bad arguments to find. Anything dropped
+    into the middle of it shouldn't sound like it just <em>read the manual</em> — it should
+    sound like it was there for all of it.
+    <cite>— The continuity principle</cite>
+  </blockquote>
+
+  <!-- ──────── § 03 — cards ──────── -->
+  <section style="max-width:none" id="memory">
+    <div class="chapter-num"><b>03</b> / Under the hood</div>
+    <h2>Four systems, working in the dark.</h2>
+    <p style="max-width:720px">
+      You never configure any of this — it runs on its own. But it's worth knowing what's
+      actually behind the curtain when REVENANT answers like it belongs.
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="tag">SYS · VOICE</div>
+        <div class="glyph">◢</div>
+        <h4>It learned your accent.</h4>
+        <p>A live style profile distilled from <strong>378,000+ lines</strong> of channel
+        history and current Discord chatter, sampled across decades and rebuilt every 24
+        hours. It writes how your room writes — not how a chatbot thinks a chatbot should.</p>
+        <div class="example"><b>profile:</b> dry, lowercase, allergic to corporate cheer. refreshes daily.</div>
+      </div>
+
+      <div class="card" id="memory-card">
+        <div class="tag">SYS · MEMORY</div>
+        <div class="glyph">◇</div>
+        <h4>It remembers you, specifically.</h4>
+        <p>Long-term memory of facts and preferences — per person and shared across the
+        channel — retrieved by meaning, not keywords. Tell it once; it knows. Ask it to
+        forget, and it's gone. <strong>Your data, your call.</strong></p>
+        <div class="example"><b>recall:</b> "you prefer staging-first deploys" · "the toaster = build-01"</div>
+      </div>
+
+      <div class="card" id="archive">
+        <div class="tag">SYS · ARCHIVE</div>
+        <div class="glyph">↺</div>
+        <h4>It can reach into the past.</h4>
+        <p>Years of IRC history, searchable by meaning and styled back in your voice. Ask
+        what the channel said about something in 2009 and get a real answer — or hit
+        <code>/throwback</code> for a random ghost from this day in history.</p>
+        <div class="example"><b>/recall</b> query:"the great tabs vs spaces war" → narrative summary</div>
+      </div>
+
+      <div class="card" id="sandbox">
+        <div class="tag">SYS · SANDBOX</div>
+        <div class="glyph">▤</div>
+        <h4>It can actually <em style="color:var(--cyan);font-style:normal">do</em> things.</h4>
+        <p>When a question needs running, not guessing, REVENANT spins up a disposable
+        hardware-isolated VM, runs the code, and reports back <strong>exit code, output,
+        and timing</strong>. Each run is sealed off from the host — and torn down after.</p>
+        <div class="example"><b>run_in_sandbox:</b> python · node · go · rust — ephemeral Kata VM, 300s cap</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────── Media strip ──────── -->
+  <section style="max-width:none">
+    <div class="chapter-num"><b>03.5</b> / And it makes things</div>
+    <h2>A studio that lives in the chat.</h2>
+    <p style="max-width:720px">
+      Voice and memory are the spine. But the same bot also ships a full generative
+      toolkit — no tab-switching, no separate apps. Just ask in the channel.
+    </p>
+    <div class="strip">
+      <div class="cell">
+        <div class="k">/imagine</div>
+        <div class="t">Images</div>
+        <div class="d">Text-to-image with reference support, 10 aspect ratios, reply-to-regenerate.</div>
+      </div>
+      <div class="cell">
+        <div class="k">/videogen</div>
+        <div class="t">Video</div>
+        <div class="d">Text-to-video, single-frame animation, or first/last-frame transitions.</div>
+      </div>
+      <div class="cell">
+        <div class="k">/musicgen</div>
+        <div class="t">Music</div>
+        <div class="d">Full tracks from a description — lyrics, structure tags, MP3 in-channel.</div>
+      </div>
+      <div class="cell">
+        <div class="k">📰 react</div>
+        <div class="t">Article intel</div>
+        <div class="d">Summaries, topics, reading time, source credibility — in your voice.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────── § 04 — timeline ──────── -->
+  <section>
+    <div class="chapter-num"><b>04</b> / A night in the channel</div>
+    <h2>What this actually looks like.</h2>
+    <p>
+      The first week, it's subtle — there isn't much history yet. Give it a month of
+      living in your server and the texture changes. Four moments from a channel that's
+      had REVENANT running for a while.
+    </p>
+
+    <div class="moment">
+      <div class="item">
+        <div class="when"><span class="day">21:14</span>Someone drops a link.</div>
+        <div>
+          <h4>📰 → a summary that sounds like the room.</h4>
+          <p>A long article gets reacted with 📰. Back comes a tight summary — topic tags,
+          reading time, a credibility read on the source — written in the channel's dry
+          house style, not press-release voice.</p>
+          <p><em>"tl;dr: vendor reinvented the message queue, again. ~7 min read, source is mid."</em></p>
+        </div>
+      </div>
+
+      <div class="item">
+        <div class="when"><span class="day">23:40</span>A throwaway fact.</div>
+        <div>
+          <h4>"@revenant we moved the standup to thursdays."</h4>
+          <p>No command, no ceremony. It files the fact to channel memory. Three weeks
+          later someone asks when standup is and gets the right answer — because it was
+          listening the first time.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <div class="when"><span class="day">02:07</span>A ghost from the past.</div>
+        <div>
+          <h4>"what did we even decide about the rewrite back in '11?"</h4>
+          <p>It reaches into years of archived history, finds the thread, and answers in a
+          short styled narrative — <em>"you swore off it twice and did it anyway in march."</em>
+          What used to be lost to scrollback is one question away.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <div class="when"><span class="day">Next week</span>A real task.</div>
+        <div>
+          <h4>"benchmark these two and settle it."</h4>
+          <p>It doesn't speculate. It runs both in a sealed VM and posts the numbers, with
+          the source and full output one reaction away. <em>Institutional knowledge and a
+          working machine, in the same window you were already arguing in.</em></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────── Stat band ──────── -->
+  <div class="stat-band">
+    <div class="stat">
+      <div class="v">378K<span class="small">+ lines</span></div>
+      <div class="l">Of real channel history distilled into the voice it speaks in. Not a persona — your persona.</div>
+    </div>
+    <div class="stat">
+      <div class="v">24<span class="small">h</span></div>
+      <div class="l">The voice profile is rebuilt every day from how you're actually talking now, so it never drifts stale.</div>
+    </div>
+    <div class="stat">
+      <div class="v">∞<span class="small">memory</span></div>
+      <div class="l">Carries across every conversation, every week. Nothing forgotten just because the topic got old.</div>
+    </div>
+  </div>
+
+  <!-- ──────── Capability index ──────── -->
+  <section style="max-width:none">
+    <div class="index">
+      <div class="head">// full capability manifest</div>
+      <ol>
+        <li><b>Channel Voice</b><span>A daily-regenerated style profile learned from IRC + Discord history. Talks like your crew.</span></li>
+        <li><b>Long-Term Memory</b><span>Per-user and shared-channel facts, retrieved semantically. Tell it once; deletable on request.</span></li>
+        <li><b>IRC Archive Recall</b><span>Semantic search and styled narratives over years of history — plus "this day in history" throwbacks.</span></li>
+        <li><b>Agentic Sandbox</b><span>Runs real code in disposable hardware-isolated VMs and reports exit code, output, and timing.</span></li>
+        <li><b>Media Studio</b><span>Image, video, and music generation — and article summarization — all from inside the chat.</span></li>
+        <li><b>Catch Me Up</b><span><code>/tldr</code> DMs you what you missed — articles, trends, and chat highlights, in the group's voice.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ──────── CTA ──────── -->
+  <div class="cta">
+    <h3>Put it in your server.</h3>
+    <p>
+      No corporate onboarding, no persona to configure. Drop it in, let it read the room
+      for a while, and watch it start sounding like it was always there.
+    </p>
+    <div class="actions">
+      <a href="#" class="primary">▸ Invite REVENANT</a>
+      <a href="#voice" class="ghost">Re-read the manual ↺</a>
+    </div>
+  </div>
+
+  <footer>
+    <div><b>REVENANT</b> · field manual · built to belong</div>
+    <div>© 2026</div>
+  </footer>
+</div>
+</body>
+</html>
