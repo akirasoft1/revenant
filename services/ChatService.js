@@ -175,9 +175,10 @@ ${context}`;
       : [];
     const recentMessages = recentBuffer.map((m) => m.content).filter(Boolean);
     recentMessages.push(userMessage);
+    const emptyHash = contentHash('');
     const excludeHashes = recentBuffer
       .map((m) => contentHash(m.content || ''))
-      .filter(Boolean);
+      .filter((h) => h && h !== emptyHash);
 
     const [recall, recentContext] = await Promise.all([
       this.recallService.recall({
@@ -220,6 +221,16 @@ ${context}`;
    * @private
    */
   async _composeRecallContexts(channelId, userMessage, user, personalityId, personality) {
+    // Safety: if the recall service isn't wired (e.g. flag flipped before
+    // bot.js injects it), fall back to the legacy path instead of crashing.
+    if (!this.recallService) {
+      const [oldCtx, voiceContext] = await Promise.all([
+        this._getLegacyContext(channelId, userMessage, user, personalityId),
+        personality.useVoiceProfile ? this._getVoiceContext(channelId, userMessage) : Promise.resolve(null),
+      ]);
+      return { ...oldCtx, voiceContext };
+    }
+
     const recallCfg = this.config?.recall || {};
     const voiceP = personality.useVoiceProfile
       ? this._getVoiceContext(channelId, userMessage)

@@ -146,6 +146,44 @@ describe('ChatService._composeRecallContexts', () => {
   });
 });
 
+// ---- _composeRecallContexts: null guard (recallService unwired) -------------
+
+describe('ChatService._composeRecallContexts null-recallService guard', () => {
+  it('falls back to legacy path and does not throw when recallService is null', async () => {
+    const svc = Object.create(ChatService.prototype);
+    svc.config = { recall: { enabled: true, shadowEnabled: false } };
+    // recallService explicitly missing (simulates bot.js wiring not yet deployed)
+    svc.recallService = null;
+    const SENTINEL = { memoryContext: 'LEGACY-SENTINEL', sharedContext: 'SHARED-SENTINEL', channelContext: 'CHANNEL-SENTINEL' };
+    svc._getLegacyContext = jest.fn().mockResolvedValue(SENTINEL);
+    svc._getVoiceContext = jest.fn();
+
+    const out = await svc._composeRecallContexts('chan', 'hello', { id: 'u' }, 'p', { useVoiceProfile: false });
+
+    expect(svc._getLegacyContext).toHaveBeenCalledWith('chan', 'hello', { id: 'u' }, 'p');
+    expect(svc._getVoiceContext).not.toHaveBeenCalled();
+    expect(out.memoryContext).toBe('LEGACY-SENTINEL');
+    expect(out.sharedContext).toBe('SHARED-SENTINEL');
+    expect(out.channelContext).toBe('CHANNEL-SENTINEL');
+    expect(out.voiceContext).toBeNull();
+  });
+
+  it('still fetches voice context in the null-guard path when personality uses voice profile', async () => {
+    const svc = Object.create(ChatService.prototype);
+    svc.config = { recall: { enabled: true, shadowEnabled: false } };
+    svc.recallService = null;
+    const SENTINEL = { memoryContext: 'MEM', sharedContext: '', channelContext: '' };
+    svc._getLegacyContext = jest.fn().mockResolvedValue(SENTINEL);
+    svc._getVoiceContext = jest.fn().mockResolvedValue({ voiceInstructions: 'VOICE', fewShotBlock: '' });
+
+    const out = await svc._composeRecallContexts('chan', 'hello', { id: 'u' }, 'p', { useVoiceProfile: true });
+
+    expect(svc._getVoiceContext).toHaveBeenCalledWith('chan', 'hello');
+    expect(out.voiceContext).toMatchObject({ voiceInstructions: 'VOICE' });
+    expect(out.memoryContext).toBe('MEM');
+  });
+});
+
 // ---- prompt-size guard (Task 14b) ------------------------------------------
 
 describe('ChatService prompt-size guard', () => {
