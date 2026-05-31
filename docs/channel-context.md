@@ -148,6 +148,17 @@ Daily:
 2. Delete expired points
 3. Log cleanup completion
 
+## Interaction with Ranked Recall (v2)
+
+When `RECALL_V2_ENABLED=true`, `ChatService` no longer injects the three context tiers directly into the system prompt via `buildHybridContext`. Instead, two of the tiers are handed off to `RecallService` as ranked recall sources:
+
+- **Tier 2 (semantic history)** — supplied via `ChannelContextService.searchRelevantHistory(channelId, query)`, unchanged.
+- **Tier 3 (channel facts)** — supplied via the new `getChannelFactsRaw(channelId)` method, which returns the raw `{id, memory}` array that `getChannelFacts` would otherwise format into a string. `RecallService` needs the structured form so it can rank individual facts and use their IDs as ledger keys.
+
+The **Tier 1 in-memory buffer** is kept outside the ranker entirely. `ChatService` injects it directly into the prompt using the new `buildRecentContext(channelId)` method, which returns only the participants list and recent messages — no semantic hits and no facts. A cross-block exclusion set is maintained so a message already present in the recent buffer cannot also appear as a ranked semantic hit, preventing duplication.
+
+When `RECALL_V2_ENABLED=false` (the default), none of this applies — `buildHybridContext` assembles all three tiers as described in the section above.
+
 ## Privacy Considerations
 
 - Only tracks messages in explicitly opted-in channels

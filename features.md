@@ -1,24 +1,8 @@
-# Discord Article Bot - Features
+# Revenant - Features
+
+> **Note:** Article summarization is a legacy capability — retained for backwards compatibility but de-emphasized. The bot's current focus is AI chat in a learned channel voice, conversation and long-term memory, IRC history recall, an agentic code-execution sandbox, and image/video/music generation.
 
 ## Implemented Features
-
-### Core Summarization
-- **Reaction-based Summarization**: React with 📰 to trigger summarization
-- **Command-based Summarization**: `/summarize <url>` and `/resummarize <url>`
-- **Duplicate Detection**: Notifies if article was previously shared
-- **Force Re-summarization**: Bypass duplicate check with `/resummarize`
-
-### Content Analysis
-- **Topic Detection**: Automatically tags articles with topics
-- **Sentiment Analysis**: Emoji reactions based on article mood
-- **Reading Time Estimator**: Calculates estimated reading time
-- **Source Credibility**: Star ratings for known sources
-
-### Linkwarden Integration
-- **Self-hosted Archiving**: Archive articles via Linkwarden
-- **Paywall Bypass**: Browser extension captures authenticated content
-- **Automatic Polling**: Monitors collection for new links
-- **Multiple Formats**: Supports readable, monolith, and PDF archives
 
 ### Chat
 - **Channel Voice**: Bot uses a learned group communication style as its voice, dynamically generated from IRC history and Discord messages
@@ -173,6 +157,26 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **RSS Feed Monitoring**: Auto-post from configured feeds
 - **Follow-up Tracker**: Mark stories for updates (📚 reaction)
 - **Related Articles**: Suggests similar previously shared articles
+
+### Legacy — Article Summarization & Archiving
+
+#### Core Summarization
+- **Reaction-based Summarization**: React with 📰 to trigger summarization
+- **Command-based Summarization**: `/summarize <url>` and `/resummarize <url>`
+- **Duplicate Detection**: Notifies if article was previously shared
+- **Force Re-summarization**: Bypass duplicate check with `/resummarize`
+
+#### Content Analysis
+- **Topic Detection**: Automatically tags articles with topics
+- **Sentiment Analysis**: Emoji reactions based on article mood
+- **Reading Time Estimator**: Calculates estimated reading time
+- **Source Credibility**: Star ratings for known sources
+
+#### Linkwarden Integration
+- **Self-hosted Archiving**: Archive articles via Linkwarden
+- **Paywall Bypass**: Browser extension captures authenticated content
+- **Automatic Polling**: Monitors collection for new links
+- **Multiple Formats**: Supports readable, monolith, and PDF archives
 
 ---
 
