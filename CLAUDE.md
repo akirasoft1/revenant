@@ -165,6 +165,14 @@ The `channel-voice` personality dynamically learns the group's communication sty
 
 **Profile storage**: MongoDB `voice_profiles` collection. Versioned with `previousVersion` for history.
 
+## Recall (v2 centralized ranked recall)
+
+`RecallService` (`services/RecallService.js`) replaces the scattered Mem0 + channel-context recall when `RECALL_V2_ENABLED=true`. It over-retrieves from all sources, dedupes, ranks by recency+importance (Mongo `recall_ledger` holds importance/access/last-access), and injects one `## Memory Context` block. Pure logic in `services/recall/` (ranking, queryBuilder, adapters, evalMetrics).
+
+- **Validate before flipping on**: run `node scripts/eval-recall.js` (offline ranker eval) and enable `RECALL_SHADOW_ENABLED=true` to log old-vs-new to `recall_comparisons`.
+- Recent buffer + voice few-shot are intentionally NOT ranked (separate blocks).
+- Spec: `docs/superpowers/specs/2026-05-30-centralized-ranked-recall-design.md`.
+
 ## Agentic Sandbox
 
 When `AGENT_ENABLED=true`, channel-voice chats are routed through the Python agent sidecar (`discord-article-bot-agent`). The sidecar is an ADK Agent with one tool — `run_in_sandbox` — that spawns ephemeral pods per execution and returns `{exit_code, stdout, stderr, duration_ms, egress_events, runtime_events}` to the model. Other personalities are unaffected.

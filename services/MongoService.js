@@ -58,6 +58,18 @@ class MongoService {
             this.db.collection('channel_messages').createIndex(
               { channelId: 1, timestamp: 1 }
             ).catch(err => logger.debug(`Index creation (channel_messages): ${err.message}`));
+            this.db.collection('recall_ledger').createIndex(
+              { memoryKey: 1 }, { unique: true }
+            ).catch(err => logger.debug(`Index creation (recall_ledger): ${err.message}`));
+            this.db.collection('recall_ledger').createIndex(
+              { expiresAt: 1 }
+            ).catch(err => logger.debug(`Index creation (recall_ledger.expiresAt): ${err.message}`));
+            this.db.collection('recall_ledger').createIndex(
+              { contentHash: 1 }
+            ).catch(err => logger.debug(`Index creation (recall_ledger.contentHash): ${err.message}`));
+            this.db.collection('recall_comparisons').createIndex(
+              { ts: 1 }
+            ).catch(err => logger.debug(`Index creation (recall_comparisons): ${err.message}`));
         } catch (error) {
             logger.error('Error connecting to MongoDB:', error);
         }
@@ -1389,6 +1401,73 @@ class MongoService {
         } catch (error) {
             logger.error(`Error fetching recent channel messages for ${channelId}: ${error.message}`);
             return [];
+        }
+    }
+
+    // ==================== RECALL LEDGER ====================
+
+    async getRecallLedger(memoryKeys) {
+        if (!this.db || !memoryKeys || memoryKeys.length === 0) return {};
+        try {
+            const rows = await this.db.collection('recall_ledger')
+                .find({ memoryKey: { $in: memoryKeys } }).toArray();
+            const byKey = {};
+            for (const r of rows) byKey[r.memoryKey] = r;
+            return byKey;
+        } catch (error) {
+            logger.error(`Error reading recall_ledger: ${error.message}`);
+            return {};
+        }
+    }
+
+    async bumpRecallAccess(entries, opts = {}) {
+        if (!this.db || !entries || entries.length === 0) return;
+        const now = new Date();
+        const nudge = typeof opts.nudge === 'number' ? opts.nudge : 0.02;
+        const max = typeof opts.importanceMax === 'number' ? opts.importanceMax : 1.0;
+        try {
+            const ops = entries.map((e) => ({
+                updateOne: {
+                    filter: { memoryKey: e.memoryKey },
+                    update: [
+                        { $set: {
+                            memoryKey: e.memoryKey,
+                            scope: e.scope || {},
+                            source: e.source || null,
+                            contentHash: e.contentHash || null,
+                            accessCount: { $add: [{ $ifNull: ['$accessCount', 0] }, 1] },
+                            importance: { $min: [max, { $add: [{ $ifNull: ['$importance', e.importanceSeed != null ? e.importanceSeed : 0.5] }, nudge] }] },
+                            firstSeenAtUtc: { $ifNull: ['$firstSeenAtUtc', now] },
+                            lastAccessedAtUtc: now,
+                            expiresAt: { $ifNull: ['$expiresAt', e.expiresAt || null] },
+                        } },
+                    ],
+                    upsert: true,
+                },
+            }));
+            await this.db.collection('recall_ledger').bulkWrite(ops, { ordered: false });
+        } catch (error) {
+            logger.error(`Error bumping recall_ledger: ${error.message}`);
+        }
+    }
+
+    async pruneRecallLedger(now = new Date()) {
+        if (!this.db) return 0;
+        try {
+            const res = await this.db.collection('recall_ledger').deleteMany({ expiresAt: { $ne: null, $lt: now } });
+            return res.deletedCount || 0;
+        } catch (error) {
+            logger.error(`Error pruning recall_ledger: ${error.message}`);
+            return 0;
+        }
+    }
+
+    async recordRecallComparison(doc) {
+        if (!this.db) return;
+        try {
+            await this.db.collection('recall_comparisons').insertOne({ ...doc, ts: doc.ts || new Date() });
+        } catch (error) {
+            logger.error(`Error recording recall_comparison: ${error.message}`);
         }
     }
 }

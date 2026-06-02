@@ -1,6 +1,8 @@
-# Discord Article Bot
+# Revenant
 
-A Discord bot with AI chat (channel-voice personality), image/video/music generation, IRC history search, and article summarization.
+> Deploys under the legacy name `discord-article-bot` — the Kubernetes namespace, Docker image, and all deployment identifiers are intentionally unchanged.
+
+A Discord bot centered on AI chat in a dynamically learned channel voice, long-term and ranked memory, IRC history recall, an agentic code-execution sandbox, and image/video/music generation — with article summarization retained as a legacy capability.
 
 For the system-level overview (software architecture + Kubernetes deployment topology, both with Mermaid diagrams), see [`docs/architecture.md`](docs/architecture.md). For deploy and operational details, see [`kubernetes.md`](kubernetes.md).
 
@@ -314,6 +316,31 @@ discord-article-bot/
 | `CHANNEL_CONTEXT_RETENTION_DAYS` | `30` | Retention period for indexed messages |
 | `CHANNEL_CONTEXT_SEARCH_THRESHOLD` | `0.4` | Score threshold for semantic search |
 | `CHANNEL_CONTEXT_EXTRACT_MEMORIES` | `false` | Enable Mem0 memory extraction from channel messages |
+
+### Recall (v2 ranked recall) Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RECALL_V2_ENABLED` | `false` | Route chat recall through the centralized ranked RecallService |
+| `RECALL_SHADOW_ENABLED` | `false` | Compute old + new recall per turn and log both to `recall_comparisons` |
+| `RECALL_SHADOW_INJECT` | `old` | Which path feeds the prompt during shadow mode (`old`/`new`) |
+| `RECALL_PER_SOURCE_LIMIT` | `10` | Over-retrieval cap per source before ranking |
+| `RECALL_MAX_ITEMS` | `8` | Max memories in the Memory Context block |
+| `RECALL_TOKEN_BUDGET` | `600` | Token ceiling for the Memory Context block |
+| `RECALL_PROMPT_MAX_TOKENS` | `4000` | Overall assembled-prompt token ceiling; memory block trimmed first if exceeded |
+| `RECALL_HALF_LIFE_DAYS` | `14` | Recency decay half-life in days |
+| `RECALL_ACCESS_BOOST_ALPHA` | `0.1` | Access-count boost coefficient |
+| `RECALL_IMPORTANCE_SEED` | `0.5` | Seed importance for first-sight memories |
+| `RECALL_IMPORTANCE_SEED_EXPLICIT` | `0.7` | Seed importance for explicit (user-authored) memories |
+| `RECALL_IMPORTANCE_NUDGE` | `0.02` | Importance increment per access (capped at `RECALL_IMPORTANCE_MAX`) |
+| `RECALL_IMPORTANCE_MAX` | `1.0` | Importance ceiling |
+| `RECALL_QUERY_STRATEGY` | `recent-window` | `last-message` / `recent-window` / `llm-condense` |
+| `RECALL_QUERY_WINDOW` | `3` | Number of recent messages used to build the recall query |
+| `RECALL_W_EXPLICIT` | `1.3` | Ranking weight for `mem0:explicit` source |
+| `RECALL_W_SHARED` | `1.1` | Ranking weight for `mem0:shared` source |
+| `RECALL_W_CHANNEL_FACTS` | `1.0` | Ranking weight for `channel:facts` source |
+| `RECALL_W_PERSONAL` | `1.0` | Ranking weight for `mem0:personal` source |
+| `RECALL_W_CHANNEL_SEMANTIC` | `0.8` | Ranking weight for `channel:semantic` source |
 
 ## Commands
 

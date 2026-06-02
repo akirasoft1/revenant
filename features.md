@@ -1,24 +1,8 @@
-# Discord Article Bot - Features
+# Revenant - Features
+
+> **Note:** Article summarization is a legacy capability — retained for backwards compatibility but de-emphasized. The bot's current focus is AI chat in a learned channel voice, conversation and long-term memory, IRC history recall, an agentic code-execution sandbox, and image/video/music generation.
 
 ## Implemented Features
-
-### Core Summarization
-- **Reaction-based Summarization**: React with 📰 to trigger summarization
-- **Command-based Summarization**: `/summarize <url>` and `/resummarize <url>`
-- **Duplicate Detection**: Notifies if article was previously shared
-- **Force Re-summarization**: Bypass duplicate check with `/resummarize`
-
-### Content Analysis
-- **Topic Detection**: Automatically tags articles with topics
-- **Sentiment Analysis**: Emoji reactions based on article mood
-- **Reading Time Estimator**: Calculates estimated reading time
-- **Source Credibility**: Star ratings for known sources
-
-### Linkwarden Integration
-- **Self-hosted Archiving**: Archive articles via Linkwarden
-- **Paywall Bypass**: Browser extension captures authenticated content
-- **Automatic Polling**: Monitors collection for new links
-- **Multiple Formats**: Supports readable, monolith, and PDF archives
 
 ### Chat
 - **Channel Voice**: Bot uses a learned group communication style as its voice, dynamically generated from IRC history and Discord messages
@@ -50,6 +34,13 @@
 - **Personality-Scoped**: Memories can be filtered by personality for relevant context
 - **Graceful Degradation**: Bot works normally if memory service (Qdrant) is unavailable
 - **GDPR Compliance**: Users can request deletion of all their memories
+
+### Centralized Ranked Recall (v2)
+- **One recall step**: `RecallService` queries all content sources (Mem0 personal/explicit/shared, channel semantic hits, channel facts), dedupes across them, ranks by recency + importance with a 14-day decay half-life and access-count boosting, bounds to a token/item budget, and emits a single provenance-tagged `## Memory Context` block.
+- **Recall ledger**: MongoDB `recall_ledger` tracks per-memory importance, access count, and last-access (the signals Mem0 doesn't expose), lazily populated and pruned by expiry.
+- **Recent buffer + voice few-shot stay separate**: verbatim recency and style grounding are not run through the ranker; a cross-block exclusion-set prevents the buffer and semantic hits from double-injecting.
+- **Validation**: offline eval harness (`scripts/eval-recall.js`) over `eval/recall/*.json`, plus `recall_comparisons` A/B shadow logging.
+- **Flags**: `RECALL_V2_ENABLED` (default off), `RECALL_SHADOW_ENABLED`, `RECALL_SHADOW_INJECT`.
 
 ### Multiplayer Chat
 - **Participant Awareness**: Bot tracks who's active in each channel (30-minute window)
@@ -166,6 +157,26 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **RSS Feed Monitoring**: Auto-post from configured feeds
 - **Follow-up Tracker**: Mark stories for updates (📚 reaction)
 - **Related Articles**: Suggests similar previously shared articles
+
+### Legacy — Article Summarization & Archiving
+
+#### Core Summarization
+- **Reaction-based Summarization**: React with 📰 to trigger summarization
+- **Command-based Summarization**: `/summarize <url>` and `/resummarize <url>`
+- **Duplicate Detection**: Notifies if article was previously shared
+- **Force Re-summarization**: Bypass duplicate check with `/resummarize`
+
+#### Content Analysis
+- **Topic Detection**: Automatically tags articles with topics
+- **Sentiment Analysis**: Emoji reactions based on article mood
+- **Reading Time Estimator**: Calculates estimated reading time
+- **Source Credibility**: Star ratings for known sources
+
+#### Linkwarden Integration
+- **Self-hosted Archiving**: Archive articles via Linkwarden
+- **Paywall Bypass**: Browser extension captures authenticated content
+- **Automatic Polling**: Monitors collection for new links
+- **Multiple Formats**: Supports readable, monolith, and PDF archives
 
 ---
 

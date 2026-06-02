@@ -1,0 +1,11 @@
+[
+  {
+    "name": "acme payment terms",
+    "expectedKeys": ["mem0:explicit:1", "channel:facts:9"],
+    "candidates": [
+      { "key": "mem0:explicit:1", "source": "mem0:explicit", "type": "fact", "text": "Acme is on net-30 terms", "similarity": 0.82, "timestamp": null, "contentHash": "h1", "provenance": { "tag": "explicit" }, "importance": 0.7, "accessCount": 3, "lastAccessedAtUtc": "2026-05-20T00:00:00Z" },
+      { "key": "channel:facts:9", "source": "channel:facts", "type": "channel-fact", "text": "vendor handbook: orders over 50k default net-30", "similarity": 0.66, "timestamp": null, "contentHash": "h2", "provenance": { "tag": "channel" }, "importance": 0.5, "accessCount": 0, "lastAccessedAtUtc": null },
+      { "key": "channel:semantic:h3", "source": "channel:semantic", "type": "message", "text": "lunch tomorrow?", "similarity": 0.41, "timestamp": "2026-01-02T00:00:00Z", "contentHash": "h3", "provenance": { "tag": "history" }, "importance": 0.5, "accessCount": 0, "lastAccessedAtUtc": null }
+    ]
+  }
+]

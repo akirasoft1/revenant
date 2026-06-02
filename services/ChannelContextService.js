@@ -344,6 +344,23 @@ class ChannelContextService {
   }
 
   /**
+   * Get recent messages as raw buffered message objects (NOT a formatted string).
+   * Mirrors getRecentContext's source + bot-filtering, but returns the underlying
+   * objects so callers (e.g. the v2 recall path) can read raw content/authorName
+   * and compute content hashes for cross-block exclusion.
+   * @param {string} channelId - Channel ID
+   * @param {number} limit - Number of messages to return
+   * @returns {Array<{authorName: string, content: string, isBot: boolean}>}
+   */
+  getRecentMessagesRaw(channelId, limit = 10) {
+    const buffer = this.channelBuffers.get(channelId);
+    if (!buffer) return [];
+
+    const messages = buffer.messages.getRecent(limit);
+    return messages.filter(m => !m.isBot);
+  }
+
+  /**
    * Get buffer size for a channel
    * @param {string} channelId - Channel ID
    * @returns {number} Number of messages in buffer
@@ -784,6 +801,24 @@ class ChannelContextService {
     }
   }
 
+  /**
+   * Get channel-level facts from Mem0 as raw memory objects ({id, memory, ...}),
+   * for structured consumers like RecallService. getChannelFacts() returns a
+   * preformatted string for the legacy prompt path; this returns the array.
+   * @param {string} channelId
+   * @returns {Promise<Array>} raw Mem0 result items, or [] when unavailable
+   */
+  async getChannelFactsRaw(channelId) {
+    if (!this.mem0Service?.isEnabled()) return [];
+    try {
+      const result = await this.mem0Service.getUserMemories(`channel:${channelId}`, { limit: 5 });
+      return (result && result.results) ? result.results : [];
+    } catch (error) {
+      logger.debug(`Error getting raw channel facts: ${error.message}`);
+      return [];
+    }
+  }
+
   // ========== Hybrid Context Building ==========
 
   /**
@@ -835,6 +870,34 @@ class ChannelContextService {
       logger.error(`Error building hybrid context: ${error.message}`);
       return '';
     }
+  }
+
+  /**
+   * Build ONLY the participant list + recent in-memory buffer for a channel.
+   * No semantic hits, no channel facts. Used by the v2 recall path, which
+   * sources semantic/fact recall through RecallService instead.
+   *
+   * Accessors used (matching buildHybridContext):
+   *   getParticipantContext(channelId) → formatted string
+   *   getRecentContext(channelId)      → formatted string ("[author]: content\n...")
+   *
+   * @param {string} channelId
+   * @returns {Promise<string>} formatted block, or '' when there is nothing
+   */
+  async buildRecentContext(channelId) {
+    const participantContext = this.getParticipantContext(channelId);
+    const recent = this.getRecentContext(channelId);
+
+    if (!participantContext && !recent) return '';
+
+    const parts = [];
+    if (participantContext) {
+      parts.push(participantContext);
+    }
+    if (recent) {
+      parts.push(`Recent channel conversation:\n${recent}`);
+    }
+    return `\n\n${parts.join('\n\n')}`;
   }
 
   // ========== Stats and Diagnostics ==========

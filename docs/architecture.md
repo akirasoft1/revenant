@@ -61,6 +61,16 @@ flowchart LR
             SandboxTraceService
         end
 
+        subgraph RecallV2[Recall v2 - RECALL_V2_ENABLED]
+            RecallService
+            subgraph RecallModules[services/recall/]
+                Adapters[adapters.js<br/>per-source fetch]
+                Ranking[ranking.js<br/>recency/importance decay]
+                QueryBuilder[queryBuilder.js]
+                EvalMetrics[evalMetrics.js]
+            end
+        end
+
         MongoService
         TokenService
         LocalLlmService
@@ -77,7 +87,7 @@ flowchart LR
     end
 
     subgraph DataStores[Data stores]
-        Mongo[(MongoDB<br/>articles, messages, voice_profiles,<br/>sandbox_executions, token_usage)]
+        Mongo[(MongoDB<br/>articles, messages, voice_profiles,<br/>sandbox_executions, token_usage,<br/>recall_ledger, recall_comparisons)]
         Qdrant[(Qdrant<br/>irc_history, channel_conversations,<br/>discord_memories)]
         PG[(Postgres + pgvector<br/>mem0 internal store)]
     end
@@ -110,6 +120,13 @@ flowchart LR
     ChatService --> AgentClient
     ChatService --> OpenAI
     ChatService --> QdrantService
+    ChatService -.RECALL_V2_ENABLED.-> RecallService
+    RecallService --> Adapters
+    Adapters --> Mem0Service
+    Adapters --> QdrantService
+    Adapters --> Mongo
+    RecallService --> Ranking
+    RecallService --> QueryBuilder
 
     AgentClient -.gRPC :50051.-> ADK
     ADK --> Tool
@@ -164,6 +181,8 @@ flowchart LR
     class OpenAI,Gemini,Vertex,LyriaAPI,ElevenLabs,Linkwarden,Ollama,DT external
     classDef sandbox fill:#fee2e2,stroke:#991b1b
     class SandboxPod,Orchestrator sandbox
+    classDef recall fill:#f0fdf4,stroke:#166534
+    class RecallService,Adapters,Ranking,QueryBuilder,EvalMetrics recall
 ```
 
 ### Software-flow notes
@@ -174,6 +193,17 @@ flowchart LR
   - applies the voice profile (group communication style learned from IRC + Discord history)
   - injects 3-way mem0 memories (per-user, per-channel-shared, personality-scoped)
   - routes through `AgentClient` (gRPC to the Python sidecar) when `AGENT_ENABLED=true` and the sidecar is healthy, falling through to direct OpenAI when not
+- **Centralized ranked recall (v2) — flag-gated via `RECALL_V2_ENABLED`.** When enabled, `ChatService` delegates memory retrieval to `RecallService` instead of its legacy scattered calls. The pipeline is:
+  1. **Build query** — `services/recall/queryBuilder.js` derives a semantic query string from the recent conversation.
+  2. **Over-retrieve from five sources** — per-source adapters in `services/recall/adapters.js` fan out to: Mem0 personal memories, Mem0 explicit memories, Mem0 shared/channel memories, Qdrant channel semantic hits (`ChannelContextService`), and Qdrant channel facts.
+  3. **Exclude / dedupe** — results that appear verbatim in the recent conversation buffer are dropped; duplicates across sources are collapsed.
+  4. **Ledger-enrich** — each candidate is looked up in the `recall_ledger` MongoDB collection (lazily upserted on first access) to pull `importanceScore`, `accessCount`, and `lastAccess`. The ledger is pruned daily.
+  5. **Rank / decay** — `services/recall/ranking.js` applies a 14-day half-life recency decay combined with the ledger importance + access-count signals; results are sorted descending and truncated to a token/item budget.
+  6. **Single injection** — the ranked set is injected as one provenance-tagged `## Memory Context` block in the system prompt.
+  - **Legacy fallback**: when `RECALL_V2_ENABLED=false` (default) or when `RecallService` is not wired in, `ChatService` follows the original scattered recall path unchanged.
+  - **Shadow mode**: `RECALL_SHADOW_ENABLED=true` runs both pipelines and logs a comparison doc to the `recall_comparisons` MongoDB collection without changing what the model sees. `RECALL_SHADOW_INJECT` promotes the v2 block into the prompt even in shadow mode.
+  - **Buffer and few-shot stay separate**: the recent-conversation rolling buffer and voice-profile few-shot examples are assembled outside `RecallService` and are not ranked/decayed.
+  - **Offline eval**: `scripts/eval-recall.js` + `services/recall/evalMetrics.js` provide a harness for offline quality measurement.
 - **Each media-gen service owns its own `CostService` instance.** Per-call costs are surfaced in pod log lines; the `/stats` Discord command reads MongoDB's `token_usage` collection and does not yet surface media-gen rows (see Approach B in `features.md`).
 - **Slash commands take services as constructor args** so the same service can be invoked from `bot.js` boot wiring (real services) or from `scripts/registerCommands.js` (passes `null` because it only needs the schema).
 - **`SandboxTraceService`** is a read-side companion to the agent sidecar's write path. The agent writes a doc into MongoDB `sandbox_executions` per `run_in_sandbox` call; `ReactionHandler` watches for 🔍 / 📜 / 🐛 reactions on bot replies and asks `SandboxTraceService` for the corresponding artifact.
@@ -190,6 +220,7 @@ flowchart LR
 | `LINKWARDEN_ENABLED=false` | No article-archive polling; `/summarize` still works with direct URL fetches. |
 | `RSS_FEEDS_ENABLED=false` | No automated feed posting. |
 | `LOCAL_LLM_ENABLED=false` | No Ollama fallback; cloud-only. |
+| `RECALL_V2_ENABLED=false` | ChatService uses the legacy scattered recall path; `RecallService` and the `recall_ledger` are dormant. Shadow logging of old-vs-new blocks is still available independently via `RECALL_SHADOW_ENABLED=true` (logs to `recall_comparisons`; does not change what the model sees unless `RECALL_SHADOW_INJECT=true`). |
 
 ---
 

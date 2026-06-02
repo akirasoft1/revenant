@@ -303,6 +303,31 @@ module.exports = {
     // Interval for memory extraction (number of messages between extractions)
     memoryExtractionInterval: parseInt(process.env.CHANNEL_CONTEXT_MEMORY_INTERVAL || '50', 10)
   },
+  // Recall - centralized, ranked memory retrieval (spec 2026-05-30)
+  recall: {
+    enabled: process.env.RECALL_V2_ENABLED === 'true',
+    shadowEnabled: process.env.RECALL_SHADOW_ENABLED === 'true',
+    shadowInject: process.env.RECALL_SHADOW_INJECT || 'old', // 'old' | 'new'
+    perSourceLimit: parseInt(process.env.RECALL_PER_SOURCE_LIMIT || '10', 10),
+    maxItems: parseInt(process.env.RECALL_MAX_ITEMS || '8', 10),
+    tokenBudget: parseInt(process.env.RECALL_TOKEN_BUDGET || '600', 10),
+    promptMaxTokens: parseInt(process.env.RECALL_PROMPT_MAX_TOKENS || '4000', 10),
+    halfLifeDays: parseFloat(process.env.RECALL_HALF_LIFE_DAYS || '14'),
+    accessBoostAlpha: parseFloat(process.env.RECALL_ACCESS_BOOST_ALPHA || '0.1'),
+    importanceSeed: parseFloat(process.env.RECALL_IMPORTANCE_SEED || '0.5'),
+    importanceSeedExplicit: parseFloat(process.env.RECALL_IMPORTANCE_SEED_EXPLICIT || '0.7'),
+    importanceNudge: parseFloat(process.env.RECALL_IMPORTANCE_NUDGE || '0.02'),
+    importanceMax: parseFloat(process.env.RECALL_IMPORTANCE_MAX || '1.0'),
+    queryStrategy: process.env.RECALL_QUERY_STRATEGY || 'recent-window', // last-message | recent-window | llm-condense
+    queryWindow: parseInt(process.env.RECALL_QUERY_WINDOW || '3', 10),
+    sourceWeights: {
+      'mem0:explicit': parseFloat(process.env.RECALL_W_EXPLICIT || '1.3'),
+      'mem0:shared': parseFloat(process.env.RECALL_W_SHARED || '1.1'),
+      'channel:facts': parseFloat(process.env.RECALL_W_CHANNEL_FACTS || '1.0'),
+      'mem0:personal': parseFloat(process.env.RECALL_W_PERSONAL || '1.0'),
+      'channel:semantic': parseFloat(process.env.RECALL_W_CHANNEL_SEMANTIC || '0.8'),
+    },
+  },
   // Voice Profile - dynamic style learning from channel history
   voiceProfile: {
     enabled: process.env.VOICE_PROFILE_ENABLED === 'true',

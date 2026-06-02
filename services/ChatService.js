@@ -15,7 +15,7 @@ const LIMITS = {
 };
 
 class ChatService {
-  constructor(openaiClient, config, mongoService, mem0Service = null, channelContextService = null, voiceProfileService = null, qdrantService = null, agentClient = null) {
+  constructor(openaiClient, config, mongoService, mem0Service = null, channelContextService = null, voiceProfileService = null, qdrantService = null, agentClient = null, recallService = null) {
     this.openaiClient = openaiClient;
     this.config = config;
     this.mongoService = mongoService;
@@ -24,6 +24,8 @@ class ChatService {
     this.voiceProfileService = voiceProfileService;
     this.qdrantService = qdrantService;
     this.agentClient = agentClient;
+    // v2 centralized ranked recall (RecallService); null disables the v2 path.
+    this.recallService = recallService;
   }
 
   /**
@@ -50,11 +52,31 @@ class ChatService {
 
     const fewShotBlock = voiceContext?.fewShotBlock || '';
 
-    return `${systemPrompt}
+    const assembled = `${systemPrompt}
 
 You are in a group conversation with multiple users in a Discord channel.
 Their names appear before their messages like "[Username]: message".
 Address users by name when relevant. Do not announce when new users join the conversation.${memoryContext}${sharedContext}${channelContext}${fewShotBlock}`;
+
+    // Cross-block prompt-size guard (recall v2): when the fully assembled prompt
+    // exceeds the configured ceiling, trim the Memory Context block FIRST (it is
+    // the most compressible / lowest-priority block), line-by-line from the
+    // bottom, so the verbatim recent-conversation and voice blocks are preserved.
+    const max = this.config?.recall?.promptMaxTokens;
+    if (max && memoryContext && countTokens(assembled) > max) {
+      const header = '\n\n## Memory Context\n';
+      if (memoryContext.startsWith(header)) {
+        let lines = memoryContext.slice(header.length).split('\n');
+        let trimmed = memoryContext;
+        while (lines.length > 0 && countTokens(assembled.replace(memoryContext, trimmed)) > max) {
+          lines = lines.slice(0, -1);
+          trimmed = lines.length ? header + lines.join('\n') : '';
+        }
+        return assembled.replace(memoryContext, trimmed);
+      }
+    }
+
+    return assembled;
   }
 
   /**
@@ -128,6 +150,137 @@ ${context}`;
       logger.debug(`Error getting voice context: ${error.message}`);
       return null;
     }
+  }
+
+  /**
+   * v2 recall path: gather the prompt context strings sourced from RecallService
+   * (the single ranked `## Memory Context` block) plus the separate recent-buffer
+   * block. The shared-memory block folds into recall, so sharedContext is ''.
+   *
+   * The recall query is built from the raw recent buffer (current userMessage
+   * appended last), and the buffer's content hashes are passed as excludeHashes
+   * so verbatim recent messages aren't double-injected via semantic recall.
+   * @param {string} channelId
+   * @param {string} userMessage
+   * @param {Object} user - Discord user object (uses user.id)
+   * @param {string} personalityId
+   * @returns {Promise<{memoryContext:string, sharedContext:string, channelContext:string, recallDebug:Object}>}
+   * @private
+   */
+  async _getRecallContext(channelId, userMessage, user, personalityId) {
+    const { contentHash } = require('./recall/ranking');
+
+    const recentBuffer = this.channelContextService?.getRecentMessagesRaw
+      ? (this.channelContextService.getRecentMessagesRaw(channelId) || [])
+      : [];
+    const recentMessages = recentBuffer.map((m) => m.content).filter(Boolean);
+    recentMessages.push(userMessage);
+    const emptyHash = contentHash('');
+    const excludeHashes = recentBuffer
+      .map((m) => contentHash(m.content || ''))
+      .filter((h) => h && h !== emptyHash);
+
+    const [recall, recentContext] = await Promise.all([
+      this.recallService.recall({
+        recentMessages,
+        scope: { userId: user.id, channelId, personalityId },
+        excludeHashes,
+      }),
+      this.channelContextService?.buildRecentContext
+        ? this.channelContextService.buildRecentContext(channelId)
+        : Promise.resolve(''),
+    ]);
+
+    return {
+      memoryContext: recall.block || '',
+      sharedContext: '',
+      channelContext: recentContext || '',
+      recallDebug: recall,
+    };
+  }
+
+  /**
+   * Legacy recall path (today's behavior), extracted so shadow mode can run it
+   * alongside the v2 path. Returns the same context-string shape as the v2 path.
+   * @returns {Promise<{memoryContext:string, sharedContext:string, channelContext:string}>}
+   * @private
+   */
+  async _getLegacyContext(channelId, userMessage, user, personalityId) {
+    const [{ context, sharedContext }, channelContext] = await Promise.all([
+      this._getRelevantMemories(userMessage, user.id, personalityId, channelId),
+      this._getChannelContext(channelId, userMessage),
+    ]);
+    return { memoryContext: context, sharedContext, channelContext };
+  }
+
+  /**
+   * Decide which recall path feeds the prompt and (optionally) shadow-log the other.
+   * With recall.enabled=false and recall.shadowEnabled=false this is byte-for-byte
+   * the legacy path (recall is never invoked).
+   * @returns {Promise<{memoryContext:string, sharedContext:string, channelContext:string, voiceContext:Object|null}>}
+   * @private
+   */
+  async _composeRecallContexts(channelId, userMessage, user, personalityId, personality) {
+    // Safety: if the recall service isn't wired (e.g. flag flipped before
+    // bot.js injects it), fall back to the legacy path instead of crashing.
+    if (!this.recallService) {
+      const [oldCtx, voiceContext] = await Promise.all([
+        this._getLegacyContext(channelId, userMessage, user, personalityId),
+        personality.useVoiceProfile ? this._getVoiceContext(channelId, userMessage) : Promise.resolve(null),
+      ]);
+      return { ...oldCtx, voiceContext };
+    }
+
+    const recallCfg = this.config?.recall || {};
+    const voiceP = personality.useVoiceProfile
+      ? this._getVoiceContext(channelId, userMessage)
+      : Promise.resolve(null);
+
+    const wantNew = !!(recallCfg.enabled || recallCfg.shadowEnabled);
+    const wantOld = !recallCfg.enabled || !!recallCfg.shadowEnabled;
+
+    const [newCtx, oldCtx, voiceContext] = await Promise.all([
+      wantNew ? this._getRecallContext(channelId, userMessage, user, personalityId) : Promise.resolve(null),
+      wantOld ? this._getLegacyContext(channelId, userMessage, user, personalityId) : Promise.resolve(null),
+      voiceP,
+    ]);
+
+    // Shadow mode: log old vs new without blocking the turn.
+    if (recallCfg.shadowEnabled && newCtx && oldCtx) {
+      this._logRecallShadow(channelId, userMessage, user, personalityId, oldCtx, newCtx)
+        .catch((e) => logger.debug(`recall shadow log failed: ${e.message}`));
+    }
+
+    const injectNew = !!(recallCfg.enabled || recallCfg.shadowInject === 'new');
+    const chosen = (injectNew ? newCtx : oldCtx) || oldCtx || newCtx;
+    return {
+      memoryContext: chosen.memoryContext || '',
+      sharedContext: chosen.sharedContext || '',
+      channelContext: chosen.channelContext || '',
+      voiceContext,
+    };
+  }
+
+  /**
+   * Write an A/B comparison of the legacy vs v2 recall blocks to MongoDB.
+   * Best-effort: callers should not await this in the hot path.
+   * @private
+   */
+  async _logRecallShadow(channelId, userMessage, user, personalityId, oldCtx, newCtx) {
+    if (!this.mongoService?.recordRecallComparison) return;
+    await this.mongoService.recordRecallComparison({
+      query: userMessage,
+      derivedQuery: newCtx.recallDebug?.query || null,
+      scope: { userId: user.id, channelId, personalityId },
+      oldBlock: `${oldCtx.memoryContext || ''}${oldCtx.sharedContext || ''}`,
+      newBlock: newCtx.memoryContext || '',
+      // oldKeys intentionally omitted: the legacy path produces formatted strings,
+      // not structured candidate keys — synthesizing them would be misleading.
+      newKeys: (newCtx.recallDebug?.candidates || []).map((c) => c.key),
+      weights: this.config?.recall?.sourceWeights || null,
+      strategy: this.config?.recall?.queryStrategy || null,
+      ts: new Date(),
+    });
   }
 
   /**
@@ -490,14 +643,12 @@ ${context}`;
 
       logger.info(`Chat request from ${user.username} using personality: ${personality.name} (channel: ${channelId})`);
 
-      // Retrieve relevant memories for this user (if Mem0 is enabled)
-      // 3-way search: personality memories + explicit memories + shared channel memories
-      // Also retrieve channel context for conversation awareness (if enabled)
-      const [{ context: memoryContext, sharedContext }, channelContext, voiceContext] = await Promise.all([
-        this._getRelevantMemories(userMessage, user.id, personalityId, channelId),
-        this._getChannelContext(channelId, userMessage),
-        personality.useVoiceProfile ? this._getVoiceContext(channelId, userMessage) : Promise.resolve(null)
-      ]);
+      // Compose recall + channel + voice context. Behind RECALL_V2_ENABLED /
+      // RECALL_SHADOW_ENABLED this either runs today's legacy retrieval, the v2
+      // ranked RecallService path, or both (shadow A/B logging). With both flags
+      // off it is byte-for-byte the legacy path.
+      const { memoryContext, sharedContext, channelContext, voiceContext } =
+        await this._composeRecallContexts(channelId, userMessage, user, personalityId, personality);
 
       // Build system prompt and format history
       const systemPrompt = this._buildGroupSystemPrompt(personality, memoryContext, channelContext, sharedContext, voiceContext);
