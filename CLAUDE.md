@@ -181,7 +181,11 @@ When `AGENT_ENABLED=true`, channel-voice chats are routed through the Python age
 
 **Toggle:** `AGENT_ENABLED=false` reverts channel-voice to direct OpenAI immediately. The `AgentClient` health-polls every 5s and considers the sidecar unhealthy after 30s without a successful Health response, falling through to direct OpenAI when the sidecar is gone.
 
-**Transient 503 handling:** the Gemini-native path attaches SDK-level exponential backoff (`agent.py` `_gemini_retry_options`: 4 attempts, 0.5→8s, jitter, on `429/500/502/503/504`). New preview models (e.g. `gemini-3.5-flash`) spike 503 "model overloaded" errors; without this each one immediately fell through to the `gpt-5-mini` fallback, silently swapping the model. Retry is at the HTTP-call layer, NOT the agent turn, so sandbox tools are never re-executed. The bot's `AgentClient` chat deadline (600s) comfortably exceeds the ~8s retry budget.
+**Transient 503 handling:** the Gemini-native path attaches SDK-level exponential backoff. New preview models (e.g. `gemini-3.5-flash`) spike 503 "model overloaded" errors; without this each one immediately fell through to the `gpt-5-mini` fallback, silently swapping the model. Retry is at the HTTP-call layer, NOT the agent turn, so sandbox tools are never re-executed. The bot's `AgentClient` chat deadline (600s) comfortably exceeds the retry budget.
+
+Retry is **ConfigMap-tunable** (sandbox-config, no rebuild — restart the agent to apply): `AGENT_RETRY_ATTEMPTS` (default 5), `AGENT_RETRY_INITIAL_DELAY` (0.5s), `AGENT_RETRY_MAX_DELAY` (15s), `AGENT_RETRY_EXP_BASE` (2), `AGENT_RETRY_JITTER` (1.0), `AGENT_RETRY_STATUS_CODES` (`429,500,502,503,504`). Caveat: retry helps *transient* spikes; during a *sustained* Gemini overload (slow + failing requests) more attempts mostly add latency before the inevitable fallback — dial attempts down for snappier fast-fallback on bad days.
+
+When the model call still fails after retries, it's logged as a single clean `WARNING` (`Chat agent LLM error (bot will fall back)`); ADK's redundant ~60-line node/runner tracebacks are suppressed via `_quiet_adk_node_tracebacks` (those two ADK child loggers are raised to CRITICAL). Genuinely unexpected server errors still get full stack traces.
 
 **Sidecar:** single-replica `Recreate` Deployment — concurrency state is in-process; **do not scale**.
 

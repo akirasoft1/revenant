@@ -37,7 +37,17 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
                 user_message=request.user_message,
             )
         except Exception as e:  # noqa: BLE001
-            log.exception("Chat handler failed")
+            # AgentLLMError is an EXPECTED, handled condition (e.g. a 503
+            # after exhausting retries): the bot's AgentClient catches the
+            # gRPC INTERNAL and falls through to direct OpenAI. Log one clean
+            # line — no traceback. Only genuinely unexpected failures get a
+            # full stack trace. Imported lazily so importing server.py stays
+            # free of the google-adk dependency.
+            from .agent import AgentLLMError
+            if isinstance(e, AgentLLMError):
+                log.warning("Chat agent LLM error (bot will fall back): %s", e)
+            else:
+                log.exception("Chat handler failed")
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
             return agent_pb2.ChatResponse()
 
@@ -63,8 +73,24 @@ def _load_base_prompt() -> str:
     return _DEFAULT_BASE_PROMPT
 
 
+def _quiet_adk_node_tracebacks() -> None:
+    """Suppress ADK's redundant full-traceback ERROR logs on a handled model
+    failure. When the LLM call raises (e.g. a transient 503), ADK's node
+    runner and root runner each dump the wrapped ~60-line stack trace at
+    ERROR — even though we catch the error, translate it to a one-line
+    AgentLLMError, and the bot falls back. Raise just those two child loggers
+    to CRITICAL so the noise is gone; our clean summary remains and other
+    loggers are untouched."""
+    for name in (
+        "google_adk.google.adk.workflow._node_runner",
+        "google_adk.google.adk.runners",
+    ):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+
+
 def serve() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _quiet_adk_node_tracebacks()
     config = load_config()
     setup_tracing(config)
 

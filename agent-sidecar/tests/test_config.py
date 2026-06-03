@@ -47,6 +47,27 @@ def test_agent_model_defaults_to_gemini_3_flash_preview(monkeypatch):
     assert cfg.agent_model == "gemini-3-flash-preview"
 
 
+def test_retry_defaults(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://admin:pw@mongodb/db")
+    cfg = config_mod.load()
+    assert cfg.agent_retry_attempts == 5
+    assert cfg.agent_retry_initial_delay == 0.5
+    assert cfg.agent_retry_max_delay == 15.0
+    assert cfg.agent_retry_exp_base == 2.0
+    assert cfg.agent_retry_status_codes == [429, 500, 502, 503, 504]
+
+
+def test_retry_env_overrides(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://admin:pw@mongodb/db")
+    monkeypatch.setenv("AGENT_RETRY_ATTEMPTS", "9")
+    monkeypatch.setenv("AGENT_RETRY_MAX_DELAY", "42.5")
+    monkeypatch.setenv("AGENT_RETRY_STATUS_CODES", "503, 429")
+    cfg = config_mod.load()
+    assert cfg.agent_retry_attempts == 9
+    assert cfg.agent_retry_max_delay == 42.5
+    assert cfg.agent_retry_status_codes == [503, 429]
+
+
 def test_agent_model_overridable(monkeypatch):
     monkeypatch.setenv("MONGO_URI", "mongodb://x")
     monkeypatch.setenv("AGENT_MODEL", "openai/gpt-5.1")

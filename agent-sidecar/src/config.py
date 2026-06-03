@@ -16,6 +16,11 @@ def _resolve_mongo_uri() -> str:
     return uri
 
 
+def _parse_status_codes(raw: str) -> list[int]:
+    """Parse a comma-separated list of HTTP status codes (e.g. '429,503')."""
+    return [int(c.strip()) for c in raw.split(",") if c.strip()]
+
+
 @dataclass(frozen=True)
 class Config:
     # gRPC
@@ -34,6 +39,16 @@ class Config:
     # runs on Gemini.
     openai_api_key: str | None
     openai_model: str
+
+    # Transient-error retry for the Gemini-native path (SDK-level backoff).
+    # ConfigMap-tunable so retry aggressiveness can be dialed live without a
+    # rebuild — useful when a preview model is spiking 503s.
+    agent_retry_attempts: int
+    agent_retry_initial_delay: float
+    agent_retry_max_delay: float
+    agent_retry_exp_base: float
+    agent_retry_jitter: float
+    agent_retry_status_codes: list[int]
 
     # MongoDB
     mongo_uri: str
@@ -63,6 +78,14 @@ def load() -> Config:
         agent_model=os.environ.get("AGENT_MODEL", "gemini-3-flash-preview"),
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
         openai_model=os.environ.get("OPENAI_MODEL", "gpt-5.1"),
+        agent_retry_attempts=int(os.environ.get("AGENT_RETRY_ATTEMPTS", "5")),
+        agent_retry_initial_delay=float(os.environ.get("AGENT_RETRY_INITIAL_DELAY", "0.5")),
+        agent_retry_max_delay=float(os.environ.get("AGENT_RETRY_MAX_DELAY", "15")),
+        agent_retry_exp_base=float(os.environ.get("AGENT_RETRY_EXP_BASE", "2")),
+        agent_retry_jitter=float(os.environ.get("AGENT_RETRY_JITTER", "1.0")),
+        agent_retry_status_codes=_parse_status_codes(
+            os.environ.get("AGENT_RETRY_STATUS_CODES", "429,500,502,503,504")
+        ),
         mongo_uri=_resolve_mongo_uri(),
         sandbox_inline_output_chars=int(os.environ.get("SANDBOX_INLINE_OUTPUT_CHARS", "750")),
         sandbox_wall_clock_seconds=int(os.environ.get("SANDBOX_WALL_CLOCK_SECONDS", "300")),

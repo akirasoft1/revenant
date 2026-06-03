@@ -21,3 +21,13 @@ data:
   # GEMINI_API_KEY is read from the discord-article-bot-secrets Secret;
   # OPENAI_API_KEY likewise (only used when AGENT_MODEL=openai/...).
   AGENT_MODEL: "gemini-3-flash-preview"
+  # Transient-error retry for the Gemini-native path (SDK-level exponential
+  # backoff). Tunable live on bad Gemini days without a rebuild. Retries the
+  # failing HTTP call only (NOT the agent turn, so sandbox tools never
+  # re-run). After exhausting these, the bot falls through to OpenAI.
+  AGENT_RETRY_ATTEMPTS: "5"            # total attempts including the first
+  AGENT_RETRY_INITIAL_DELAY: "0.5"     # seconds before the first retry
+  AGENT_RETRY_MAX_DELAY: "15"          # cap on per-retry backoff (seconds)
+  AGENT_RETRY_EXP_BASE: "2"            # exponential growth base
+  AGENT_RETRY_JITTER: "1.0"            # randomization factor
+  AGENT_RETRY_STATUS_CODES: "429,500,502,503,504"

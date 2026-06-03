@@ -35,6 +35,32 @@ def test_native_gemini_configures_exponential_retry_on_503():
     assert ro.exp_base > 1  # exponential, not linear
 
 
+def test_retry_options_from_config_maps_fields():
+    from src.agent import _retry_options_from_config
+
+    class _Cfg:
+        agent_retry_attempts = 7
+        agent_retry_initial_delay = 0.25
+        agent_retry_max_delay = 12.0
+        agent_retry_exp_base = 3.0
+        agent_retry_jitter = 0.5
+        agent_retry_status_codes = [503, 429]
+
+    ro = _retry_options_from_config(_Cfg())
+    assert ro.attempts == 7
+    assert ro.initial_delay == 0.25
+    assert ro.max_delay == 12.0
+    assert ro.exp_base == 3.0
+    assert ro.http_status_codes == [503, 429]
+
+
+def test_build_model_uses_passed_retry_options():
+    from google.genai import types
+    ro = types.HttpRetryOptions(attempts=2, http_status_codes=[503])
+    m = _build_model("gemini-3.5-flash", retry_options=ro)
+    assert m.retry_options is ro
+
+
 def test_litellm_path_has_no_genai_retry_options():
     # Non-Gemini providers go through LiteLlm, which has no genai retry_options.
     m = _build_model("openai/gpt-5.1")
