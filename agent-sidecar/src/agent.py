@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from google.adk.agents import Agent
+from google.adk.agents.run_config import RunConfig
 from google.adk.models import Gemini
 from google.adk.runners import InMemoryRunner
 from google.genai import types
@@ -133,6 +134,13 @@ def _retry_options_from_config(config):
     )
 
 
+def _run_config_from_config(config):
+    """Bound LLM calls per turn so a runaway tool/reasoning loop can't hammer
+    the model up to ADK's default ceiling of 500. When the cap is hit ADK
+    raises, process_chat surfaces an AgentLLMError, and the bot falls back."""
+    return RunConfig(max_llm_calls=config.agent_max_llm_calls)
+
+
 def _build_model(model_spec: str, retry_options=None):
     """Map an `AGENT_MODEL` env value to whatever ADK's `Agent(model=…)`
     expects. For Gemini we return a `Gemini` model wired with SDK-level
@@ -233,16 +241,32 @@ class ChannelVoiceAgent:
         config: Config,
         orchestrator: SandboxOrchestrator,
         base_system_prompt: str,
+        trace_store=None,
     ) -> None:
         self._config = config
         self._orch = orchestrator
         self._base_system_prompt = base_system_prompt
+        self._trace_store = trace_store
 
-    async def process_chat(self, *, user_id: str, user_message: str) -> AgentChatResult:
+    async def process_chat(
+        self,
+        *,
+        user_id: str,
+        user_message: str,
+        user_tag: str = "",
+        channel_id: str = "",
+        guild_id: str = "",
+        interaction_id: str = "",
+    ) -> AgentChatResult:
         tool = RunInSandboxTool(
             orch=self._orch,
             user_id=user_id,
             call_budget=self._config.sandbox_agent_turn_call_budget,
+            user_tag=user_tag,
+            channel_id=channel_id,
+            guild_id=guild_id,
+            parent_interaction_id=interaction_id,
+            trace_store=self._trace_store,
         )
 
         async def run_in_sandbox(
@@ -295,6 +319,7 @@ class ChannelVoiceAgent:
         try:
             async for event in runner.run_async(
                 user_id=user_id, session_id=user_id, new_message=new_message,
+                run_config=_run_config_from_config(self._config),
             ):
                 content = getattr(event, "content", None)
                 if content is None:

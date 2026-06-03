@@ -68,6 +68,19 @@ def test_retry_env_overrides(monkeypatch):
     assert cfg.agent_retry_status_codes == [503, 429]
 
 
+def test_max_llm_calls_default(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://admin:pw@mongodb/db")
+    cfg = config_mod.load()
+    assert cfg.agent_max_llm_calls == 15
+
+
+def test_max_llm_calls_override(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://admin:pw@mongodb/db")
+    monkeypatch.setenv("AGENT_MAX_LLM_CALLS", "30")
+    cfg = config_mod.load()
+    assert cfg.agent_max_llm_calls == 30
+
+
 def test_agent_model_overridable(monkeypatch):
     monkeypatch.setenv("MONGO_URI", "mongodb://x")
     monkeypatch.setenv("AGENT_MODEL", "openai/gpt-5.1")

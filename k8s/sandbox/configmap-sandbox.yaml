@@ -31,3 +31,6 @@ data:
   AGENT_RETRY_EXP_BASE: "2"            # exponential growth base
   AGENT_RETRY_JITTER: "1.0"            # randomization factor
   AGENT_RETRY_STATUS_CODES: "429,500,502,503,504"
+  # Upper bound on LLM calls per agent turn — guards against a runaway
+  # tool/reasoning loop hammering the model (ADK default ceiling is 500).
+  AGENT_MAX_LLM_CALLS: "15"

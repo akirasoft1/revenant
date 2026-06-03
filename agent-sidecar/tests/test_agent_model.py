@@ -54,6 +54,16 @@ def test_retry_options_from_config_maps_fields():
     assert ro.http_status_codes == [503, 429]
 
 
+def test_run_config_from_config_sets_max_llm_calls():
+    from src.agent import _run_config_from_config
+
+    class _Cfg:
+        agent_max_llm_calls = 12
+
+    rc = _run_config_from_config(_Cfg())
+    assert rc.max_llm_calls == 12
+
+
 def test_build_model_uses_passed_retry_options():
     from google.genai import types
     ro = types.HttpRetryOptions(attempts=2, http_status_codes=[503])

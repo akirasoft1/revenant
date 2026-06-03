@@ -50,6 +50,10 @@ class Config:
     agent_retry_jitter: float
     agent_retry_status_codes: list[int]
 
+    # Upper bound on LLM calls per agent turn (ADK RunConfig). Guards against a
+    # runaway tool/reasoning loop hammering the model (ADK default is 500).
+    agent_max_llm_calls: int
+
     # MongoDB
     mongo_uri: str
 
@@ -86,6 +90,7 @@ def load() -> Config:
         agent_retry_status_codes=_parse_status_codes(
             os.environ.get("AGENT_RETRY_STATUS_CODES", "429,500,502,503,504")
         ),
+        agent_max_llm_calls=int(os.environ.get("AGENT_MAX_LLM_CALLS", "15")),
         mongo_uri=_resolve_mongo_uri(),
         sandbox_inline_output_chars=int(os.environ.get("SANDBOX_INLINE_OUTPUT_CHARS", "750")),
         sandbox_wall_clock_seconds=int(os.environ.get("SANDBOX_WALL_CLOCK_SECONDS", "300")),

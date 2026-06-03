@@ -35,6 +35,10 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
             result = await self._agent.process_chat(
                 user_id=request.user_id,
                 user_message=request.user_message,
+                user_tag=request.user_tag,
+                channel_id=request.channel_id,
+                guild_id=request.guild_id,
+                interaction_id=request.interaction_id,
             )
         except Exception as e:  # noqa: BLE001
             # AgentLLMError is an EXPECTED, handled condition (e.g. a 503
@@ -104,12 +108,15 @@ def serve() -> None:
     from .k8s_client import LiveK8sClient
     from .orchestrator import SandboxOrchestrator
     from .retention import demote_old_traces
+    from .trace_store import TraceStore
 
     kube_config.load_incluster_config()
     k8s_batch = kube_client.BatchV1Api()
     k8s_core = kube_client.CoreV1Api()
     mongo = MongoClient(config.mongo_uri)
     db = mongo.get_default_database()
+    trace_store = TraceStore(db)
+    trace_store.ensure_indexes()
 
     gate = ConcurrencyGate(
         per_user=config.sandbox_per_user_concurrency,
@@ -129,6 +136,7 @@ def serve() -> None:
 
     agent = ChannelVoiceAgent(
         config=config, orchestrator=orch, base_system_prompt=_load_base_prompt(),
+        trace_store=trace_store,
     )
     log.info("agent LLM resolved: AGENT_MODEL=%s", config.agent_model)
 

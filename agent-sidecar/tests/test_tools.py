@@ -54,3 +54,49 @@ async def test_user_concurrency_cap_returns_minus_two():
     result = await tool.run(language="bash", code="x", stdin=None, env=None)
     assert result["exit_code"] == -2
     assert result["error"] == "user_concurrency_cap"
+
+
+async def test_run_persists_trace_when_store_provided():
+    import mongomock
+    from src.trace_store import TraceStore
+    store = TraceStore(db=mongomock.MongoClient()["bot"])
+    orch = FakeOrch()
+    tool = RunInSandboxTool(
+        orch=orch, user_id="u1", call_budget=8,
+        user_tag="alice#1", channel_id="c1", guild_id="g1",
+        parent_interaction_id="i1", trace_store=store,
+    )
+    await tool.run(language="python", code="print(1)", stdin="data", env={"FOO": "bar"})
+    docs = list(store._db.sandbox_executions.find())
+    assert len(docs) == 1
+    d = docs[0]
+    assert d["execution_id"] == "exec-1"
+    assert d["language"] == "python"
+    assert d["code"] == "print(1)"
+    assert d["user_id"] == "u1"
+    assert d["user_tag"] == "alice#1"
+    assert d["channel_id"] == "c1"
+    assert d["guild_id"] == "g1"
+    assert d["parent_interaction_id"] == "i1"
+    assert d["agent_turn_index"] == 0
+    assert d["env_keys"] == ["FOO"]
+    assert d["exit_code"] == 0
+    assert "created_at" in d
+
+
+async def test_run_without_store_does_not_persist_or_error():
+    orch = FakeOrch()
+    tool = RunInSandboxTool(orch=orch, user_id="u1", call_budget=8)  # no trace_store
+    result = await tool.run(language="bash", code="x", stdin=None, env=None)
+    assert result["exit_code"] == 0
+
+
+async def test_persist_failure_does_not_break_run():
+    # Defense in depth: a Mongo write failure must not break the sandbox result.
+    class BoomStore:
+        async def record(self, rec):
+            raise RuntimeError("mongo down")
+    orch = FakeOrch()
+    tool = RunInSandboxTool(orch=orch, user_id="u1", call_budget=8, trace_store=BoomStore())
+    result = await tool.run(language="bash", code="x", stdin=None, env=None)
+    assert result["exit_code"] == 0

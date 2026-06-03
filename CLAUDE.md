@@ -189,11 +189,11 @@ When the model call still fails after retries, it's logged as a single clean `WA
 
 **Sidecar:** single-replica `Recreate` Deployment — concurrency state is in-process; **do not scale**.
 
-**Tunables (sandbox-config ConfigMap):** `SANDBOX_INLINE_OUTPUT_CHARS`, `SANDBOX_WALL_CLOCK_SECONDS`, `SANDBOX_PER_USER_CONCURRENCY`, `SANDBOX_GLOBAL_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`, `SANDBOX_BASE_IMAGE`, `SANDBOX_TRACE_RETENTION_PER_USER`, `SANDBOX_AGENT_TURN_CALL_BUDGET`.
+**Tunables (sandbox-config ConfigMap):** `SANDBOX_INLINE_OUTPUT_CHARS`, `SANDBOX_WALL_CLOCK_SECONDS`, `SANDBOX_PER_USER_CONCURRENCY`, `SANDBOX_GLOBAL_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`, `SANDBOX_BASE_IMAGE`, `SANDBOX_TRACE_RETENTION_PER_USER`, `SANDBOX_AGENT_TURN_CALL_BUDGET`, `AGENT_MAX_LLM_CALLS` (cap on model calls per turn; default 15, ADK ceiling is 500 — guards a runaway tool/reasoning loop; exceeding it raises → bot falls back).
 
 **Reaction reveal:** on a bot reply that ran code, react with 🔍 (source code), 📜 (stdout + stderr if non-empty), or 🐛 (stderr only) to get the artifact attached.
 
-**Trace storage:** MongoDB `sandbox_executions` (one doc per call). The retention loop in the sidecar demotes >N (default 50) traces per user — older docs keep `exit_code`/`stdout`/`stderr`/`duration_ms` but null out `code`, `stdin`, `env_keys`, `egress_events`, `runtime_events`, `agent_rationale`. The `runtime_events` field is empty by default under Kata (no built-in syscall-deny telemetry); the field is reserved for future `auditd`-in-guest signals.
+**Trace storage:** MongoDB `sandbox_executions` (one doc per call), written by `RunInSandboxTool` after each orchestrator run (via `TraceStore`, injected from `server.py`; persistence failures are logged, never fatal to the chat). NOTE: this write path was historically **never wired** — `TraceStore.record()` was orphaned, so the collection sat empty and the reaction-reveal had nothing to attach — fixed 2026-06-03. The retention loop in the sidecar demotes >N (default 50) traces per user — older docs keep `exit_code`/`stdout`/`stderr`/`duration_ms` but null out `code`, `stdin`, `env_keys`, `egress_events`, `runtime_events`, `agent_rationale`. The `runtime_events` field is empty by default under Kata (no built-in syscall-deny telemetry); the field is reserved for future `auditd`-in-guest signals.
 
 **Manifests:** `k8s/sandbox/` (tracked) — see its README for the kata-deploy prereq, apply order, and the two small edits the bot Deployment + NetworkPolicy need.
 
