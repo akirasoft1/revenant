@@ -181,6 +181,8 @@ When `AGENT_ENABLED=true`, channel-voice chats are routed through the Python age
 
 **Toggle:** `AGENT_ENABLED=false` reverts channel-voice to direct OpenAI immediately. The `AgentClient` health-polls every 5s and considers the sidecar unhealthy after 30s without a successful Health response, falling through to direct OpenAI when the sidecar is gone.
 
+**Transient 503 handling:** the Gemini-native path attaches SDK-level exponential backoff (`agent.py` `_gemini_retry_options`: 4 attempts, 0.5→8s, jitter, on `429/500/502/503/504`). New preview models (e.g. `gemini-3.5-flash`) spike 503 "model overloaded" errors; without this each one immediately fell through to the `gpt-5-mini` fallback, silently swapping the model. Retry is at the HTTP-call layer, NOT the agent turn, so sandbox tools are never re-executed. The bot's `AgentClient` chat deadline (600s) comfortably exceeds the ~8s retry budget.
+
 **Sidecar:** single-replica `Recreate` Deployment — concurrency state is in-process; **do not scale**.
 
 **Tunables (sandbox-config ConfigMap):** `SANDBOX_INLINE_OUTPUT_CHARS`, `SANDBOX_WALL_CLOCK_SECONDS`, `SANDBOX_PER_USER_CONCURRENCY`, `SANDBOX_GLOBAL_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`, `SANDBOX_BASE_IMAGE`, `SANDBOX_TRACE_RETENTION_PER_USER`, `SANDBOX_AGENT_TURN_CALL_BUDGET`.

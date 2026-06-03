@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 
 from google.adk.agents import Agent
+from google.adk.models import Gemini
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
@@ -93,22 +94,48 @@ def _build_generate_content_config():
     )
 
 
+def _gemini_retry_options():
+    """SDK-level exponential backoff for the Gemini-native path.
+
+    google-genai does NOT retry transient server errors by default, so a
+    single 503 "model is currently experiencing high demand" surfaces as an
+    AgentLLMError and the bot immediately falls through to the OpenAI
+    fallback — silently swapping the model out from under the user. New
+    preview models (e.g. gemini-3.5-flash) spike 503s frequently, so we
+    retry the failing HTTP call here (NOT the whole agent turn — retrying the
+    turn could re-execute sandbox tools). Last resort after exhausting these
+    attempts is still the bot's OpenAI fallback.
+
+    Budget: 0.5s, 1s, 2s, 4s (+jitter) ≈ up to ~8s before giving up. The
+    bot's AgentClient gRPC deadline must exceed this (see AgentClient.js).
+    """
+    return types.HttpRetryOptions(
+        attempts=4,
+        initial_delay=0.5,
+        max_delay=8.0,
+        exp_base=2.0,
+        jitter=0.3,
+        http_status_codes=[429, 500, 502, 503, 504],
+    )
+
+
 def _build_model(model_spec: str):
     """Map an `AGENT_MODEL` env value to whatever ADK's `Agent(model=…)`
-    expects. For Gemini we pass a bare string (ADK auto-selects the native
-    Google genai client); for any other provider we wrap in LiteLlm.
+    expects. For Gemini we return a `Gemini` model wired with SDK-level
+    retry (see _gemini_retry_options); for any other provider we wrap in
+    LiteLlm.
 
     Accepted shapes:
-      "gemini-3-flash-preview"              -> "gemini-3-flash-preview"          (native)
-      "gemini/gemini-3-flash"       -> "gemini-3-flash-preview"          (native)
+      "gemini-3-flash-preview"      -> Gemini("gemini-3-flash-preview", retry)  (native)
+      "gemini/gemini-3-flash"       -> Gemini("gemini-3-flash", retry)          (native)
       "openai/gpt-5.1"              -> LiteLlm("openai/gpt-5.1")
       "anthropic/claude-opus-4-7"   -> LiteLlm("anthropic/...")
     """
     spec = (model_spec or "").strip() or "gemini-3-flash-preview"
     if spec.startswith("gemini/"):
-        return spec[len("gemini/"):]
+        spec = spec[len("gemini/"):]
     if spec.startswith("gemini") or "/" not in spec:
-        return spec
+        return Gemini(model=spec, retry_options=_gemini_retry_options())
     # Non-Gemini providers go through LiteLlm. Imported lazily so we don't
     # require the litellm dependency just to run the default Gemini path.
     from google.adk.models.lite_llm import LiteLlm
