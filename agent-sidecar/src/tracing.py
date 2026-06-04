@@ -11,6 +11,7 @@ import os
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.grpc import GrpcAioInstrumentorServer
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -58,6 +59,11 @@ def setup(config: Config) -> None:
     try:
         trace.set_tracer_provider(_build_provider(config))
         if config.otlp_endpoint:
+            # Extract the W3C traceparent from the bot's incoming gRPC Chat call
+            # so the agent's spans nest under the bot's Agent/Chat span (one
+            # unified trace). Must run before grpc.aio.server() is created in
+            # server.serve(), which it is (setup is called first).
+            GrpcAioInstrumentorServer().instrument()
             log.info("OTLP tracing enabled -> %s", config.otlp_endpoint)
     except Exception:  # noqa: BLE001
         log.warning("tracing setup failed; continuing without traces", exc_info=True)
