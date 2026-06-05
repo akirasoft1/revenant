@@ -69,3 +69,11 @@ spec:
               - 192.168.0.0/16
       ports:
         - { protocol: TCP, port: 443 }
+    # Dynatrace OpenTelemetry collector (telemetry-ingest) for OTLP trace export
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dynatrace
+      ports:
+        - { protocol: TCP, port: 4317 }  # OTLP gRPC (parity with bot; unused)
+        - { protocol: TCP, port: 4318 }  # OTLP HTTP (agent uses this)

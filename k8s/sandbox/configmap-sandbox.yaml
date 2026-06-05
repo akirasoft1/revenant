@@ -34,3 +34,7 @@ data:
   # Upper bound on LLM calls per agent turn — guards against a runaway
   # tool/reasoning loop hammering the model (ADK default ceiling is 500).
   AGENT_MAX_LLM_CALLS: "15"
+  # Capture LLM prompt/completion content on ADK call_llm spans (private bot —
+  # content makes a reasoning loop legible). ADK default is already "true";
+  # pinned so a future ADK default-flip can't silently strip it.
+  ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS: "true"

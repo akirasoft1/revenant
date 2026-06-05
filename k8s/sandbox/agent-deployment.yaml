@@ -44,6 +44,10 @@ spec:
               value: "discord-article-bot"
             - name: SANDBOX_BASE_IMAGE
               value: "mvilliger/sandbox-base:e861ef8"
+            - name: OTEL_SERVICE_NAME
+              value: "discord-article-bot-agent"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://telemetry-ingest.dynatrace.svc.cluster.local:4318"
           envFrom:
             - configMapRef:
                 name: sandbox-config
