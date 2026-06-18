@@ -35,6 +35,7 @@ install pain aside.
 | File | Purpose |
 |---|---|
 | `runtimeclass-kata.yaml` | Cluster-wide `kata-qemu` RuntimeClass declaration. NOT applied (the Helm chart provides it); kept in-repo as documentation of the RuntimeClass shape we depend on. |
+| `cloudinit-kata-disable-sev.yaml` | Harvester `CloudInit` CR that **durably** disables `kvm_amd` SEV advertisement across reboots (see Step 3). Required on AMD Harvester hosts; without it sandbox starts fail `SEV not supported` after any node reboot. |
 | `agent-serviceaccount.yaml` | `agent-sa` SA used by the sidecar Deployment. |
 | `agent-role.yaml` | `agent-sandbox-orchestrator` Role: create/get/list/delete Jobs, get/list/watch/create Pods + pods/log + pods/attach. |
 | `agent-rolebinding.yaml` | Binds the role to `agent-sa`. |
@@ -155,19 +156,60 @@ the bit reports unavailable → `Failed to check guest protection: SEV not
 supported` and the sandbox start aborts. This is a runtime-rs fail-closed
 bug; we don't want SEV anyway.
 
-Tell kvm_amd not to advertise SEV. One file per node:
+> **⚠️ This must be persisted via Harvester's `CloudInit` CRD, NOT by
+> writing the file directly to the host.** Harvester's host OS is immutable:
+> the runtime `/etc` overlay (and `/oem`, which is read-only at runtime) is
+> **reset from the OS image on every reboot**. A hand-written
+> `/etc/modprobe.d/kata-disable-sev.conf` therefore silently vanishes on the
+> next reboot and every sandbox start breaks again with `SEV not supported`.
+> This bit us on 2026-06-17: all three nodes had rebooted ~4.4 days earlier,
+> the file was gone on all of them, and `sev` was back to `Y`.
+
+#### Durable fix — the `CloudInit` CRD (do this)
+
+`harvester-node-manager` watches the cluster-scoped
+`cloudinits.node.harvesterhci.io` CRD and writes each entry into `/oem/`
+(the one persistent host location), where Elemental/yip re-applies it on
+every boot. Apply the in-repo manifest:
 
 ```bash
-echo 'options kvm_amd sev=0 sev_es=0 sev_snp=0' \
-  | sudo tee /etc/modprobe.d/kata-disable-sev.conf
-sudo modprobe -r kvm_amd && sudo modprobe kvm_amd
-sudo cat /sys/module/kvm_amd/parameters/sev   # should now report "N"
+kubectl apply -f k8s/sandbox/cloudinit-kata-disable-sev.yaml
 ```
 
-This change is reversible (delete the file, reload module) and does NOT
-disable any KubeVirt functionality on Harvester — only the SEV/SEV-SNP
-encrypted-memory features, which we aren't using and which weren't even
-enabled in BIOS.
+It writes `/etc/modprobe.d/kata-disable-sev.conf` in the `initramfs` yip
+stage (before `kvm_amd` loads) and, belt-and-suspenders, runs a `boot`-stage
+command that reloads `kvm_amd` if it somehow came up with `sev=Y` while idle
+(`refcnt==0`). It targets all Harvester-managed nodes via
+`matchSelector: { harvesterhci.io/managed: "true" }`. Reboot a node and
+confirm `cat /sys/module/kvm_amd/parameters/sev` still reports `N` to prove
+persistence.
+
+#### Manual immediate recovery (runbook)
+
+If a node reboots before the CloudInit fix is in place — or you need to
+recover *right now* — repeat the ephemeral write + live reload on each
+affected node. This is only a stopgap: it does NOT survive the next reboot.
+The live reload is safe only when `kvm_amd` is idle (`refcnt==0`, i.e. no
+running VM/Kata guest on that node); otherwise the unload fails harmlessly
+and you should drain + reboot the node instead.
+
+```bash
+for n in $(kubectl get nodes -o name); do
+  echo "== $n =="
+  kubectl debug "$n" --image=busybox --profile=sysadmin -q -- sh -c '
+    printf "options kvm_amd sev=0 sev_es=0 sev_snp=0\n" > /host/etc/modprobe.d/kata-disable-sev.conf
+    [ "$(cat /host/sys/module/kvm_amd/refcnt)" = "0" ] \
+      && chroot /host modprobe -r kvm_amd && chroot /host modprobe kvm_amd
+    echo -n "sev="; cat /host/sys/module/kvm_amd/parameters/sev'   # want: N
+done
+# (kubectl debug streaming is flaky; if you see no output, read the pod log:
+#  kubectl logs -n default $(kubectl get po -n default -o name | grep node-debugger | tail -1) )
+```
+
+Disabling SEV is reversible (delete the CloudInit / file, reload the module)
+and does NOT disable any KubeVirt functionality on Harvester — only the
+SEV/SEV-SNP encrypted-memory features, which we aren't using and which
+weren't even enabled in BIOS.
 
 ### Step 4 — pick the right RuntimeClass
 
@@ -260,7 +302,7 @@ kubectl apply -n discord-article-bot \
 
 - [ ] `helm list -n kube-system` shows `kata-deploy` deployed; the DaemonSet is healthy on every worker node
 - [ ] On every RKE2 node, `/var/lib/rancher/rke2/agent/etc/containerd/config.toml.tmpl` exists and has the `imports = [...]` line at the top, AND the rendered `config.toml` contains the same line
-- [ ] On every AMD worker node, `/etc/modprobe.d/kata-disable-sev.conf` exists and `cat /sys/module/kvm_amd/parameters/sev` returns `N`
+- [ ] `kubectl get cloudinit kata-disable-sev` exists (the durable SEV fix, applied from `cloudinit-kata-disable-sev.yaml`); on every AMD node `/etc/modprobe.d/kata-disable-sev.conf` is present and `cat /sys/module/kvm_amd/parameters/sev` returns `N`. **Do not rely on a hand-written file — it does not survive reboots on Harvester.**
 - [ ] Kata smoke-test pod (see "Smoke test" above) reaches `Completed` status
 - [ ] `sandbox-networkpolicy.yaml`'s pod/service CIDRs match this cluster (default: 10.52.0.0/16 and 10.53.0.0/16)
 - [ ] `mvilliger/discord-article-bot-agent:<TAG>` and `mvilliger/sandbox-base:<TAG>` pushed (Task 9.1)
