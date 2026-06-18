@@ -1,0 +1,46 @@
+# Durably disables kvm_amd's SEV advertisement on AMD Harvester hosts so that
+# Kata's runtime-rs (`kata-qemu-runtime-rs`) stops failing sandbox starts with
+# `Failed to check guest protection: SEV not supported`.
+#
+# WHY a CloudInit CR and not a plain /etc/modprobe.d file: Harvester's host OS
+# is immutable. The runtime `/etc` overlay is reset from the OS image on every
+# reboot and `/oem` is read-only at runtime, so a hand-written modprobe.d file
+# does NOT survive a reboot. harvester-node-manager watches this cluster-scoped
+# CRD, writes the payload into /oem (the one persistent location), and Elemental
+# /yip re-applies it on every boot. See k8s/sandbox/README.md Step 3.
+#
+# Apply:  kubectl apply -f k8s/sandbox/cloudinit-kata-disable-sev.yaml
+apiVersion: node.harvesterhci.io/v1beta1
+kind: CloudInit
+metadata:
+  name: kata-disable-sev
+spec:
+  # All Harvester-managed nodes. The kvm_amd option is inert on any non-AMD
+  # node (the module simply won't load it), so cluster-wide is safe.
+  matchSelector:
+    harvesterhci.io/managed: "true"
+  filename: 99-kata-disable-sev.yaml
+  contents: |
+    stages:
+      # Write the modprobe.d file early, before kvm_amd is loaded, so the
+      # module reads sev=0 at load time.
+      initramfs:
+        - name: "Kata: disable kvm_amd SEV advertisement"
+          files:
+            - path: /etc/modprobe.d/kata-disable-sev.conf
+              permissions: 0644
+              owner: 0
+              group: 0
+              content: |
+                options kvm_amd sev=0 sev_es=0 sev_snp=0
+      # Belt-and-suspenders: if kvm_amd somehow loaded with SEV advertised
+      # before the file landed, reload it — but only while it is idle
+      # (refcnt==0) so we never disrupt a running VM/Kata guest.
+      boot:
+        - name: "Kata: reload kvm_amd if it came up advertising SEV"
+          commands:
+            - |
+              if [ "$(cat /sys/module/kvm_amd/parameters/sev 2>/dev/null)" = "Y" ] && \
+                 [ "$(cat /sys/module/kvm_amd/refcnt 2>/dev/null)" = "0" ]; then
+                modprobe -r kvm_amd && modprobe kvm_amd
+              fi
