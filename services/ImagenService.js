@@ -1,5 +1,5 @@
 // services/ImagenService.js
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const axios = require('axios');
 const logger = require('../logger');
 const { withSpan } = require('../tracing');
@@ -44,27 +44,16 @@ class ImagenService {
       throw new Error('GEMINI_API_KEY is required for image generation');
     }
 
-    // Initialize Google Generative AI client
-    this.genAI = new GoogleGenerativeAI(config.imagen.apiKey);
-    this.model = this.genAI.getGenerativeModel({
-      model: config.imagen.model,
-      generationConfig: {
-        responseModalities: ['IMAGE']
-      }
-    });
+    // Initialize the unified Google GenAI client. Unlike the legacy SDK, the
+    // model is selected per-call in generateImage() — there is no pre-bound
+    // model object, so we just track the model name strings here.
+    this.client = new GoogleGenAI({ apiKey: config.imagen.apiKey });
+    this.modelName = config.imagen.model;
 
-    // Initialize admin model if configured (premium model for admin users)
-    this.adminModel = null;
-    this.adminModelName = null;
-    if (config.imagen.adminModel) {
-      this.adminModel = this.genAI.getGenerativeModel({
-        model: config.imagen.adminModel,
-        generationConfig: {
-          responseModalities: ['IMAGE']
-        }
-      });
-      this.adminModelName = config.imagen.adminModel;
-      logger.info(`ImagenService admin model initialized: ${config.imagen.adminModel}`);
+    // Track the admin (premium) model name if configured.
+    this.adminModelName = config.imagen.adminModel || null;
+    if (this.adminModelName) {
+      logger.info(`ImagenService admin model configured: ${this.adminModelName}`);
     }
 
     // Cooldown tracking: Map of userId -> timestamp when cooldown expires
@@ -76,13 +65,13 @@ class ImagenService {
   /**
    * Get the appropriate model for a request based on admin status
    * @param {boolean} isAdmin - Whether the requesting user is an admin
-   * @returns {{model: Object, modelName: string}}
+   * @returns {{modelName: string}}
    */
   getModelForRequest(isAdmin) {
-    if (isAdmin && this.adminModel) {
-      return { model: this.adminModel, modelName: this.adminModelName };
+    if (isAdmin && this.adminModelName) {
+      return { modelName: this.adminModelName };
     }
-    return { model: this.model, modelName: this.config.imagen.model };
+    return { modelName: this.modelName };
   }
 
   /**
@@ -334,9 +323,9 @@ class ImagenService {
 
     // Select model based on admin status
     const isAdmin = options.isAdmin || false;
-    const { model: selectedModel, modelName } = this.getModelForRequest(isAdmin);
+    const { modelName } = this.getModelForRequest(isAdmin);
 
-    if (isAdmin && this.adminModel) {
+    if (isAdmin && this.adminModelName) {
       logger.info(`Using admin model for user ${user?.id}: ${modelName}`);
     }
 
@@ -372,24 +361,31 @@ class ImagenService {
         // Discord context
         'discord.user.id': user?.id || '',
       }, async (span) => {
-        const genResult = await selectedModel.generateContent({
+        const genResult = await this.client.models.generateContent({
+          model: modelName,
           contents: [{
             role: 'user',
             parts
-          }]
+          }],
+          config: {
+            responseModalities: ['IMAGE']
+          }
         });
 
-        // Add response attributes
-        const hasImage = genResult.response?.candidates?.[0]?.content?.parts?.some(p => p.inlineData);
+        // Add response attributes (the new SDK returns the response directly,
+        // with no `.response` wrapper).
+        const hasImage = genResult.candidates?.[0]?.content?.parts?.some(p => p.inlineData);
         span.setAttributes({
           'gen_ai.response.has_image': hasImage,
-          'gen_ai.response.finish_reason': genResult.response?.candidates?.[0]?.finishReason || '',
+          'gen_ai.response.finish_reason': genResult.candidates?.[0]?.finishReason || '',
         });
 
         return genResult;
       });
 
-      const response = result.response;
+      // The unified @google/genai SDK returns the GenerateContentResponse
+      // directly (the legacy SDK nested it under `result.response`).
+      const response = result;
 
       // Check for empty response
       if (!response.candidates || response.candidates.length === 0) {

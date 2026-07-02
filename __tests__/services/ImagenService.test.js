@@ -9,13 +9,16 @@ jest.mock('../../logger', () => ({
   warn: jest.fn()
 }));
 
-// Mock the Google Generative AI SDK
-jest.mock('@google/generative-ai', () => {
+// Mock the unified Google GenAI SDK (@google/genai).
+// The new SDK exposes a single client whose `models.generateContent` returns
+// the GenerateContentResponse DIRECTLY (no `.response` wrapper). Model selection
+// is per-call via the `model` argument — there is no pre-bound model object.
+jest.mock('@google/genai', () => {
   return {
-    GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
-      getGenerativeModel: jest.fn().mockImplementation(() => ({
+    GoogleGenAI: jest.fn().mockImplementation(() => ({
+      models: {
         generateContent: jest.fn()
-      }))
+      }
     }))
   };
 });
@@ -25,10 +28,13 @@ jest.mock('axios', () => ({
   get: jest.fn()
 }));
 
+// Helper: build a GenerateContentResponse (new-SDK shape, no `.response` wrapper).
+const genResponse = (body) => ({ ...body });
+
 describe('ImagenService', () => {
   let imagenService;
   let mockConfig;
-  let mockGeminiModel;
+  let mockGenerateContent;
   let mockMongoService;
 
   beforeEach(() => {
@@ -51,10 +57,10 @@ describe('ImagenService', () => {
 
     imagenService = new ImagenService(mockConfig, mockMongoService);
 
-    // Get reference to the mocked model (first call to getGenerativeModel)
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAIInstance = GoogleGenerativeAI.mock.results[0].value;
-    mockGeminiModel = genAIInstance.getGenerativeModel.mock.results[0].value;
+    // Grab the generateContent mock from the client the service constructed.
+    const { GoogleGenAI } = require('@google/genai');
+    const clientInstance = GoogleGenAI.mock.results[0].value;
+    mockGenerateContent = clientInstance.models.generateContent;
   });
 
   describe('constructor', () => {
@@ -63,16 +69,10 @@ describe('ImagenService', () => {
       expect(imagenService.config).toBe(mockConfig);
     });
 
-    it('should configure responseModalities as IMAGE only', () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      const genAIInstance = GoogleGenerativeAI.mock.results[0].value;
-
-      expect(genAIInstance.getGenerativeModel).toHaveBeenCalledWith(
-        expect.objectContaining({
-          generationConfig: expect.objectContaining({
-            responseModalities: ['IMAGE']
-          })
-        })
+    it('should construct a single GoogleGenAI client with the API key', () => {
+      const { GoogleGenAI } = require('@google/genai');
+      expect(GoogleGenAI).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'test-api-key' })
       );
     });
 
@@ -92,10 +92,7 @@ describe('ImagenService', () => {
       expect(() => new ImagenService(noKeyConfig)).toThrow('GEMINI_API_KEY is required');
     });
 
-    it('should initialize admin model when adminModel is configured', () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      GoogleGenerativeAI.mockClear();
-
+    it('should record admin model name when adminModel is configured', () => {
       const adminConfig = {
         imagen: {
           ...mockConfig.imagen,
@@ -104,18 +101,11 @@ describe('ImagenService', () => {
       };
 
       const service = new ImagenService(adminConfig, mockMongoService);
-      const genAIInstance = GoogleGenerativeAI.mock.results[0].value;
 
-      // Should call getGenerativeModel twice: once for standard, once for admin
-      expect(genAIInstance.getGenerativeModel).toHaveBeenCalledTimes(2);
-      expect(service.adminModel).not.toBeNull();
       expect(service.adminModelName).toBe('gemini-3-pro-image-preview');
     });
 
-    it('should not initialize admin model when adminModel is empty', () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      GoogleGenerativeAI.mockClear();
-
+    it('should not set an admin model name when adminModel is empty', () => {
       const noAdminConfig = {
         imagen: {
           ...mockConfig.imagen,
@@ -124,10 +114,8 @@ describe('ImagenService', () => {
       };
 
       const service = new ImagenService(noAdminConfig, mockMongoService);
-      const genAIInstance = GoogleGenerativeAI.mock.results[0].value;
 
-      expect(genAIInstance.getGenerativeModel).toHaveBeenCalledTimes(1);
-      expect(service.adminModel).toBeNull();
+      expect(service.adminModelName).toBeNull();
     });
   });
 
@@ -195,10 +183,7 @@ describe('ImagenService', () => {
   });
 
   describe('getModelForRequest', () => {
-    it('should return admin model when isAdmin is true and admin model is configured', () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      GoogleGenerativeAI.mockClear();
-
+    it('should return admin model name when isAdmin is true and admin model is configured', () => {
       const adminConfig = {
         imagen: { ...mockConfig.imagen, adminModel: 'premium-model' }
       };
@@ -206,13 +191,9 @@ describe('ImagenService', () => {
 
       const result = service.getModelForRequest(true);
       expect(result.modelName).toBe('premium-model');
-      expect(result.model).toBe(service.adminModel);
     });
 
-    it('should return standard model when isAdmin is false', () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      GoogleGenerativeAI.mockClear();
-
+    it('should return standard model name when isAdmin is false', () => {
       const adminConfig = {
         imagen: { ...mockConfig.imagen, adminModel: 'premium-model' }
       };
@@ -220,13 +201,11 @@ describe('ImagenService', () => {
 
       const result = service.getModelForRequest(false);
       expect(result.modelName).toBe(mockConfig.imagen.model);
-      expect(result.model).toBe(service.model);
     });
 
-    it('should return standard model when isAdmin is true but no admin model configured', () => {
+    it('should return standard model name when isAdmin is true but no admin model configured', () => {
       const result = imagenService.getModelForRequest(true);
       expect(result.modelName).toBe(mockConfig.imagen.model);
-      expect(result.model).toBe(imagenService.model);
     });
   });
 
@@ -240,20 +219,18 @@ describe('ImagenService', () => {
     it('should generate image successfully', async () => {
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{
-                inlineData: {
-                  mimeType: 'image/png',
-                  data: mockImageData
-                }
-              }]
-            }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: {
+            parts: [{
+              inlineData: {
+                mimeType: 'image/png',
+                data: mockImageData
+              }
+            }]
+          }
+        }]
+      }));
 
       const result = await imagenService.generateImage('A beautiful sunset', {}, mockUser);
 
@@ -263,27 +240,40 @@ describe('ImagenService', () => {
       expect(Buffer.isBuffer(result.buffer)).toBe(true);
     });
 
-    it('should prefix prompt with image generation instruction', async () => {
+    it('should call the client with the selected model and IMAGE response modality', async () => {
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{
-                inlineData: {
-                  mimeType: 'image/png',
-                  data: mockImageData
-                }
-              }]
-            }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
 
       await imagenService.generateImage('A beautiful sunset', {}, mockUser);
 
-      const callArgs = mockGeminiModel.generateContent.mock.calls[0][0];
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gemini-3-pro-image-preview',
+          contents: expect.any(Array),
+          config: expect.objectContaining({
+            responseModalities: ['IMAGE']
+          })
+        })
+      );
+    });
+
+    it('should prefix prompt with image generation instruction', async () => {
+      const mockImageData = Buffer.from('fake-image-data').toString('base64');
+
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
+
+      await imagenService.generateImage('A beautiful sunset', {}, mockUser);
+
+      const callArgs = mockGenerateContent.mock.calls[0][0];
       const promptText = callArgs.contents[0].parts[0].text;
       expect(promptText).toMatch(/^Generate an image/i);
       expect(promptText).toContain('A beautiful sunset');
@@ -306,24 +296,15 @@ describe('ImagenService', () => {
     it('should use default aspect ratio when not specified', async () => {
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{
-                inlineData: {
-                  mimeType: 'image/png',
-                  data: mockImageData
-                }
-              }]
-            }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
 
       await imagenService.generateImage('A sunset', {}, mockUser);
 
-      expect(mockGeminiModel.generateContent).toHaveBeenCalledWith(
+      expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
           contents: expect.any(Array)
         })
@@ -331,7 +312,7 @@ describe('ImagenService', () => {
     });
 
     it('should handle API errors gracefully', async () => {
-      mockGeminiModel.generateContent.mockRejectedValue(new Error('API rate limit exceeded'));
+      mockGenerateContent.mockRejectedValue(new Error('API rate limit exceeded'));
 
       const result = await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -340,14 +321,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle safety filter rejections', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'SAFETY',
-            safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH' }]
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'SAFETY',
+          safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH' }]
+        }]
+      }));
 
       const result = await imagenService.generateImage('Something inappropriate', {}, mockUser);
 
@@ -356,11 +335,9 @@ describe('ImagenService', () => {
     });
 
     it('should handle empty response', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: []
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: []
+      }));
 
       const result = await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -369,17 +346,15 @@ describe('ImagenService', () => {
     });
 
     it('should handle empty response with SAFETY block reason in promptFeedback', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          promptFeedback: {
-            blockReason: 'SAFETY',
-            safetyRatings: [
-              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true }
-            ]
-          }
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [],
+        promptFeedback: {
+          blockReason: 'SAFETY',
+          safetyRatings: [
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true }
+          ]
         }
-      });
+      }));
 
       const result = await imagenService.generateImage('Something inappropriate', {}, mockUser);
 
@@ -388,14 +363,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle empty response with PROHIBITED_CONTENT block reason', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          promptFeedback: {
-            blockReason: 'PROHIBITED_CONTENT'
-          }
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [],
+        promptFeedback: {
+          blockReason: 'PROHIBITED_CONTENT'
         }
-      });
+      }));
 
       const result = await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -404,14 +377,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle empty response with unknown block reason', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          promptFeedback: {
-            blockReason: 'SOME_NEW_REASON'
-          }
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [],
+        promptFeedback: {
+          blockReason: 'SOME_NEW_REASON'
         }
-      });
+      }));
 
       const result = await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -420,17 +391,15 @@ describe('ImagenService', () => {
     });
 
     it('should handle response without image data', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{
-                text: 'I cannot generate that image'
-              }]
-            }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: {
+            parts: [{
+              text: 'I cannot generate that image'
+            }]
+          }
+        }]
+      }));
 
       const result = await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -441,20 +410,11 @@ describe('ImagenService', () => {
     it('should record successful generation in MongoDB', async () => {
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{
-                inlineData: {
-                  mimeType: 'image/png',
-                  data: mockImageData
-                }
-              }]
-            }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
 
       await imagenService.generateImage('A beautiful sunset', {}, mockUser);
 
@@ -471,59 +431,46 @@ describe('ImagenService', () => {
     });
 
     it('should use admin model when isAdmin option is true', async () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      GoogleGenerativeAI.mockClear();
-
       const adminConfig = {
         imagen: { ...mockConfig.imagen, adminModel: 'premium-model' }
       };
       const service = new ImagenService(adminConfig, mockMongoService);
 
-      // Get references to both models
-      const genAIInstance = GoogleGenerativeAI.mock.results[0].value;
-      const standardModel = genAIInstance.getGenerativeModel.mock.results[0].value;
-      const adminModel = genAIInstance.getGenerativeModel.mock.results[1].value;
+      const { GoogleGenAI } = require('@google/genai');
+      const adminClient = GoogleGenAI.mock.results[GoogleGenAI.mock.results.length - 1].value;
+      const adminGenerateContent = adminClient.models.generateContent;
 
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
-      adminModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }]
-            }
-          }]
-        }
-      });
+      adminGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
 
       const result = await service.generateImage('A sunset', { isAdmin: true }, mockUser);
 
       expect(result.success).toBe(true);
-      expect(adminModel.generateContent).toHaveBeenCalled();
-      expect(standardModel.generateContent).not.toHaveBeenCalled();
+      expect(adminGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'premium-model' })
+      );
     });
 
     it('should record admin model name in MongoDB when admin generates image', async () => {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      GoogleGenerativeAI.mockClear();
-
       const adminConfig = {
         imagen: { ...mockConfig.imagen, adminModel: 'premium-model' }
       };
       const service = new ImagenService(adminConfig, mockMongoService);
 
-      const genAIInstance = GoogleGenerativeAI.mock.results[0].value;
-      const adminModel = genAIInstance.getGenerativeModel.mock.results[1].value;
+      const { GoogleGenAI } = require('@google/genai');
+      const adminClient = GoogleGenAI.mock.results[GoogleGenAI.mock.results.length - 1].value;
+      const adminGenerateContent = adminClient.models.generateContent;
 
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
-      adminModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }]
-            }
-          }]
-        }
-      });
+      adminGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
 
       await service.generateImage('A sunset', { isAdmin: true }, mockUser);
 
@@ -542,24 +489,22 @@ describe('ImagenService', () => {
     it('should fall back to standard model when isAdmin is true but no admin model configured', async () => {
       const mockImageData = Buffer.from('fake-image-data').toString('base64');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }]
-            }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockImageData } }] }
+        }]
+      }));
 
       const result = await imagenService.generateImage('A sunset', { isAdmin: true }, mockUser);
 
       expect(result.success).toBe(true);
-      expect(mockGeminiModel.generateContent).toHaveBeenCalled();
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'gemini-3-pro-image-preview' })
+      );
     });
 
     it('should record failed generation in MongoDB', async () => {
-      mockGeminiModel.generateContent.mockRejectedValue(new Error('API rate limit exceeded'));
+      mockGenerateContent.mockRejectedValue(new Error('API rate limit exceeded'));
 
       await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -814,20 +759,11 @@ describe('ImagenService', () => {
           headers: { 'content-type': 'image/png' }
         });
 
-        mockGeminiModel.generateContent.mockResolvedValue({
-          response: {
-            candidates: [{
-              content: {
-                parts: [{
-                  inlineData: {
-                    mimeType: 'image/png',
-                    data: mockOutputImage
-                  }
-                }]
-              }
-            }]
-          }
-        });
+        mockGenerateContent.mockResolvedValue(genResponse({
+          candidates: [{
+            content: { parts: [{ inlineData: { mimeType: 'image/png', data: mockOutputImage } }] }
+          }]
+        }));
 
         const result = await imagenService.generateImage(
           'Make this image look like a painting',
@@ -842,7 +778,7 @@ describe('ImagenService', () => {
         );
 
         // Verify the API was called with both text and image parts
-        const callArgs = mockGeminiModel.generateContent.mock.calls[0][0];
+        const callArgs = mockGenerateContent.mock.calls[0][0];
         expect(callArgs.contents[0].parts).toHaveLength(2);
         expect(callArgs.contents[0].parts[0]).toHaveProperty('text');
         expect(callArgs.contents[0].parts[1]).toHaveProperty('inlineData');
@@ -872,14 +808,12 @@ describe('ImagenService', () => {
     };
 
     it('should include failureContext for safety filter rejections', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'SAFETY',
-            safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH' }]
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'SAFETY',
+          safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH' }]
+        }]
+      }));
 
       const result = await imagenService.generateImage('Inappropriate content', {}, mockUser);
 
@@ -890,15 +824,13 @@ describe('ImagenService', () => {
     });
 
     it('should include failureContext for promptFeedback block', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          promptFeedback: {
-            blockReason: 'SAFETY',
-            safetyRatings: [{ category: 'HARM', probability: 'HIGH', blocked: true }]
-          }
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [],
+        promptFeedback: {
+          blockReason: 'SAFETY',
+          safetyRatings: [{ category: 'HARM', probability: 'HIGH', blocked: true }]
         }
-      });
+      }));
 
       const result = await imagenService.generateImage('Blocked content', {}, mockUser);
 
@@ -910,11 +842,9 @@ describe('ImagenService', () => {
     });
 
     it('should include failureContext for empty candidates', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: []
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: []
+      }));
 
       const result = await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -924,16 +854,14 @@ describe('ImagenService', () => {
     });
 
     it('should include textResponse in failureContext when model returns text instead of image', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ text: 'I cannot generate images of real people.' }]
-            },
-            finishReason: 'STOP'
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: {
+            parts: [{ text: 'I cannot generate images of real people.' }]
+          },
+          finishReason: 'STOP'
+        }]
+      }));
 
       const result = await imagenService.generateImage('A photo of a celebrity', {}, mockUser);
 
@@ -944,7 +872,7 @@ describe('ImagenService', () => {
     });
 
     it('should include failureContext for rate limit errors', async () => {
-      mockGeminiModel.generateContent.mockRejectedValue(new Error('API rate limit exceeded'));
+      mockGenerateContent.mockRejectedValue(new Error('API rate limit exceeded'));
 
       const result = await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -954,7 +882,7 @@ describe('ImagenService', () => {
     });
 
     it('should include failureContext for generic API errors', async () => {
-      mockGeminiModel.generateContent.mockRejectedValue(new Error('Unknown API error'));
+      mockGenerateContent.mockRejectedValue(new Error('Unknown API error'));
 
       const result = await imagenService.generateImage('A sunset', {}, mockUser);
 
@@ -964,7 +892,7 @@ describe('ImagenService', () => {
     });
 
     it('should include original prompt in failureContext', async () => {
-      mockGeminiModel.generateContent.mockRejectedValue(new Error('Some error'));
+      mockGenerateContent.mockRejectedValue(new Error('Some error'));
 
       const result = await imagenService.generateImage('My unique prompt', {}, mockUser);
 
@@ -972,14 +900,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle IMAGE_SAFETY finishReason as safety rejection', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'IMAGE_SAFETY',
-            safetyRatings: [{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', probability: 'HIGH', blocked: true }]
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'IMAGE_SAFETY',
+          safetyRatings: [{ category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', probability: 'HIGH', blocked: true }]
+        }]
+      }));
 
       const result = await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -991,14 +917,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle IMAGE_PROHIBITED_CONTENT finishReason as safety rejection', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'IMAGE_PROHIBITED_CONTENT',
-            safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true }]
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'IMAGE_PROHIBITED_CONTENT',
+          safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true }]
+        }]
+      }));
 
       const result = await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -1009,16 +933,14 @@ describe('ImagenService', () => {
     });
 
     it('should include finishReason in text_response failureContext details', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ text: 'I cannot generate that image due to policy.' }]
-            },
-            finishReason: 'STOP'
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: {
+            parts: [{ text: 'I cannot generate that image due to policy.' }]
+          },
+          finishReason: 'STOP'
+        }]
+      }));
 
       const result = await imagenService.generateImage('A photo of something', {}, mockUser);
 
@@ -1029,16 +951,14 @@ describe('ImagenService', () => {
     it('should log blockReasonMessage from promptFeedback when present', async () => {
       const logger = require('../../logger');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          promptFeedback: {
-            blockReason: 'SAFETY',
-            blockReasonMessage: 'The prompt was blocked because it contained unsafe content.',
-            safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true }]
-          }
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [],
+        promptFeedback: {
+          blockReason: 'SAFETY',
+          blockReasonMessage: 'The prompt was blocked because it contained unsafe content.',
+          safetyRatings: [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH', blocked: true }]
         }
-      });
+      }));
 
       const result = await imagenService.generateImage('Blocked content', {}, mockUser);
 
@@ -1053,14 +973,12 @@ describe('ImagenService', () => {
     });
 
     it('should include finishReason in failureContext when candidate has no content parts', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'IMAGE_SAFETY',
-            content: null
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'IMAGE_SAFETY',
+          content: null
+        }]
+      }));
 
       const result = await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -1080,11 +998,9 @@ describe('ImagenService', () => {
         ]
       };
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [candidate]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [candidate]
+      }));
 
       await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -1094,14 +1010,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle NO_IMAGE finishReason as a distinct failure type', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'NO_IMAGE',
-            content: { parts: [] }
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'NO_IMAGE',
+          content: { parts: [] }
+        }]
+      }));
 
       const result = await imagenService.generateImage('A complex prompt', {}, mockUser);
 
@@ -1113,14 +1027,12 @@ describe('ImagenService', () => {
     });
 
     it('should handle NO_IMAGE finishReason with null content', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            finishReason: 'NO_IMAGE',
-            content: null
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          finishReason: 'NO_IMAGE',
+          content: null
+        }]
+      }));
 
       const result = await imagenService.generateImage('A complex prompt', {}, mockUser);
 
@@ -1131,19 +1043,17 @@ describe('ImagenService', () => {
     it('should log finishReason and safetyRatings on text_response path', async () => {
       const logger = require('../../logger');
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ text: 'I cannot generate that.' }]
-            },
-            finishReason: 'STOP',
-            safetyRatings: [
-              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'NEGLIGIBLE', blocked: false }
-            ]
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: {
+            parts: [{ text: 'I cannot generate that.' }]
+          },
+          finishReason: 'STOP',
+          safetyRatings: [
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'NEGLIGIBLE', blocked: false }
+          ]
+        }]
+      }));
 
       await imagenService.generateImage('Some prompt', {}, mockUser);
 
@@ -1165,16 +1075,14 @@ describe('ImagenService', () => {
       const logger = require('../../logger');
       const longPrompt = 'A '.repeat(200) + 'beautiful sunset over the mountains';
 
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: {
-              parts: [{ text: 'Cannot generate this image.' }]
-            },
-            finishReason: 'STOP'
-          }]
-        }
-      });
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [{
+          content: {
+            parts: [{ text: 'Cannot generate this image.' }]
+          },
+          finishReason: 'STOP'
+        }]
+      }));
 
       await imagenService.generateImage(longPrompt, {}, mockUser);
 
@@ -1185,16 +1093,14 @@ describe('ImagenService', () => {
     });
 
     it('should include promptFeedback blockReasonMessage in failureContext details', async () => {
-      mockGeminiModel.generateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          promptFeedback: {
-            blockReason: 'PROHIBITED_CONTENT',
-            blockReasonMessage: 'Content violates usage policies.',
-            safetyRatings: []
-          }
+      mockGenerateContent.mockResolvedValue(genResponse({
+        candidates: [],
+        promptFeedback: {
+          blockReason: 'PROHIBITED_CONTENT',
+          blockReasonMessage: 'Content violates usage policies.',
+          safetyRatings: []
         }
-      });
+      }));
 
       const result = await imagenService.generateImage('Some prompt', {}, mockUser);
 
