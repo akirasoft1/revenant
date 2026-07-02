@@ -1,0 +1,3 @@
+rotate api keys for openai (and potentially others)
+
+cant do immediately because cluster currently powered off
