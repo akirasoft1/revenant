@@ -20,3 +20,16 @@ def test_calls_execute_dql_tool_verbatim():
     name, args = fake_session.call_tool.call_args.args[0], fake_session.call_tool.call_args.args[1]
     assert "fetch spans | limit 1" in json.dumps(args)
     assert result.error == ""
+
+def test_parses_bare_list_response_shape():
+    cfg = _cfg(dt_mcp_url="https://x/mcp", dt_platform_token="tok")
+    tool_result = MagicMock()
+    tool_result.content = [MagicMock(text=json.dumps([{"c": 1}, {"c": 2}]))]
+    fake_session = AsyncMock()
+    fake_session.call_tool.return_value = tool_result
+    with patch("src.dql_runner._open_session") as open_session:
+        open_session.return_value.__aenter__.return_value = fake_session
+        result = asyncio.run(run_dql(cfg, "fetch spans | limit 2"))
+    assert result.error == ""
+    assert json.loads(result.rows_json) == [{"c": 1}, {"c": 2}]
+    assert json.loads(result.columns) == ["c"]

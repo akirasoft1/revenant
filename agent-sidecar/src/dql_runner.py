@@ -40,7 +40,12 @@ async def run_dql(config: Config, query: str) -> RunDqlResult:
             resp = await session.call_tool(_EXECUTE_DQL_TOOL, {"dql": query})
         text = "".join(getattr(c, "text", "") for c in (resp.content or []))
         parsed = json.loads(text) if text else {}
-        records = parsed.get("records", parsed if isinstance(parsed, list) else [])
+        if isinstance(parsed, dict):
+            records = parsed.get("records", [])
+        elif isinstance(parsed, list):
+            records = parsed
+        else:
+            records = []
         columns = list(records[0].keys()) if records and isinstance(records[0], dict) else []
         return RunDqlResult(json.dumps(records), json.dumps(columns), "")
     except Exception as e:  # noqa: BLE001
