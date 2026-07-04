@@ -29,7 +29,9 @@ describe('ObserveCommand', () => {
     expect(agentClient.adminObserve).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'admin1', question: 'errors?' }),
     );
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('2 errors'));
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('2 errors') }),
+    );
   });
 
   it('dql subcommand calls runDql and formats rows', async () => {
@@ -40,7 +42,9 @@ describe('ObserveCommand', () => {
     expect(agentClient.runDql).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'fetch spans | limit 1' }),
     );
-    expect(interaction.editReply).toHaveBeenCalled();
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('"c": 1') }),
+    );
   });
 
   it('surfaces backend error text', async () => {
@@ -48,7 +52,9 @@ describe('ObserveCommand', () => {
     const cmd = new ObserveCommand(agentClient);
     const interaction = makeInteraction('ask', { question: 'x' });
     await cmd.execute(interaction, { config: {} });
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('unavailable'));
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('unavailable') }),
+    );
   });
 
   it('degrades gracefully when the agent sidecar is disabled (null agentClient)', async () => {
@@ -59,6 +65,8 @@ describe('ObserveCommand', () => {
     const cmd = new ObserveCommand(null);
     const interaction = makeInteraction('ask', { question: 'errors?' });
     await expect(cmd.execute(interaction, { config: {} })).resolves.toBeUndefined();
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining('unavailable'));
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('unavailable') }),
+    );
   });
 });
