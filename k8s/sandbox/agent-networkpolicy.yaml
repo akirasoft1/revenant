@@ -59,7 +59,9 @@ spec:
       ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
-    # OpenAI public API (no RFC1918 exposure)
+    # Public internet APIs over TCP :443 (no RFC1918 exposure): OpenAI, and
+    # Dynatrace SaaS (qgv89709.apps.dynatrace.com, resolves to a public IP)
+    # for the sidecar's DT_MCP_URL / dynatrace-mcp tool access.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

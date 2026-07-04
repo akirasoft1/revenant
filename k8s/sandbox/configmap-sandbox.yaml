@@ -21,3 +21,7 @@ data:
   # GEMINI_API_KEY is read from the discord-article-bot-secrets Secret;
   # OPENAI_API_KEY likewise (only used when AGENT_MODEL=openai/...).
   AGENT_MODEL: "gemini-3-flash-preview"
+  # Dynatrace MCP gateway URL — used by the agent sidecar to reach the
+  # dynatrace-mcp server over the platform-reserved MCP gateway endpoint.
+  # Non-secret (no token embedded); DT_PLATFORM_TOKEN (Secret) authenticates.
+  DT_MCP_URL: "https://qgv89709.apps.dynatrace.com/platform-reserved/mcp-gateway/v0.1/servers/dynatrace-mcp/mcp"
