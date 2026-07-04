@@ -36,5 +36,6 @@ module.exports = {
   // Utility commands
   HelpSlashCommand: require('./HelpCommand'),
   ContextSlashCommand: require('./ContextCommand'),
-  ChannelTrackSlashCommand: require('./ChannelTrackCommand')
+  ChannelTrackSlashCommand: require('./ChannelTrackCommand'),
+  ObserveSlashCommand: require('./ObserveCommand')
 };
