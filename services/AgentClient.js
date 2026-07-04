@@ -106,6 +106,56 @@ class AgentClient {
     });
   }
 
+  adminObserve(req) {
+    return new Promise((resolve, reject) => {
+      if (!this.isHealthy()) {
+        reject(new Error('sidecar unhealthy'));
+        return;
+      }
+      const deadline = new Date(Date.now() + this.chatDeadlineMs);
+      this._stub.Observe(
+        { user_id: req.userId, user_tag: req.userTag || '', question: req.question },
+        { deadline },
+        (err, resp) => {
+          if (err) {
+            logger.warn(`AgentClient.adminObserve failed: ${err.message}`);
+            return reject(err);
+          }
+          resolve({
+            answerText: resp.answer_text || '',
+            dqlUsed: resp.dql_used || '',
+            error: resp.error || '',
+          });
+        },
+      );
+    });
+  }
+
+  runDql(req) {
+    return new Promise((resolve, reject) => {
+      if (!this.isHealthy()) {
+        reject(new Error('sidecar unhealthy'));
+        return;
+      }
+      const deadline = new Date(Date.now() + this.chatDeadlineMs);
+      this._stub.RunDql(
+        { user_id: req.userId, query: req.query },
+        { deadline },
+        (err, resp) => {
+          if (err) {
+            logger.warn(`AgentClient.runDql failed: ${err.message}`);
+            return reject(err);
+          }
+          resolve({
+            rowsJson: resp.rows_json || '',
+            columns: resp.columns || '',
+            error: resp.error || '',
+          });
+        },
+      );
+    });
+  }
+
   close() {
     this._closed = true;
     if (this._healthTimer) clearInterval(this._healthTimer);
