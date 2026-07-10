@@ -29,7 +29,8 @@ const {
   ThrowbackSlashCommand,
   HelpSlashCommand,
   ContextSlashCommand,
-  ChannelTrackSlashCommand
+  ChannelTrackSlashCommand,
+  ObserveSlashCommand
 } = require('../commands/slash');
 
 async function registerCommands() {
@@ -61,6 +62,7 @@ async function registerCommands() {
   commands.push(new HelpSlashCommand());
   commands.push(new ContextSlashCommand(null));
   commands.push(new ChannelTrackSlashCommand(null, null));
+  commands.push(new ObserveSlashCommand(null));
 
   // Conditionally include feature-gated commands
   if (config.imagen?.enabled) {

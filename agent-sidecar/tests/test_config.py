@@ -61,3 +61,23 @@ def test_openai_api_key_now_optional(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     cfg = config_mod.load()
     assert cfg.openai_api_key is None
+
+
+def test_load_reads_dynatrace_mcp_env(monkeypatch):
+    monkeypatch.setenv("SANDBOX_BASE_IMAGE", "img")
+    monkeypatch.setenv("MONGO_URI", "mongodb://x/db")
+    monkeypatch.setenv("DT_MCP_URL", "https://qgv89709.apps.dynatrace.com/.../mcp")
+    monkeypatch.setenv("DT_PLATFORM_TOKEN", "dt0s16.ABC")
+    cfg = config_mod.load()
+    assert cfg.dt_mcp_url == "https://qgv89709.apps.dynatrace.com/.../mcp"
+    assert cfg.dt_platform_token == "dt0s16.ABC"
+
+
+def test_load_dynatrace_env_optional(monkeypatch):
+    monkeypatch.setenv("SANDBOX_BASE_IMAGE", "img")
+    monkeypatch.setenv("MONGO_URI", "mongodb://x/db")
+    monkeypatch.delenv("DT_MCP_URL", raising=False)
+    monkeypatch.delenv("DT_PLATFORM_TOKEN", raising=False)
+    cfg = config_mod.load()
+    assert cfg.dt_mcp_url is None
+    assert cfg.dt_platform_token is None

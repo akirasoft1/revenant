@@ -66,7 +66,8 @@ const {
   StatsSlashCommand,
   HelpSlashCommand,
   ContextSlashCommand,
-  ChannelTrackSlashCommand
+  ChannelTrackSlashCommand,
+  ObserveSlashCommand
 } = require('./commands/slash');
 
 class DiscordBot {
@@ -456,6 +457,10 @@ class DiscordBot {
     // Register catch-me-up command
     this.slashCommandHandler.register(new CatchMeUpSlashCommand(this.catchMeUpService));
     this.slashCommandHandler.register(new StatsSlashCommand(this.mongoService));
+
+    // Register admin observability command (degrades gracefully if the agent
+    // sidecar is disabled — this.agentClient is null in that case).
+    this.slashCommandHandler.register(new ObserveSlashCommand(this.agentClient));
 
     logger.info(`Registered ${this.slashCommandHandler.size} slash commands`);
   }

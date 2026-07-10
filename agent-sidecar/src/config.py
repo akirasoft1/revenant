@@ -56,6 +56,11 @@ class Config:
     otlp_endpoint: str | None
     otlp_headers: str | None
 
+    # Dynatrace remote MCP (observability admin path). Both optional: absent =
+    # /obs reports "observability backend unavailable" instead of crashing.
+    dt_mcp_url: str | None
+    dt_platform_token: str | None
+
 
 def load() -> Config:
     return Config(
@@ -76,4 +81,6 @@ def load() -> Config:
         k8s_namespace=os.environ.get("K8S_NAMESPACE", "discord-article-bot"),
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         otlp_headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
+        dt_mcp_url=os.environ.get("DT_MCP_URL"),
+        dt_platform_token=os.environ.get("DT_PLATFORM_TOKEN"),
     )

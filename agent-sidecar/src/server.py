@@ -8,6 +8,7 @@ import grpc
 
 from . import agent_pb2, agent_pb2_grpc
 from .config import load as load_config
+from .dql_runner import run_dql
 from .tracing import setup as setup_tracing
 
 log = logging.getLogger(__name__)
@@ -21,8 +22,10 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
     to the injected ChannelVoiceAgent. The agent dependency is optional so the
     Health endpoint can be served before agent assembly is wired in."""
 
-    def __init__(self, channel_voice_agent=None) -> None:
+    def __init__(self, channel_voice_agent=None, observability_agent=None, config=None) -> None:
         self._agent = channel_voice_agent
+        self._obs_agent = observability_agent
+        self._config = config
 
     async def Health(self, request, context):  # noqa: N802
         return agent_pb2.HealthResponse(healthy=True)
@@ -50,6 +53,32 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
             message_text=result.message_text,
             summary=summary,
             fallback_occurred=False,
+        )
+
+    async def Observe(self, request, context):  # noqa: N802
+        if self._obs_agent is None:
+            return agent_pb2.ObserveResponse(error="observability agent not configured")
+        try:
+            result = await self._obs_agent.observe(
+                user_id=request.user_id, question=request.question,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("Observe handler failed")
+            return agent_pb2.ObserveResponse(error=str(e))
+        return agent_pb2.ObserveResponse(
+            answer_text=result.answer_text, dql_used=result.dql_used, error=result.error,
+        )
+
+    async def RunDql(self, request, context):  # noqa: N802
+        if self._config is None:
+            return agent_pb2.RunDqlResponse(error="observability backend not configured")
+        try:
+            result = await run_dql(self._config, request.query)
+        except Exception as e:  # noqa: BLE001
+            log.exception("RunDql handler failed")
+            return agent_pb2.RunDqlResponse(error=str(e))
+        return agent_pb2.RunDqlResponse(
+            rows_json=result.rows_json, columns=result.columns, error=result.error,
         )
 
 
@@ -106,6 +135,9 @@ def serve() -> None:
     )
     log.info("agent LLM resolved: AGENT_MODEL=%s", config.agent_model)
 
+    from .observability_agent import ObservabilityAgent
+    obs_agent = ObservabilityAgent(config=config)
+
     async def _retention_loop(stop_event: asyncio.Event) -> None:
         # Run once at startup so freshly-deployed sidecars catch up immediately,
         # then every 24h. Wrapped in try/except so a single bad iteration cannot
@@ -126,7 +158,10 @@ def serve() -> None:
 
     async def _run() -> None:
         server = grpc.aio.server()
-        agent_pb2_grpc.add_AgentServicer_to_server(AgentServicer(agent), server)
+        agent_pb2_grpc.add_AgentServicer_to_server(
+            AgentServicer(channel_voice_agent=agent, observability_agent=obs_agent, config=config),
+            server,
+        )
         server.add_insecure_port(config.grpc_listen_addr)
         await server.start()
         log.info("agent sidecar listening on %s", config.grpc_listen_addr)

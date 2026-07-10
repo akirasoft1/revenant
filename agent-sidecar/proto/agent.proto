@@ -5,6 +5,8 @@ package discordbot.agent;
 service Agent {
   rpc Chat(ChatRequest) returns (ChatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Observe(ObserveRequest) returns (ObserveResponse);
+  rpc RunDql(RunDqlRequest) returns (RunDqlResponse);
 }
 
 message ChatRequest {
@@ -39,4 +41,24 @@ message ImageAttachment {
 message HealthRequest {}
 message HealthResponse {
   bool healthy = 1;
+}
+
+message ObserveRequest {
+  string user_id  = 1;
+  string user_tag = 2;
+  string question = 3;
+}
+message ObserveResponse {
+  string answer_text = 1;
+  string dql_used    = 2;
+  string error       = 3;
+}
+message RunDqlRequest {
+  string user_id = 1;
+  string query   = 2;
+}
+message RunDqlResponse {
+  string rows_json = 1;  // JSON array of row objects
+  string columns   = 2;  // JSON array of column names
+  string error     = 3;
 }
