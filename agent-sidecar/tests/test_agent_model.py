@@ -1,6 +1,24 @@
 """Tests for agent._build_model — the dispatch layer between config's
 AGENT_MODEL string and what ADK's Agent(model=…) actually expects."""
+from src import agent
 from src.agent import _build_model
+
+
+def test_backend_enterprise_when_vertex_flag_set(monkeypatch):
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    assert agent.active_genai_backend() == "enterprise"
+
+
+def test_backend_enterprise_when_enterprise_flag_set(monkeypatch):
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "1")
+    assert agent.active_genai_backend() == "enterprise"
+
+
+def test_backend_developer_api_by_default(monkeypatch):
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+    assert agent.active_genai_backend() == "developer-api"
 
 
 def test_native_gemini_returns_gemini_model():

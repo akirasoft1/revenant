@@ -40,3 +40,8 @@ scripts/prompt-tuning/runs/*
 !scripts/prompt-tuning/runs/.gitkeep
 docs/for-leaders-04-an-assistant-that-remembers.html
 .envrc
+
+# GCP service-account keys (never commit)
+*-key.json
+*_key.json
+agent-sidecar/genai-sa-key.json

@@ -101,7 +101,7 @@ def serve() -> None:
     # tests that import server.py don't pull google-adk or kubernetes.
     from kubernetes import config as kube_config, client as kube_client
     from pymongo import MongoClient
-    from .agent import ChannelVoiceAgent
+    from .agent import ChannelVoiceAgent, active_genai_backend
     from .concurrency import ConcurrencyGate
     from .egress_scraper import NoopEgressScraper
     from .k8s_client import LiveK8sClient
@@ -133,7 +133,13 @@ def serve() -> None:
     agent = ChannelVoiceAgent(
         config=config, orchestrator=orch, base_system_prompt=_load_base_prompt(),
     )
-    log.info("agent LLM resolved: AGENT_MODEL=%s", config.agent_model)
+    log.info(
+        "agent LLM resolved: AGENT_MODEL=%s genai_backend=%s project=%s location=%s",
+        config.agent_model,
+        active_genai_backend(),
+        os.environ.get("GOOGLE_CLOUD_PROJECT", "-"),
+        os.environ.get("GOOGLE_CLOUD_LOCATION", "-"),
+    )
 
     from .observability_agent import ObservabilityAgent
     obs_agent = ObservabilityAgent(config=config)

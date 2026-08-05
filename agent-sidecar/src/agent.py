@@ -6,6 +6,7 @@ to the LiteLlm wrapper for non-Gemini providers when AGENT_MODEL is set to
 something like "openai/gpt-5.1".
 """
 import logging
+import os
 from dataclasses import dataclass
 
 from google.adk.agents import Agent
@@ -20,6 +21,25 @@ from .tools import RunInSandboxTool, ToolBudgetExceeded
 log = logging.getLogger(__name__)
 
 _APP_NAME = "discord-article-bot"
+
+
+def active_genai_backend() -> str:
+    """Which google-genai backend the ADK Gemini path will use, derived from
+    the same env vars the SDK reads.
+
+    'enterprise'    = Gemini Enterprise Agent Platform (formerly Vertex AI,
+                      aiplatform.googleapis.com) — ADC-authenticated, the
+                      enterprise-governed surface for the sidecar's
+                      BLOCK_NONE dual-use workload.
+    'developer-api' = consumer AI-Studio (generativelanguage.googleapis.com),
+                      GEMINI_API_KEY-authenticated.
+
+    Logged at startup so a silent backend swap can never go unnoticed again.
+    """
+    for var in ("GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_GENAI_USE_ENTERPRISE"):
+        if os.environ.get(var, "").strip().lower() in ("1", "true", "yes"):
+            return "enterprise"
+    return "developer-api"
 
 
 class AgentLLMError(RuntimeError):
