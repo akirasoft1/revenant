@@ -39,3 +39,4 @@ scripts/prompt-tuning/candidates/*
 scripts/prompt-tuning/runs/*
 !scripts/prompt-tuning/runs/.gitkeep
 docs/for-leaders-04-an-assistant-that-remembers.html
+.envrc
