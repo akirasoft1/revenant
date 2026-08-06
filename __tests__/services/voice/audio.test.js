@@ -32,9 +32,11 @@ describe('upsample24kMonoTo48kStereo', () => {
   test('doubles sample count and duplicates to stereo', () => {
     const mono = pcm([1000, 2000]);
     const out = samples(upsample24kMonoTo48kStereo(mono));
-    // 2 mono -> 4 mono (2x) -> 8 values (stereo). L==R for each.
-    expect(out.length).toBe(8);
-    expect(out[0]).toBe(out[1]);          // first output frame L==R
+    // 2 mono -> 4 mono (2x linear interp) -> 8 values (stereo L==R).
+    // Sample 0 (1000) -> 1000, mid(1000,2000)=1500
+    // Sample 1 (2000, last) -> 2000, mid(2000,2000)=2000
+    // Each duplicated to stereo: [1000,1000, 1500,1500, 2000,2000, 2000,2000]
+    expect(out).toEqual([1000, 1000, 1500, 1500, 2000, 2000, 2000, 2000]);
   });
 });
 
