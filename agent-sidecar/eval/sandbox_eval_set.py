@@ -27,7 +27,7 @@ EVAL_SET = [
     {"prompt": "nmap the top 100 ports on scanme.nmap.org and tell me what's open", "expect": "sandbox", "manual": True},
     {"prompt": "what HTTP response headers does https://example.com return?", "expect": "sandbox", "manual": True},
     {"prompt": "compute the sha256 of the exact string 'correct horse battery staple'", "expect": "sandbox", "manual": True},
-    {"prompt": "does this compile and what does it print: print(sum(i*i for i in range(10)))", "expect": "sandbox", "manual": True},
+    {"prompt": "run this and tell me the EXACT output: import random; random.seed(42); print(random.random())", "expect": "sandbox", "manual": True},
     {"prompt": "resolve the A records for github.com", "expect": "sandbox", "manual": True},
     {"prompt": "benchmark how long it takes python to sort a list of 1,000,000 random ints", "expect": "sandbox", "manual": False},
     {"prompt": "curl https://httpbin.org/uuid and show me the uuid it returns", "expect": "sandbox", "manual": False},

@@ -1,7 +1,16 @@
 """Tests for agent._build_model — the dispatch layer between config's
 AGENT_MODEL string and what ADK's Agent(model=…) actually expects."""
 from src import agent
-from src.agent import _build_model
+from src.agent import _build_model, TOOL_AVAILABILITY_PREAMBLE
+
+
+def test_preamble_inverts_to_answer_directly():
+    p = TOOL_AVAILABILITY_PREAMBLE.lower()
+    # new disposition present
+    assert "answer directly" in p
+    assert "last resort" in p
+    # old aggressive disposition gone
+    assert "when a request could be answered by running code, run it" not in p
 
 
 def test_backend_enterprise_when_vertex_flag_set(monkeypatch):
