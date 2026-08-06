@@ -82,7 +82,8 @@ class LiveBridge:
         async for ev in request_iter:
             kind = ev.WhichOneof("event")
             if kind == "audio":
-                await session.send_realtime_input(audio=ev.audio.pcm)
+                await session.send_realtime_input(
+                    audio=types.Blob(data=ev.audio.pcm, mime_type="audio/pcm;rate=16000"))
             elif kind == "session_end":
                 return
 

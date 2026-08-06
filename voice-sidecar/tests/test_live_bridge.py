@@ -68,7 +68,9 @@ async def test_seeds_recall_and_forwards_audio_and_transcripts():
     out = await _drive(bridge, [start, audio], session)
 
     assert session.seeded, "recall/system prompt must be seeded via send_client_content"
-    assert session.sent_audio == [b"\xaa\xbb"]
+    assert len(session.sent_audio) == 1
+    assert session.sent_audio[0].data == b"\xaa\xbb"
+    assert session.sent_audio[0].mime_type == "audio/pcm;rate=16000"
     kinds = [e.WhichOneof("event") for e in out]
     assert "input_transcript" in kinds and "output_transcript" in kinds
     assert "audio" in kinds and "turn_complete" in kinds
