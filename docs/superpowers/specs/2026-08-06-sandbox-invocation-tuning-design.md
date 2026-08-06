@@ -118,11 +118,11 @@ auto-attached via reaction reveal).
 
 ## Component 3 — Dynatrace production metric
 
-**Telemetry:** in the gRPC `Chat` handler (`server.py`), after the agent returns, set attributes on the current (gRPC-auto-instrumented) span:
-- `sandbox.invoked` (bool) = `execution_count > 0`
-- `sandbox.call_count` (int) = `execution_count`
+**Telemetry:** there is **no gRPC auto-instrumentation** today (`tracing.py` only sets up a `TracerProvider` + OTLP exporter; nothing calls `.instrument()`), so the `Chat` handler must **create an explicit span**. In `server.py`'s `Chat`, wrap the agent call in `tracer.start_as_current_span("agent.chat")` and set:
+- `sandbox.invoked` (bool) = `len(result.execution_ids) > 0`
+- `sandbox.call_count` (int) = `len(result.execution_ids)`
 
-`ExecutionSummary.execution_count` already carries this — we just surface it on the span so it lands in Dynatrace via the existing OTLP export.
+The span is exported to Dynatrace via the existing OTLP `BatchSpanProcessor`. (`result` is the `AgentChatResult`; its `execution_ids` already carry the count.)
 
 **Query (DQL):** aggregate over the Chat spans — fraction of turns with `sandbox.invoked = true` and avg `sandbox.call_count`, bucketed by time, to compare a window before the deploy vs. after. (Exact DQL authored during implementation against the live span/field names.)
 
