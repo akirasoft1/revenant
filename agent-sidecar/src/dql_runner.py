@@ -7,7 +7,15 @@ import logging
 from dataclasses import dataclass
 
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+try:
+    # mcp < 1.16 exposed this as streamablehttp_client; newer releases renamed
+    # it to streamable_http_client. Support both so an unpinned `mcp>=1.13.0`
+    # floor can't break the sidecar on rebuild.
+    from mcp.client.streamable_http import streamablehttp_client
+except ImportError:  # pragma: no cover - depends on installed mcp version
+    from mcp.client.streamable_http import (
+        streamable_http_client as streamablehttp_client,
+    )
 
 from .config import Config
 

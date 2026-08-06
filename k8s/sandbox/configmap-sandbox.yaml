@@ -20,7 +20,7 @@ data:
   #   "anthropic/claude-opus-..." -> Anthropic via LiteLlm wrapper
   # GEMINI_API_KEY is read from the discord-article-bot-secrets Secret;
   # OPENAI_API_KEY likewise (only used when AGENT_MODEL=openai/...).
-  AGENT_MODEL: "gemini-3-flash-preview"
+  AGENT_MODEL: "gemini-3.6-flash"
   # Dynatrace MCP gateway URL — used by the agent sidecar to reach the
   # dynatrace-mcp server over the platform-reserved MCP gateway endpoint.
   # Non-secret (no token embedded); DT_PLATFORM_TOKEN (Secret) authenticates.

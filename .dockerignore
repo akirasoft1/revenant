@@ -1,0 +1,31 @@
+# === SECRETS — never bake these into an image (esp. a public one) ===
+# Root cause of the recurring GCP key compromise: `COPY . .` with no
+# .dockerignore published .env (and a GCP SA key) into public Docker Hub layers.
+.env
+.env.*
+!.env.example
+.envrc
+service_account_key.json
+*_key.json
+*-key.json
+*.pem
+*.key
+credentials.json
+
+# Kubernetes overlays that hold real secrets (deployed overlay is gitignored)
+k8s/overlays/deployed/
+
+# Local tooling / agent settings that may contain tokens
+.claude/settings.local.json
+
+# === Build hygiene (not secrets, just don't belong in the image) ===
+.git
+.gitignore
+node_modules
+npm-debug.log*
+__tests__
+coverage
+*.md
+docs/
+scratchpad/
+.DS_Store
