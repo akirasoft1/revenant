@@ -7,7 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY proto/ proto/
-ENV PYTHONPATH=/app:/app/src
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app:/app/src
 USER 1000
 EXPOSE 50051
 CMD ["python", "-m", "src.server"]

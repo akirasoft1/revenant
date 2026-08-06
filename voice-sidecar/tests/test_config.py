@@ -1,4 +1,3 @@
-import os
 from src import config as cfg
 
 def test_load_defaults(monkeypatch):
