@@ -48,6 +48,12 @@ class VoiceServicer(voice_pb2_grpc.VoiceServicer):
                 yield item
         finally:
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001
+                logger.exception("voice bridge task failed")
 
 
 def _build_bridge(config):
