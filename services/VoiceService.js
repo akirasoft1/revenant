@@ -22,7 +22,7 @@ class VoiceService {
     this._config = config;
     this._deps = deps;
     // guildId -> { connection, player, gate, machine, session, channelId,
-    //              buffers, tickTimer, atMs, sessionOpenedAtMs }
+    //              buffers, tickTimer, sessionOpenedAtMs }
     this._guilds = new Map();
   }
 
@@ -79,8 +79,8 @@ class VoiceService {
         case 'startSession': await this._startSession(guildId, ctx.userId); break;
         case 'play': this._play(g, a.pcm); break;
         case 'stopPlayback': g.player.stop(); break;
-        case 'armFollowup': g.atMs = a.atMs; break;
-        case 'cancelFollowup': g.atMs = null; break;
+        case 'armFollowup': break; // follow-up deadline lives inside the machine; nothing to wire here
+        case 'cancelFollowup': break;
         case 'endSession': this._endSession(g); break;
         case 'notifyError': logger.warn(`voice: live error in guild ${guildId}`); break;
         default: break;
@@ -115,15 +115,32 @@ class VoiceService {
     g.session = session;
     g.sessionOpenedAtMs = this._deps.now();
     g.buffers = { in: [], out: [] };
-    session.on('audio', (buf) => this._apply(guildId, g.machine.onServerEvent({ type: 'audio', pcm: buf })));
-    session.on('inputTranscript', (t) => g.buffers.in.push(t));
-    session.on('outputTranscript', (t) => g.buffers.out.push(t));
-    session.on('interrupted', () => this._apply(guildId, g.machine.onServerEvent({ type: 'interrupted' })));
+
+    // Real gRPC duplex streams can deliver already-in-flight server frames
+    // after the local end() call. Every handler below is guarded by session
+    // identity (`g.session !== session` => stale/superseded, ignore) so a
+    // late event from a session that has already been ended/replaced can't
+    // mutate the *current* guild state (stale audio playback, transcript
+    // cross-session bleed). This is belt-and-suspenders alongside
+    // `_endSession`'s `removeAllListeners()`.
+    const applyGuarded = (evt) => {
+      if (g.session !== session) return;
+      this._apply(guildId, g.machine.onServerEvent(evt)).catch((e) => logger.warn(`voice: apply failed: ${e.message}`));
+    };
+    session.on('audio', (buf) => applyGuarded({ type: 'audio', pcm: buf }));
+    session.on('inputTranscript', (t) => { if (g.session !== session) return; g.buffers.in.push(t); });
+    session.on('outputTranscript', (t) => { if (g.session !== session) return; g.buffers.out.push(t); });
+    session.on('interrupted', () => applyGuarded({ type: 'interrupted' }));
     session.on('turnComplete', () => {
+      if (g.session !== session) return;
       this._persistTurn(guildId).catch((e) => logger.warn(`voice: persist failed: ${e.message}`));
-      this._apply(guildId, g.machine.onServerEvent({ type: 'turnComplete' }));
+      applyGuarded({ type: 'turnComplete' });
     });
-    session.on('error', (e) => { logger.warn(`voice: session error: ${e.message}`); this._apply(guildId, g.machine.onServerEvent({ type: 'error' })); });
+    session.on('error', (e) => {
+      if (g.session !== session) return;
+      logger.warn(`voice: session error: ${e.message}`);
+      applyGuarded({ type: 'error' });
+    });
 
     session.sendStart({ userId, channelId: g.channelId, guildId,
       systemPrompt: this._config.voice.systemPrompt || '',
@@ -168,8 +185,19 @@ class VoiceService {
   }
 
   _endSession(g) {
-    if (g.session) { try { g.session.end(); } catch (_) { /* closed */ } g.session = null; }
+    if (g.session) {
+      const session = g.session;
+      // Belt-and-suspenders with the identity guards in _startSession:
+      // strip listeners so a real gRPC stream can't fire late in-flight
+      // events into this guild's handlers at all.
+      try { session.removeAllListeners(); } catch (_) { /* best-effort */ }
+      try { session.end(); } catch (_) { /* closed */ }
+      g.session = null;
+    }
     g.sessionOpenedAtMs = null;
+    // Discard any PCM buffered mid-utterance so the next wake-word window
+    // isn't skewed by leftover audio from the just-ended session.
+    if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
   }
 
   async leave(guildId) {
