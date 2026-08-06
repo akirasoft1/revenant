@@ -10,12 +10,20 @@ Requires GEAP env:
 """
 import argparse
 import asyncio
+import os
 import sys
 
-from src.agent import ChannelVoiceAgent
-from src.config import load
-from eval.harness import FakeOrchestrator, score
-from eval.sandbox_eval_set import EVAL_SET
+# config.load() requires a few env vars the eval never uses (fake orchestrator,
+# no Mongo/k8s). Default them so the harness is self-contained. AGENT_MODEL
+# defaults to the production model so the eval measures the real decision.
+os.environ.setdefault("MONGO_URI", "mongodb://unused/eval")
+os.environ.setdefault("SANDBOX_BASE_IMAGE", "unused")
+os.environ.setdefault("AGENT_MODEL", "gemini-3.6-flash")
+
+from src.agent import ChannelVoiceAgent  # noqa: E402
+from src.config import load  # noqa: E402
+from eval.harness import FakeOrchestrator, score  # noqa: E402
+from eval.sandbox_eval_set import EVAL_SET  # noqa: E402
 
 _BASE_PROMPT = "You are a helpful assistant in a private Discord channel."
 
