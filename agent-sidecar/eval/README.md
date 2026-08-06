@@ -40,8 +40,31 @@ CI (needs creds + spend); it's an on-demand tuning tool.
 ## Production validation (Dynatrace)
 
 The `Chat` handler emits an `agent.chat` span with `sandbox.invoked` (bool) and
-`sandbox.call_count` (int). Query the per-turn invocation rate over time to
-confirm the offline win holds in real traffic.
+`sandbox.call_count` (int), exported via OTLP/HTTP to the cluster's Dynatrace
+tenant (`qgv89709`). Per-turn invocation rate:
+
+```dql
+fetch spans, from: now()-24h
+| filter span.name == "agent.chat"
+| summarize turns = count(),
+            sandbox_turns = countIf(sandbox.invoked == true),
+            avg_calls = avg(sandbox.call_count)
+| fieldsAdd sandbox_rate_pct = round(100.0 * sandbox_turns / turns, decimals: 1)
+```
+
+Or as a timeseries to watch the trend across a deploy:
+
+```dql
+fetch spans, from: now()-7d
+| filter span.name == "agent.chat"
+| makeTimeseries turns = count(), sandbox_turns = countIf(sandbox.invoked == true), interval: 1h
+| fieldsAdd sandbox_rate_pct = sandbox_turns[] / turns[] * 100
+```
+
+Validated 2026-08-06: a 3-direct / 3-sandbox test batch produced exactly 3
+`sandbox.invoked=false` and 3 `sandbox.invoked=true` spans. NOTE: the sidecar's
+OTLP export was broken before this branch (gRPC exporter aimed at the HTTP port
+:4318 — 0 spans ingested); fixed in `tracing.py` to OTLP/HTTP.
 
 ## Discord manual test list
 
