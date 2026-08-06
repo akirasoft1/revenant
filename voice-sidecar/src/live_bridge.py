@@ -89,8 +89,12 @@ class LiveBridge:
 
     async def _pump_server(self, session, emit) -> None:
         # receive() ends per-turn on turn_complete; loop to span the whole session.
+        # When the session is closed, receive() yields nothing immediately —
+        # that's the signal to stop, otherwise this would busy-spin forever.
         while True:
+            produced = False
             async for msg in session.receive():
+                produced = True
                 if msg.data:
                     await emit(voice_pb2.VoiceServerEvent(
                         audio=voice_pb2.AudioChunk(pcm=msg.data)))
@@ -107,3 +111,5 @@ class LiveBridge:
                     await emit(voice_pb2.VoiceServerEvent(interrupted=voice_pb2.Interrupted()))
                 if getattr(sc, "turn_complete", False):
                     await emit(voice_pb2.VoiceServerEvent(turn_complete=voice_pb2.TurnComplete()))
+            if not produced:
+                break
