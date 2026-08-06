@@ -82,8 +82,13 @@ discord-article-bot-voice (Live bridge)
 
 ### 1. Node: `/voice` slash command (`commands/slash/voice.js`)
 
-- `/voice join` — joins the invoking user's current voice channel (error if they're not
-  in one). `/voice leave` — disconnects.
+- `/voice join` — joins the invoking user's current voice channel. The target channel
+  is **inferred from the caller's own voice state** (`interaction.member.voice.channel`),
+  which the interaction carries even when the command is typed in a text channel — so
+  no channel parameter is needed. If the caller isn't in a voice channel, reply
+  ephemerally telling them to join one first. `joinVoiceChannel` is then called with
+  `channelId: channel.id`, `guildId: channel.guild.id`, and
+  `adapterCreator: channel.guild.voiceAdapterCreator`. `/voice leave` — disconnects.
 - Requires the **`GuildVoiceStates`** gateway intent (not currently enabled) added to
   both `bot.js` client instantiation and `config/config.js` `discord.intents`.
 - Gated by `VOICE_ENABLED`; if disabled, replies ephemerally that voice is off.
