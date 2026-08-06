@@ -89,7 +89,7 @@ class VoiceClient {
           session.emit('interrupted');
           break;
         case 'error':
-          session.emit('error', new Error(ev.error.message));
+          session.emit('error', new Error(ev.error.message || 'voice sidecar error'));
           break;
         default:
           break;
