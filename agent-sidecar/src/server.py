@@ -5,6 +5,7 @@ import os
 import signal
 
 import grpc
+from opentelemetry import trace
 
 from . import agent_pb2, agent_pb2_grpc
 from .config import load as load_config
@@ -34,15 +35,21 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
         if self._agent is None:
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, "Chat agent not configured")
             return agent_pb2.ChatResponse()
-        try:
-            result = await self._agent.process_chat(
-                user_id=request.user_id,
-                user_message=request.user_message,
-            )
-        except Exception as e:  # noqa: BLE001
-            log.exception("Chat handler failed")
-            await context.abort(grpc.StatusCode.INTERNAL, str(e))
-            return agent_pb2.ChatResponse()
+        with trace.get_tracer(__name__).start_as_current_span("agent.chat") as span:
+            try:
+                result = await self._agent.process_chat(
+                    user_id=request.user_id,
+                    user_message=request.user_message,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.exception("Chat handler failed")
+                await context.abort(grpc.StatusCode.INTERNAL, str(e))
+                return agent_pb2.ChatResponse()
+            # Surface the sandbox-invocation decision for Dynatrace so the
+            # per-turn invocation rate is queryable (sandbox-invocation tuning).
+            n = len(result.execution_ids)
+            span.set_attribute("sandbox.invoked", n > 0)
+            span.set_attribute("sandbox.call_count", n)
 
         summary = agent_pb2.ExecutionSummary(
             execution_count=len(result.execution_ids),
