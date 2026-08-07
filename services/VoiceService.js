@@ -50,7 +50,9 @@ class VoiceService {
       const stream = connection.receiver.subscribe(userId, { end: { behavior: d.EndBehaviorType.AfterSilence, duration: 800 } });
       const decoder = d.opusDecoderFactory();
       stream.pipe(decoder);
-      decoder.on('data', (pcm48) => this._handleUserPcm(guildId, userId, pcm48));
+      decoder.on('data', (pcm48) => {
+        this._handleUserPcm(guildId, userId, pcm48).catch((e) => logger.warn(`voice: pcm handling failed: ${e.message}`));
+      });
     });
 
     state.tickTimer = d.setInterval(() => this._tick(guildId), 250);
@@ -181,7 +183,7 @@ class VoiceService {
       return;
     }
 
-    this._apply(guildId, g.machine.onTick(now));
+    this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
   }
 
   _endSession(g) {

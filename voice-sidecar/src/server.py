@@ -4,6 +4,7 @@ import logging
 import signal
 
 import grpc
+from opentelemetry import trace
 
 from . import voice_pb2, voice_pb2_grpc
 from .config import load as load_config
@@ -90,6 +91,14 @@ def serve() -> None:
             await stop_event.wait()
         finally:
             await server.stop(grace=10)
+            # Force-flush + shut down the tracer provider so spans buffered in the
+            # BatchSpanProcessor are exported before the process exits on SIGTERM.
+            # Safe/no-op when setup_tracing() installed a provider with no exporter
+            # (config.otlp_endpoint unset).
+            try:
+                trace.get_tracer_provider().shutdown()
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to flush/shutdown tracer provider")
 
     asyncio.run(_run())
 

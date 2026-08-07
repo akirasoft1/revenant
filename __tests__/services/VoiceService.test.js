@@ -204,3 +204,97 @@ test('late events from a superseded/ended session are ignored (no stale playback
   // skew the next wake-word detection window.
   expect(gate.reset).toHaveBeenCalled();
 });
+
+// --- Fix round 2: floating async calls from sync callbacks must not crash the process ---
+// VoiceService._apply/_handleUserPcm are async and can reject. They are invoked from
+// synchronous timer/event callbacks (the tick interval, the opus decoder's 'data' event)
+// with no await/try-catch at the call site. Without a `.catch()` guard, a rejection there
+// becomes an unhandledRejection, and since this repo has no
+// `process.on('unhandledRejection', ...)` handler, Node's default terminates the whole
+// process -- not just voice. These tests prove the guards swallow+log instead.
+
+test('a rejection in the tick path is caught and logged, not left as an unhandled rejection', async () => {
+  const unhandledRejections = [];
+  const onUnhandledRejection = (err) => unhandledRejections.push(err);
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    // gate.reset throws -- this fires inside _endSession, invoked synchronously
+    // from _apply's 'endSession' case, which _tick calls without an await.
+    const gate = { push: jest.fn(() => true), reset: jest.fn(() => { throw new Error('gate reset boom'); }) };
+    let currentTime = 0;
+    const deps = makeDeps({ makeWakeGate: () => gate, now: () => currentTime });
+    const { svc, voiceClient } = makeService(deps, { followupWindowMs: 1000 });
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+    // Wake -> active, opens a session.
+    await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+    const session = voiceClient.converse.mock.results[0].value;
+
+    // Drive the machine to 'hot' with a follow-up deadline in the past.
+    session.emit('turnComplete');
+    await new Promise((r) => setImmediate(r));
+    const g = svc._guilds.get('g1');
+    expect(g.machine.state).toBe('hot');
+
+    currentTime = 10000; // past followupWindowMs
+
+    // This is the exact call site under test: the tick timer's floating `_apply` call.
+    // onTick() -> [endSession] -> _endSession() -> gate.reset() throws synchronously
+    // inside the async _apply body, rejecting its returned promise.
+    expect(() => svc._tick('g1')).not.toThrow();
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('voice: tick apply failed'));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('gate reset boom'));
+    expect(unhandledRejections).toHaveLength(0);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandledRejection);
+  }
+});
+
+test('a rejection in the PCM decoder path is caught and logged, not left as an unhandled rejection', async () => {
+  const unhandledRejections = [];
+  const onUnhandledRejection = (err) => unhandledRejections.push(err);
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    const gate = { push: jest.fn(() => true), reset: jest.fn() }; // fire wake immediately
+    const rxStream = new EventEmitter(); rxStream.pipe = jest.fn();
+    const decoder = new EventEmitter();
+    const connection = new EventEmitter();
+    connection.subscribe = jest.fn();
+    connection.receiver = { subscribe: jest.fn(() => rxStream), speaking: new EventEmitter() };
+    connection.destroy = jest.fn();
+
+    const deps = makeDeps({
+      makeWakeGate: () => gate,
+      joinVoiceChannel: jest.fn(() => connection),
+      opusDecoderFactory: () => decoder,
+    });
+    const { svc, voiceClient } = makeService(deps);
+    // Force the wake path to throw synchronously inside _startSession (invoked via
+    // _apply, which _handleUserPcm awaits internally but whose *caller* -- the decoder's
+    // 'data' listener wired in join() -- does not await or catch).
+    voiceClient.converse.mockImplementation(() => { throw new Error('converse boom'); });
+
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+    // Wire up exactly as production join() does: a user starts speaking.
+    connection.receiver.speaking.emit('start', 'user1');
+    expect(rxStream.pipe).toHaveBeenCalledWith(decoder);
+
+    // This is the exact call site under test: decoder 'data' -> this._handleUserPcm(...).
+    // It must not throw synchronously and must not produce an unhandled rejection.
+    expect(() => decoder.emit('data', Buffer.alloc(1024))).not.toThrow();
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('voice: pcm handling failed'));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('converse boom'));
+    expect(unhandledRejections).toHaveLength(0);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandledRejection);
+  }
+});
