@@ -241,6 +241,14 @@ class DiscordBot {
         const dv = require('@discordjs/voice');
         const prism = require('prism-media');
         const { createOpenWakeWordEngine, WakeWordGate } = require('./services/voice/wakeword');
+        // Warn (don't fail) if the wake-phrase label doesn't match the wake model
+        // filename, e.g. VOICE_WAKE_WORD="alexa" but VOICE_WAKE_MODEL points at
+        // hey_jarvis -> /voice would announce the wrong phrase.
+        const wakeLabelSlug = String(config.voice.wakeWord || '').trim().toLowerCase().replace(/\s+/g, '_');
+        const wakeModelBase = require('path').basename(String(config.voice.wakeModel || '')).toLowerCase();
+        if (wakeLabelSlug && wakeModelBase && !wakeModelBase.includes(wakeLabelSlug)) {
+          logger.warn(`voice wake-word label "${config.voice.wakeWord}" does not match wake model file "${wakeModelBase}" — the /voice reply may name the wrong phrase. Set VOICE_WAKE_WORD to match VOICE_WAKE_MODEL.`);
+        }
         this.voiceClient = new VoiceClient({
           address: config.voice.address,
           protoPath: require('path').join(__dirname, 'proto', 'voice.proto'),

@@ -33,7 +33,12 @@ class WakeWordGate {
     return detected;
   }
 
-  reset() { this._buf = new Int16Array(0); }
+  reset() {
+    this._buf = new Int16Array(0);
+    // Propagate to the engine so stale/in-flight detections from the previous
+    // listening period cannot surface in the next one (see engine.reset()).
+    this._engine.reset?.();
+  }
 }
 
 // --- openWakeWord ONNX engine -------------------------------------------------
@@ -59,12 +64,26 @@ class WakeWordGate {
 // on the reference `hey_jarvis` sample scores ~0.998 this way (negative ~0.0003).
 //
 // onnxruntime-node's `session.run` is async, but the WakeWordGate contract calls
-// `engine.process()` synchronously and expects a number back. We therefore run
-// the ONNX chain on an async queue and surface detections via a flag that
-// `process()` reads (and clears) on each call: a detection is reported on the
-// next `process()` after the chain completes -- a sub-frame (<80 ms) lag that is
+// `engine.process()` synchronously and expects a number back. Bridge design:
+//
+//   * Single in-flight, drop-when-busy. At most ONE inference runs at a time.
+//     If `process()` is called while one is in flight, the frame is skipped
+//     (no queue, no retained-Int16Array backlog) -- the models infer in
+//     ~5-15 ms, far under the 80 ms frame interval, so this virtually never
+//     drops in practice, and openWakeWord's rolling window tolerates the rare
+//     skipped frame.
+//   * Generation token ties a result to the CURRENT listening period. Each
+//     scheduled inference captures `gen = generation`; on resolve it only sets
+//     `detected = true` if `gen === generation` (and score >= threshold).
+//   * `reset()` bumps `generation`, clears `detected`, and drops the mel/embed
+//     buffers -- so any in-flight inference no-ops on resolve and no stale
+//     detection can carry into the next period. WakeWordGate.reset() propagates
+//     to it (and VoiceService._endSession already calls gate.reset()).
+//
+// `process()` stays synchronous and returns `0`/`-1` reflecting the latest
+// resolved, current-generation decision -- a sub-frame (<80 ms) lag that is
 // invisible for continuous wake-word gating. `whenIdle()`/`ready()` expose the
-// internal queue for deterministic testing; they are not part of the gate
+// in-flight promise for deterministic testing; they are not part of the gate
 // contract.
 
 const FRAME_LENGTH = 1280;   // audio samples per step (80 ms @ 16 kHz)
@@ -115,6 +134,8 @@ function createOpenWakeWordEngine({
   let detected = false;
   let lastError = null;
   let closed = false;
+  let generation = 0;          // bumped on reset(); ties results to a period
+  let inFlight = null;         // the single pending inference promise, or null
 
   const readyPromise = (async () => {
     [melSession, embSession, wakeSession] = await Promise.all([
@@ -127,10 +148,15 @@ function createOpenWakeWordEngine({
     for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
   })();
 
-  let queue = readyPromise.catch((e) => { lastError = e; });
+  readyPromise.catch((e) => { lastError = e; });
 
-  async function runChain(int16Frame) {
+  // Runs the mel -> embedding -> wake chain for one frame. `gen` is the
+  // generation captured at schedule time; buffer mutations and the detection
+  // flag are only applied while it is still the current generation, so a reset()
+  // mid-flight makes this a no-op on the model state it would otherwise touch.
+  async function runChain(int16Frame, gen) {
     if (!melSession || !embSession || !wakeSession) return;
+    if (gen !== generation) return; // reset() happened before we started
 
     // int16-range float32 (Python openWakeWord training convention).
     const audio = new Float32Array(FRAME_LENGTH);
@@ -139,6 +165,7 @@ function createOpenWakeWordEngine({
     const melOut = await melSession.run({
       [melSession.inputNames[0]]: backend.tensor('float32', audio, [1, FRAME_LENGTH]),
     });
+    if (gen !== generation) return; // reset() during mel inference
     const md = melOut[melSession.outputNames[0]].data;
     for (let j = 0; j < MELS_PER_FRAME; j++) {
       const frame = new Float32Array(MEL_BINS);
@@ -152,6 +179,7 @@ function createOpenWakeWordEngine({
       const embOut = await embSession.run({
         [embSession.inputNames[0]]: backend.tensor('float32', flat, [1, MEL_WINDOW, MEL_BINS, 1]),
       });
+      if (gen !== generation) return; // reset() during embedding inference
       const emb = new Float32Array(embOut[embSession.outputNames[0]].data);
 
       embHistory.shift();
@@ -162,6 +190,7 @@ function createOpenWakeWordEngine({
       const wakeOut = await wakeSession.run({
         [wakeSession.inputNames[0]]: backend.tensor('float32', wf, [1, wakeWindow, EMBEDDING_DIM]),
       });
+      if (gen !== generation) return; // reset() during wake inference
       const score = wakeOut[wakeSession.outputNames[0]].data[0];
       if (score >= threshold) detected = true;
 
@@ -169,24 +198,43 @@ function createOpenWakeWordEngine({
     }
   }
 
+  function schedule(int16Frame) {
+    if (inFlight) return; // single in-flight: drop this frame, one is running
+    // Copy: the gate hands out a subarray view into a buffer it reuses.
+    const copy = new Int16Array(int16Frame.length);
+    copy.set(int16Frame);
+    const gen = generation;
+    inFlight = readyPromise
+      .then(() => runChain(copy, gen))
+      .catch((e) => { lastError = e; })
+      .finally(() => { inFlight = null; });
+  }
+
   return {
     frameLength: FRAME_LENGTH,
 
     process(int16Frame) {
       if (closed) return -1;
-      // Copy: the gate passes a subarray view into a buffer it reuses, and the
-      // chain runs asynchronously after process() returns.
-      const copy = new Int16Array(int16Frame.length);
-      copy.set(int16Frame);
-      queue = queue.then(() => runChain(copy)).catch((e) => { lastError = e; });
+      schedule(int16Frame);
       const fired = detected;
       detected = false;
       return fired ? 0 : -1;
     },
 
+    // Invalidate the current listening period: any in-flight inference no-ops on
+    // resolve (generation check), the detection flag is cleared, and the mel/
+    // embedding buffers are dropped so the next period starts clean.
+    reset() {
+      generation += 1;
+      detected = false;
+      melBuffer = [];
+      embHistory = [];
+      for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
+    },
+
     // --- non-contract helpers (testing / lifecycle) ---
     ready() { return readyPromise; },
-    whenIdle() { return queue; },
+    whenIdle() { return Promise.resolve(inFlight); },
     lastError() { return lastError; },
     close() { closed = true; },
   };

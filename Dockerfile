@@ -9,6 +9,13 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm ci --only=production
 
+# Prune onnxruntime-node's unused GPU execution providers (~252 MB): the bot runs
+# wake-word inference CPU-only, but the package bundles a ~251 MB CUDA provider
+# and a TensorRT shim. Removing them keeps the CPU provider (in libonnxruntime.so)
+# and the binding loadable; only the mel/embedding/wake models run here.
+RUN rm -f node_modules/onnxruntime-node/bin/napi-v*/linux/*/libonnxruntime_providers_cuda.so \
+          node_modules/onnxruntime-node/bin/napi-v*/linux/*/libonnxruntime_providers_tensorrt.so
+
 # Copy application code
 COPY . .
 
