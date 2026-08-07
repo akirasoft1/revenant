@@ -6,7 +6,7 @@
 // stream audio, play audio back, persist transcripts). All heavy
 // collaborators (discord.js voice primitives, wake-word engine, clock,
 // timers) are injected via `deps` so this is unit-testable without
-// Discord/Porcupine/gRPC.
+// Discord/openWakeWord/gRPC.
 
 'use strict';
 const logger = require('../logger');
@@ -27,6 +27,8 @@ class VoiceService {
   }
 
   isEnabled() { return !!(this._config.voice && this._config.voice.enabled); }
+
+  wakeWord() { return (this._config.voice && this._config.voice.wakeWord) || 'hey jarvis'; }
 
   async join({ channel, guildId }) {
     if (this._guilds.size >= this._config.voice.maxSessions && !this._guilds.has(guildId)) {

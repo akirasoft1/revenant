@@ -1,5 +1,7 @@
-# @discordjs/voice ^0.19.0 requires Node >=22.12; Alpine's node:22-alpine line satisfies this.
-FROM node:22-alpine
+# @discordjs/voice ^0.19.0 requires Node >=22.12 (node:22-slim satisfies this).
+# NOTE: Debian slim (glibc), NOT Alpine (musl): onnxruntime-node (openWakeWord
+# wake-word engine) ships glibc-only prebuilt binaries and fails to load on musl.
+FROM node:22-slim
 
 WORKDIR /usr/src/app
 

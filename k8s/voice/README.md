@@ -65,19 +65,26 @@ Two small additions to the bot's own manifests (working copies in the
 gitignored `k8s/overlays/deployed/`; diffs reproduced here for
 traceability — same pattern as `k8s/sandbox/README.md`).
 
-### `configmap.yaml` / secrets (bot)
+### `configmap.yaml` (bot)
 
-Add to the bot's ConfigMap (or Secret, for the Picovoice key):
+Add to the bot's ConfigMap:
 
 ```yaml
 VOICE_ENABLED: "true"
 VOICE_GRPC_ADDR: "discord-article-bot-voice.discord-article-bot.svc.cluster.local:50051"
 ```
 
-```yaml
-# discord-article-bot-secrets
-PICOVOICE_ACCESS_KEY: "<key from Picovoice console>"
-```
+Wake-word detection uses **openWakeWord** — keyless and fully offline. No secret
+is required. The pretrained ONNX models are vendored under `models/openwakeword/`
+and baked into the bot image (`COPY . .`; `models/` is not in `.dockerignore`),
+so there is nothing to mount. Optional overrides: `VOICE_WAKE_WORD` (label,
+default `hey jarvis`), `VOICE_WAKE_MODEL` / `VOICE_MEL_MODEL` /
+`VOICE_EMBEDDING_MODEL` (model paths), `VOICE_WAKE_THRESHOLD` (default `0.5`).
+Available pretrained phrases: hey jarvis, alexa, hey mycroft, hey rhasspy.
+
+> **Bot image base:** the bot `Dockerfile` must be `node:22-slim` (Debian/glibc),
+> NOT `node:22-alpine` — `onnxruntime-node` ships glibc-only prebuilt binaries and
+> will not load on musl/Alpine.
 
 ### `networkpolicy.yaml` (bot)
 
@@ -105,9 +112,9 @@ docker push mvilliger/discord-article-bot-voice:$SHA
 
 ## Smoke test
 
-After deploying both the voice sidecar and the bot (with `VOICE_ENABLED=true`
-and `PICOVOICE_ACCESS_KEY` set) and running `node scripts/registerCommands.js`:
+After deploying both the voice sidecar and the bot (with `VOICE_ENABLED=true`)
+and running `node scripts/registerCommands.js`:
 
 1. In Discord: `/voice join`
-2. Say "computer, what's 2 + 2" — expect a spoken reply.
+2. Say "hey jarvis, what's 2 + 2" — expect a spoken reply.
 3. Run `/tldr` and confirm the voice exchange appears as a transcript.

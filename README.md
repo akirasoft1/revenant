@@ -88,7 +88,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 ### Voice Channel Conversation
 
 - `/voice join` — bot joins your current voice channel; `/voice leave` — bot leaves
-- **Wake Word**: Say the wake word (default `"computer"`) to get the bot's attention, then speak your question — it replies out loud via a Gemini Live session
+- **Wake Word**: Say the wake phrase (default `"hey jarvis"`) to get the bot's attention, then speak your question — it replies out loud via a Gemini Live session. Detection is keyless and fully offline (openWakeWord ONNX models run in-process)
 - **Hot Follow-up Window**: After a reply, a brief window lets you keep talking without repeating the wake word
 - **Dedicated Sidecar**: Runs on its own `discord-article-bot-voice` gRPC sidecar (separate from the agent sandbox sidecar), so voice sessions scale independently
 - **Channel Voice Personality**: Spoken replies reuse the same learned communication-style prompt as text chat
@@ -353,14 +353,17 @@ discord-article-bot/
 
 ### Voice Channel Configuration
 
-Requires Node.js v22.12.0+ (see Prerequisites) and a Picovoice account for wake-word detection ([console.picovoice.ai](https://console.picovoice.ai)). Real-time voice runs through the separate `discord-article-bot-voice` gRPC sidecar — see `k8s/voice/README.md` for deployment.
+Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWakeWord](https://github.com/dscripka/openWakeWord) — keyless, offline, ONNX models run in-process via `onnxruntime-node` (no API key or account needed). The pretrained models are vendored under `models/openwakeword/` and baked into the bot image. Pretrained phrases: **hey jarvis** (default), **alexa**, **hey mycroft**, **hey rhasspy**. Real-time voice runs through the separate `discord-article-bot-voice` gRPC sidecar — see `k8s/voice/README.md` for deployment.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VOICE_ENABLED` | `false` | Enable the `/voice` command and voice channel feature |
 | `VOICE_GRPC_ADDR` | `discord-article-bot-voice.discord-article-bot.svc.cluster.local:50051` | Address of the voice sidecar |
-| `PICOVOICE_ACCESS_KEY` | `` | Access key for Picovoice Porcupine wake-word detection |
-| `VOICE_WAKE_WORD` | `computer` | Wake word that gates when audio is sent to the Live model |
+| `VOICE_WAKE_WORD` | `hey jarvis` | Wake phrase label used in messaging/logging |
+| `VOICE_WAKE_MODEL` | `models/openwakeword/hey_jarvis_v0.1.onnx` | openWakeWord wake-phrase ONNX model |
+| `VOICE_MEL_MODEL` | `models/openwakeword/melspectrogram.onnx` | openWakeWord mel-spectrogram ONNX model |
+| `VOICE_EMBEDDING_MODEL` | `models/openwakeword/embedding_model.onnx` | openWakeWord embedding ONNX model |
+| `VOICE_WAKE_THRESHOLD` | `0.5` | Detection score threshold (0–1) |
 | `VOICE_LIVE_VOICE` | `Puck` | Gemini Live voice name used for spoken replies |
 | `VOICE_FOLLOWUP_WINDOW_MS` | `15000` | Hot follow-up window after a reply, in ms, before the wake word is required again |
 | `VOICE_IDLE_TIMEOUT_MS` | `120000` | Idle time before a voice session is torn down |
@@ -435,7 +438,7 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 ### Voice
 | Command | Description |
 |---------|-------------|
-| `/voice join` | Bot joins your current voice channel; say the wake word (default `"computer"`) to talk to it |
+| `/voice join` | Bot joins your current voice channel; say the wake phrase (default `"hey jarvis"`) to talk to it |
 | `/voice leave` | Bot leaves the voice channel |
 
 ### Utility

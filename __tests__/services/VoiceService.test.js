@@ -35,7 +35,7 @@ function makeService(deps, configOverrides = {}) {
   };
   const recallService = { recall: jest.fn().mockResolvedValue({ block: 'past context' }) };
   const mongoService = { recordChannelMessage: jest.fn().mockResolvedValue({}) };
-  const config = { voice: { enabled: true, wakeWord: 'computer', liveVoice: 'Puck',
+  const config = { voice: { enabled: true, wakeWord: 'hey jarvis', liveVoice: 'Puck',
     followupWindowMs: 1000, idleTimeoutMs: 60000, maxSessions: 2, maxSessionSeconds: 600,
     ...configOverrides } };
   return { svc: new VoiceService({ voiceClient, recallService, mongoService, config, deps }),

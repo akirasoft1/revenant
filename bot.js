@@ -206,7 +206,7 @@ class DiscordBot {
     });
 
     // VoiceClient/VoiceService - live Discord voice channel presence via the
-    // Python voice sidecar. Native discord.js voice deps (opus/sodium/porcupine)
+    // Python voice sidecar. Native deps (opus/sodium/onnxruntime-node)
     // are lazily required here so the rest of the bot works even if they
     // aren't installed (e.g. VOICE_ENABLED=false, as in tests/CI).
     this.voiceClient = null;
@@ -240,7 +240,7 @@ class DiscordBot {
         const VoiceService = require('./services/VoiceService');
         const dv = require('@discordjs/voice');
         const prism = require('prism-media');
-        const { createPorcupineEngine, WakeWordGate } = require('./services/voice/wakeword');
+        const { createOpenWakeWordEngine, WakeWordGate } = require('./services/voice/wakeword');
         this.voiceClient = new VoiceClient({
           address: config.voice.address,
           protoPath: require('path').join(__dirname, 'proto', 'voice.proto'),
@@ -257,8 +257,12 @@ class DiscordBot {
             StreamType: dv.StreamType,
             EndBehaviorType: dv.EndBehaviorType,
             opusDecoderFactory: () => new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }),
-            makeWakeGate: () => new WakeWordGate(createPorcupineEngine({
-              accessKey: config.voice.picovoiceAccessKey, keyword: config.voice.wakeWord })),
+            makeWakeGate: () => new WakeWordGate(createOpenWakeWordEngine({
+              wakeModelPath: config.voice.wakeModel,
+              melModelPath: config.voice.melModel,
+              embeddingModelPath: config.voice.embeddingModel,
+              threshold: config.voice.wakeThreshold,
+            })),
             now: () => Date.now(), setInterval, clearInterval,
           },
         });

@@ -146,9 +146,9 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Graceful Fallback**: When the sidecar is unhealthy or `AGENT_ENABLED=false`, the bot transparently uses the existing direct-OpenAI path. No restart needed to flip.
 
 ### Voice Channel Conversation
-- **Live Voice Sessions**: `/voice join` puts the bot in your current voice channel; it listens for a wake word ("computer" by default) and replies out loud via a dedicated Gemini Live session
+- **Live Voice Sessions**: `/voice join` puts the bot in your current voice channel; it listens for a wake phrase ("hey jarvis" by default) and replies out loud via a dedicated Gemini Live session
 - **Dedicated Sidecar**: A separate Python gRPC sidecar (`discord-article-bot-voice`, distinct from the agent sandbox sidecar) hosts the Live session per active voice channel — `RollingUpdate` and horizontally scalable, since it holds long-lived real-time audio streams (unlike the agent sidecar's single-replica `Recreate`)
-- **Wake Word Gate**: Picovoice Porcupine detects the wake word locally before any audio is sent to the Live model, keeping ambient conversation private and cutting bandwidth/cost
+- **Wake Word Gate**: openWakeWord (keyless, offline ONNX models via `onnxruntime-node`) detects the wake phrase locally before any audio is sent to the Live model, keeping ambient conversation private and cutting bandwidth/cost. Four pretrained phrases available: hey jarvis, alexa, hey mycroft, hey rhasspy
 - **Turn Rhythm**: wake → reply → brief "hot" follow-up window (no wake word needed) → idle, with a configurable hard session-length cap as a cost guard
 - **Reuses the Channel Voice Personality**: The learned channel-voice system prompt is passed into the Live session, so spoken replies match the same learned communication style as text chat
 - **Barge-in / Interruption**: Configurable barge-in support so the bot's own playback can be interrupted by the user speaking

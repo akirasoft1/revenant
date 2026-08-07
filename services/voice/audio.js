@@ -1,6 +1,6 @@
 'use strict';
 
-const FRAME_SAMPLES_16K = 512; // Porcupine frame length @ 16 kHz
+const FRAME_SAMPLES_16K = 512; // audio-pipeline chunk @ 16 kHz (WakeWordGate rebuffers to the engine frame length)
 
 /** 48 kHz stereo s16le -> 16 kHz mono s16le (stereo avg, then 3:1 decimation). */
 function downsampleTo16kMono(buf) {
