@@ -197,6 +197,34 @@ When `AGENT_ENABLED=true`, channel-voice chats are routed through the Python age
 
 **Manifests:** `k8s/sandbox/` (tracked) — see its README for the kata-deploy prereq, apply order, and the two small edits the bot Deployment + NetworkPolicy need.
 
+## Voice (discord-article-bot-voice sidecar)
+
+When `VOICE_ENABLED=true`, `/voice join` puts the bot in a Discord voice channel and routes audio through a **second, separate** Python gRPC sidecar — `discord-article-bot-voice` — that hosts one Gemini Live session per active voice channel. It is a distinct Deployment from the agent sandbox sidecar (`discord-article-bot-agent`): they solve different problems and have opposite scaling needs.
+
+**New-sidecar rationale (RollingUpdate/scalable vs. the agent sidecar's Recreate/do-not-scale):** the agent sidecar keeps sandbox-orchestration concurrency state in-process, so it must stay single-replica `Recreate` and never scale. The voice sidecar instead holds long-lived, real-time gRPC audio streams for as long as the bot sits in a voice channel — a `Recreate` rollout would drop every live call. It ships as its own `RollingUpdate`, horizontally scalable Deployment (`k8s/voice/voice-deployment.yaml`) for exactly that reason.
+
+**Reuses `agent-genai-sa` (no new secrets):** the voice sidecar's Gemini Live calls run on the same GEAP/Vertex backend as the agent sidecar — `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2`, `GOOGLE_CLOUD_LOCATION=global`, ADC via the `agent-genai-sa` Secret mounted at `/var/secrets/genai/key.json`, `GEMINI_API_KEY` blanked. `serviceAccountName: agent-sa` is reused too. Nothing new to provision in the cluster.
+
+**`dynatrace.com/inject` — deliberately left enabled:** unlike the ephemeral Kata sandbox pods (which disable injection because PID 1 doesn't release cleanly, ballooning per-call wall clock), this is a long-lived, observability-first service — same posture as the agent sidecar's deployed manifest, which also does not set the annotation. Both OneAgent and the sidecar's own OTLP spans reach Dynatrace.
+
+**Wake word (Picovoice dependency):** audio is only forwarded to the Live model after Picovoice Porcupine detects the wake word locally (`VOICE_WAKE_WORD`, default `"computer"`), gated by `PICOVOICE_ACCESS_KEY`. This keeps ambient channel audio private and avoids streaming/billing on conversation the bot wasn't addressed in.
+
+**Turn rhythm:** wake → reply → brief "hot" follow-up window (`VOICE_FOLLOWUP_WINDOW_MS`, no wake word needed) → idle (`VOICE_IDLE_TIMEOUT_MS` tears the session down). `VOICE_MAX_SESSION_SECONDS` is a hard belt-and-suspenders cap independent of idle/follow-up timing.
+
+**Reuses the `channel-voice` personality prompt:** `config.voice.systemPrompt` is wired from the same learned channel-voice system prompt used for text chat (falls back to `VOICE_SYSTEM_PROMPT` if set), so spoken replies match the group's learned communication style.
+
+**Memory in, transcripts out:** recall context feeds into voice turns the same way it does text chat, and every voice exchange is written into the MongoDB message store as a transcript — it shows up in `/tldr` and centralized ranked recall like any other message.
+
+**Tunables (bot env):** `VOICE_ENABLED`, `VOICE_GRPC_ADDR`, `VOICE_WAKE_WORD`, `VOICE_LIVE_VOICE`, `PICOVOICE_ACCESS_KEY`, `VOICE_FOLLOWUP_WINDOW_MS`, `VOICE_IDLE_TIMEOUT_MS`, `VOICE_MAX_SESSIONS`, `VOICE_MAX_SESSION_SECONDS`, `VOICE_SYSTEM_PROMPT`. **Sidecar env:** `VOICE_LIVE_MODEL`, `VOICE_DEFAULT_VOICE`, `GRPC_LISTEN_ADDR`.
+
+**Bot image Node bump:** `@discordjs/voice` ^0.19.0 requires Node ≥22.12; the repo-root `Dockerfile` moved `node:20-alpine` → `node:22-alpine` for this feature. Any manual/local run of the bot needs Node ≥22.12.0.
+
+**Deploy checklist:** (1) run the Task 1 GEAP pre-flight probe and set the confirmed model as `VOICE_LIVE_MODEL` in the deployed overlay (never the `REPLACE_WITH_VALIDATED_MODEL` placeholder from the tracked manifest); (2) set `PICOVOICE_ACCESS_KEY` in the bot's secret; (3) confirm the bot image is rebuilt from the Node-22 `Dockerfile` before flipping `VOICE_ENABLED=true`; (4) `kubectl apply -f k8s/voice/ -n discord-article-bot`, then redeploy the bot and run `scripts/registerCommands.js`.
+
+**Deferred follow-ups (not yet implemented):** idle auto-leave (channel currently requires `/voice leave`), per-speaker transcript author fields (multi-user voice channels currently attribute transcripts without per-speaker identity), and dynamic (session-time, non-static) voice-profile injection into the Live system prompt.
+
+**Manifests:** `k8s/voice/` (tracked) — see its README for the apply order, the required bot ConfigMap/Secret/NetworkPolicy edits, and the build/push command.
+
 ## Embedding Data Quality Validation
 
 Run the validation script to check health of all Qdrant collections:
