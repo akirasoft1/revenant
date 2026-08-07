@@ -219,7 +219,20 @@ class DiscordBot {
         if (!config.voice.systemPrompt) {
           const channelVoicePersonality = personalityManager.get('channel-voice');
           if (channelVoicePersonality && channelVoicePersonality.systemPrompt) {
-            config.voice.systemPrompt = channelVoicePersonality.systemPrompt;
+            // channel-voice's systemPrompt contains a {VOICE_INSTRUCTIONS}
+            // placeholder that ChatService._buildGroupSystemPrompt normally
+            // substitutes with a dynamic per-channel voice profile (or, when
+            // none is available, the same static fallback used here). The
+            // voice sidecar has no equivalent substitution step, so without
+            // this the Live model would receive the literal, unsubstituted
+            // "{VOICE_INSTRUCTIONS}" token. Use the identical static fallback
+            // string as services/ChatService.js so the two paths don't drift.
+            // Dynamic per-channel voice-profile injection for Live sessions
+            // remains a documented follow-up.
+            config.voice.systemPrompt = channelVoicePersonality.systemPrompt.replace(
+              '{VOICE_INSTRUCTIONS}',
+              'Be casual, direct, and conversational. Match the energy of the group.'
+            );
             logger.info('Voice systemPrompt sourced from channel-voice personality');
           }
         }
@@ -252,6 +265,7 @@ class DiscordBot {
         logger.info(`VoiceService initialized -> ${config.voice.address}`);
       } catch (e) {
         logger.error(`voice init failed: ${e.message}`);
+        this.voiceClient = null;
         this.voiceService = null;
       }
     } else {

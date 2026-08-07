@@ -30,7 +30,9 @@ describe('/voice', () => {
   test('join with caller in a channel joins it', async () => {
     const i = fakeInteraction({ inChannel: true, sub: 'join' });
     await command.execute(i, {});
-    expect(voiceService.join).toHaveBeenCalledWith(expect.objectContaining({ guildId: 'g1' }));
+    expect(voiceService.join).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: i.member.voice.channel, guildId: 'g1' })
+    );
   });
 
   test('join with caller not in a channel errors, does not join', async () => {
