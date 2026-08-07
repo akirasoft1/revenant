@@ -160,6 +160,11 @@ test('wake while sidecar is unhealthy does not open a converse session', async (
   expect(g.machine.state).toBe('idle');
   expect(g.session).toBeNull();
 
+  // The wake-word gate/engine must be reset on the aborted-wake path too,
+  // same as _endSession — otherwise stale detection state from the tail of
+  // this utterance could immediately re-fire onWake.
+  expect(gate.reset).toHaveBeenCalled();
+
   voiceClient.isHealthy.mockReturnValue(true);
   await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
   expect(voiceClient.converse).toHaveBeenCalled();

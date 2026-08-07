@@ -106,6 +106,10 @@ class VoiceService {
         followupWindowMs: this._config.voice.followupWindowMs, now: this._deps.now });
       g.session = null;
       g.sessionOpenedAtMs = null;
+      // Discard any in-flight wake-word detection state from the tail of
+      // this same utterance so it can't immediately re-fire onWake once the
+      // sidecar recovers (mirrors the reset in _endSession).
+      if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
       return;
     }
 
