@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# @discordjs/voice ^0.19.0 requires Node >=22.12; Alpine's node:22-alpine line satisfies this.
+FROM node:22-alpine
 
 WORKDIR /usr/src/app
 

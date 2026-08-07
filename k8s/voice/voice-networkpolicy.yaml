@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: voice-egress
+  namespace: discord-article-bot
+spec:
+  podSelector:
+    matchLabels:
+      app: discord-article-bot-voice
+  policyTypes: ["Egress", "Ingress"]
+  ingress:
+    # Bot pod uses the kubernetes-recommended `app.kubernetes.io/name` label
+    # (see agent-networkpolicy.yaml for the same gotcha with the agent sidecar).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: discord-article-bot
+      ports:
+        - { protocol: TCP, port: 50051 }
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # GEAP / Vertex AI (aiplatform.googleapis.com) — public egress, no RFC1918 exposure
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
+    # Dynatrace OpenTelemetry collector (telemetry-ingest) for OTLP trace export
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dynatrace
+      ports:
+        - { protocol: TCP, port: 4317 }
+        - { protocol: TCP, port: 4318 }
