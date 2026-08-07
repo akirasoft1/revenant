@@ -30,7 +30,8 @@ const {
   HelpSlashCommand,
   ContextSlashCommand,
   ChannelTrackSlashCommand,
-  ObserveSlashCommand
+  ObserveSlashCommand,
+  VoiceSlashCommand
 } = require('../commands/slash');
 
 async function registerCommands() {
@@ -97,6 +98,11 @@ async function registerCommands() {
     commands.push(new HistorySlashCommand(null, null));
     commands.push(new ThrowbackSlashCommand(null));
     console.log('Including IRC history commands (qdrant enabled)');
+  }
+
+  if (config.voice?.enabled) {
+    commands.push(new VoiceSlashCommand(null));
+    console.log('Including /voice command (voice enabled)');
   }
 
   // Get command JSON for API

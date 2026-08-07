@@ -37,5 +37,8 @@ module.exports = {
   HelpSlashCommand: require('./HelpCommand'),
   ContextSlashCommand: require('./ContextCommand'),
   ChannelTrackSlashCommand: require('./ChannelTrackCommand'),
-  ObserveSlashCommand: require('./ObserveCommand')
+  ObserveSlashCommand: require('./ObserveCommand'),
+
+  // Voice commands
+  VoiceSlashCommand: require('./voice')
 };
