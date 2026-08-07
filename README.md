@@ -85,6 +85,15 @@ For the system-level overview (software architecture + Kubernetes deployment top
 - **Time-Based Filtering**: Filter by year
 - **Throwback Feature**: Random conversations from "this day in history"
 
+### Voice Channel Conversation
+
+- `/voice join` — bot joins your current voice channel; `/voice leave` — bot leaves
+- **Wake Word**: Say the wake phrase (default `"hey jarvis"`) to get the bot's attention, then speak your question — it replies out loud via a Gemini Live session. Detection is keyless and fully offline (openWakeWord ONNX models run in-process)
+- **Hot Follow-up Window**: After a reply, a brief window lets you keep talking without repeating the wake word
+- **Dedicated Sidecar**: Runs on its own `discord-article-bot-voice` gRPC sidecar (separate from the agent sandbox sidecar), so voice sessions scale independently
+- **Channel Voice Personality**: Spoken replies reuse the same learned communication-style prompt as text chat
+- **Transcripts**: Every voice exchange is stored like a regular message, so it shows up in `/tldr` and memory recall
+
 ### Additional Features
 
 - **Article Follow-up Questions**: Reply to summaries to ask follow-up questions about the article
@@ -95,7 +104,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 
 ## Prerequisites
 
-- Node.js v16.9.0 or higher
+- Node.js v22.12.0 or higher (required by `@discordjs/voice` ^0.19.0 for the voice channel feature)
 - Discord Bot Token ([Discord Developer Portal](https://discord.com/developers/applications))
 - OpenAI API Key or Ollama instance
 - MongoDB database
@@ -342,6 +351,26 @@ discord-article-bot/
 | `RECALL_W_PERSONAL` | `1.0` | Ranking weight for `mem0:personal` source |
 | `RECALL_W_CHANNEL_SEMANTIC` | `0.8` | Ranking weight for `channel:semantic` source |
 
+### Voice Channel Configuration
+
+Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWakeWord](https://github.com/dscripka/openWakeWord) — keyless, offline, ONNX models run in-process via `onnxruntime-node` (no API key or account needed). The pretrained models are vendored under `models/openwakeword/` and baked into the bot image. Pretrained phrases: **hey jarvis** (default), **alexa**, **hey mycroft**, **hey rhasspy**. Real-time voice runs through the separate `discord-article-bot-voice` gRPC sidecar — see `k8s/voice/README.md` for deployment.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VOICE_ENABLED` | `false` | Enable the `/voice` command and voice channel feature |
+| `VOICE_GRPC_ADDR` | `discord-article-bot-voice.discord-article-bot.svc.cluster.local:50051` | Address of the voice sidecar |
+| `VOICE_WAKE_WORD` | `hey jarvis` | Wake phrase label used in messaging/logging |
+| `VOICE_WAKE_MODEL` | `models/openwakeword/hey_jarvis_v0.1.onnx` | openWakeWord wake-phrase ONNX model |
+| `VOICE_MEL_MODEL` | `models/openwakeword/melspectrogram.onnx` | openWakeWord mel-spectrogram ONNX model |
+| `VOICE_EMBEDDING_MODEL` | `models/openwakeword/embedding_model.onnx` | openWakeWord embedding ONNX model |
+| `VOICE_WAKE_THRESHOLD` | `0.5` | Detection score threshold (0–1) |
+| `VOICE_LIVE_VOICE` | `Puck` | Gemini Live voice name used for spoken replies |
+| `VOICE_FOLLOWUP_WINDOW_MS` | `15000` | Hot follow-up window after a reply, in ms, before the wake word is required again |
+| `VOICE_IDLE_TIMEOUT_MS` | `120000` | Idle time before a voice session is torn down |
+| `VOICE_MAX_SESSIONS` | `2` | Max concurrent voice sessions across the bot |
+| `VOICE_MAX_SESSION_SECONDS` | `600` | Hard cap on a single voice session's length (cost guard) |
+| `VOICE_SYSTEM_PROMPT` | `` | Overrides the system prompt passed to the Live session (defaults to the channel-voice personality prompt) |
+
 ## Commands
 
 All commands use Discord's native slash command system. Type `/` to see available commands with autocomplete.
@@ -406,6 +435,12 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 
 **Note:** IRC commands require Discord-to-IRC nick mapping. Commands are hidden when Qdrant service is unavailable.
 
+### Voice
+| Command | Description |
+|---------|-------------|
+| `/voice join` | Bot joins your current voice channel; say the wake phrase (default `"hey jarvis"`) to talk to it |
+| `/voice leave` | Bot leaves the voice channel |
+
 ### Utility
 | Command | Description |
 |---------|-------------|
@@ -446,6 +481,8 @@ docker run -d --env-file .env discord-article-bot
 ### Kubernetes
 
 See [kubernetes.md](kubernetes.md) for Kubernetes deployment with Kustomize overlays.
+
+The voice channel feature requires a second sidecar Deployment; see `k8s/voice/README.md` for its manifests, required bot-side ConfigMap/NetworkPolicy edits, and build/push/deploy steps.
 
 ## Monitoring
 

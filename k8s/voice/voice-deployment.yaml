@@ -1,0 +1,76 @@
+# Image tag pinned to the git short-SHA. Bump on every release (never :latest).
+#
+# dynatrace.com/inject: unlike the ephemeral Kata sandbox pods (which disable
+# injection because PID 1 doesn't release cleanly under OneAgent, ballooning
+# per-call wall clock), this sidecar is a long-lived, observability-first
+# service — same posture as the agent sidecar (discord-article-bot-agent),
+# whose deployed manifest does NOT set this annotation. Injection stays
+# enabled here so OneAgent + this pod's own OTLP spans both flow to Dynatrace.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discord-article-bot-voice
+  namespace: discord-article-bot
+  labels:
+    app: discord-article-bot-voice
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate    # long-lived voice WebSocket/gRPC sessions; scalable, unlike the agent sidecar's Recreate
+  selector:
+    matchLabels:
+      app: discord-article-bot-voice
+  template:
+    metadata:
+      labels:
+        app: discord-article-bot-voice
+    spec:
+      serviceAccountName: agent-sa
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: voice
+          image: mvilliger/discord-article-bot-voice:REPLACE_WITH_SHA
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+          env:
+            - { name: GRPC_LISTEN_ADDR, value: "0.0.0.0:50051" }
+            - { name: OTEL_SERVICE_NAME, value: "discord-article-bot-voice" }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://telemetry-ingest.dynatrace.svc.cluster.local:4318" }
+            # Set from the Task 1 GEAP pre-flight probe at deploy time.
+            # GEAP-probe-validated on project revenant-discord-bot-2 / location=global (2026-08-07).
+            - { name: VOICE_LIVE_MODEL, value: "gemini-live-2.5-flash" }
+            - { name: VOICE_DEFAULT_VOICE, value: "Puck" }
+            # Gemini Enterprise Agent Platform (GEAP) backend — same posture as
+            # the agent sidecar. ADC via the agent-genai-sa Secret mounted below.
+            - { name: GOOGLE_GENAI_USE_VERTEXAI, value: "true" }
+            - { name: GOOGLE_CLOUD_PROJECT, value: "revenant-discord-bot-2" }
+            - { name: GOOGLE_CLOUD_LOCATION, value: "global" }
+            - { name: GOOGLE_APPLICATION_CREDENTIALS, value: "/var/secrets/genai/key.json" }
+            # Blank the shared-secret GEMINI_API_KEY so the SDK can't select
+            # the consumer backend (explicit env wins over any envFrom).
+            - { name: GEMINI_API_KEY, value: "" }
+          resources:
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          readinessProbe:
+            tcpSocket: { port: 50051 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 50051 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: genai-sa
+              mountPath: /var/secrets/genai
+              readOnly: true
+      volumes:
+        - name: genai-sa
+          secret:
+            secretName: agent-genai-sa

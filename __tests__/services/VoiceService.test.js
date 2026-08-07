@@ -35,7 +35,7 @@ function makeService(deps, configOverrides = {}) {
   };
   const recallService = { recall: jest.fn().mockResolvedValue({ block: 'past context' }) };
   const mongoService = { recordChannelMessage: jest.fn().mockResolvedValue({}) };
-  const config = { voice: { enabled: true, wakeWord: 'computer', liveVoice: 'Puck',
+  const config = { voice: { enabled: true, wakeWord: 'hey jarvis', liveVoice: 'Puck',
     followupWindowMs: 1000, idleTimeoutMs: 60000, maxSessions: 2, maxSessionSeconds: 600,
     ...configOverrides } };
   return { svc: new VoiceService({ voiceClient, recallService, mongoService, config, deps }),
@@ -159,6 +159,11 @@ test('wake while sidecar is unhealthy does not open a converse session', async (
   const g = svc._guilds.get('g1');
   expect(g.machine.state).toBe('idle');
   expect(g.session).toBeNull();
+
+  // The wake-word gate/engine must be reset on the aborted-wake path too,
+  // same as _endSession — otherwise stale detection state from the tail of
+  // this utterance could immediately re-fire onWake.
+  expect(gate.reset).toHaveBeenCalled();
 
   voiceClient.isHealthy.mockReturnValue(true);
   await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));

@@ -42,9 +42,13 @@ module.exports = {
   voice: {
     enabled: process.env.VOICE_ENABLED === 'true',
     address: process.env.VOICE_GRPC_ADDR || 'discord-article-bot-voice.discord-article-bot.svc.cluster.local:50051',
-    wakeWord: process.env.VOICE_WAKE_WORD || 'computer',
+    wakeWord: process.env.VOICE_WAKE_WORD || 'hey jarvis',
     liveVoice: process.env.VOICE_LIVE_VOICE || 'Puck',
-    picovoiceAccessKey: process.env.PICOVOICE_ACCESS_KEY || '',
+    // openWakeWord ONNX models (keyless, offline). Vendored under models/openwakeword/.
+    wakeModel: process.env.VOICE_WAKE_MODEL || require('path').join(__dirname, '..', 'models', 'openwakeword', 'hey_jarvis_v0.1.onnx'),
+    melModel: process.env.VOICE_MEL_MODEL || require('path').join(__dirname, '..', 'models', 'openwakeword', 'melspectrogram.onnx'),
+    embeddingModel: process.env.VOICE_EMBEDDING_MODEL || require('path').join(__dirname, '..', 'models', 'openwakeword', 'embedding_model.onnx'),
+    wakeThreshold: parseFloat(process.env.VOICE_WAKE_THRESHOLD || '0.5'),
     followupWindowMs: parseInt(process.env.VOICE_FOLLOWUP_WINDOW_MS || '15000', 10),
     idleTimeoutMs: parseInt(process.env.VOICE_IDLE_TIMEOUT_MS || '120000', 10),
     maxSessions: parseInt(process.env.VOICE_MAX_SESSIONS || '2', 10),

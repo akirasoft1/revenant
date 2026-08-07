@@ -145,6 +145,17 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Trace Storage**: Every execution lands in MongoDB `sandbox_executions` with full code/stdout/stderr/egress events. Retention loop demotes traces older than the most recent N per user (default 50) to a thin audit-only form.
 - **Graceful Fallback**: When the sidecar is unhealthy or `AGENT_ENABLED=false`, the bot transparently uses the existing direct-OpenAI path. No restart needed to flip.
 
+### Voice Channel Conversation
+- **Live Voice Sessions**: `/voice join` puts the bot in your current voice channel; it listens for a wake phrase ("hey jarvis" by default) and replies out loud via a dedicated Gemini Live session
+- **Dedicated Sidecar**: A separate Python gRPC sidecar (`discord-article-bot-voice`, distinct from the agent sandbox sidecar) hosts the Live session per active voice channel — `RollingUpdate` and horizontally scalable, since it holds long-lived real-time audio streams (unlike the agent sidecar's single-replica `Recreate`)
+- **Wake Word Gate**: openWakeWord (keyless, offline ONNX models via `onnxruntime-node`) detects the wake phrase locally before any audio is sent to the Live model, keeping ambient conversation private and cutting bandwidth/cost. Four pretrained phrases available: hey jarvis, alexa, hey mycroft, hey rhasspy
+- **Turn Rhythm**: wake → reply → brief "hot" follow-up window (no wake word needed) → idle, with a configurable hard session-length cap as a cost guard
+- **Reuses the Channel Voice Personality**: The learned channel-voice system prompt is passed into the Live session, so spoken replies match the same learned communication style as text chat
+- **Barge-in / Interruption**: Configurable barge-in support so the bot's own playback can be interrupted by the user speaking
+- **Memory In, Transcripts Out**: Recall context is available to voice turns; every voice exchange lands in the MongoDB message store as a transcript, feeding `/tldr` and recall just like text messages
+- **Graceful Degradation**: `/voice` reports unavailable if the sidecar is unreachable or `VOICE_ENABLED=false`; no restart needed to flip
+- **Deferred**: idle auto-leave, per-speaker transcript attribution, and dynamic (non-static) voice-profile injection are tracked as follow-ups, not yet implemented
+
 ### Monitoring & Observability
 - **OpenTelemetry Tracing**: Distributed tracing for Dynatrace
 - **OpenLLMetry Integration**: Captures full LLM request/response content in traces via `gen_ai.*` attributes

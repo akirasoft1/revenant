@@ -6,7 +6,7 @@
 // stream audio, play audio back, persist transcripts). All heavy
 // collaborators (discord.js voice primitives, wake-word engine, clock,
 // timers) are injected via `deps` so this is unit-testable without
-// Discord/Porcupine/gRPC.
+// Discord/openWakeWord/gRPC.
 
 'use strict';
 const logger = require('../logger');
@@ -27,6 +27,8 @@ class VoiceService {
   }
 
   isEnabled() { return !!(this._config.voice && this._config.voice.enabled); }
+
+  wakeWord() { return (this._config.voice && this._config.voice.wakeWord) || 'hey jarvis'; }
 
   async join({ channel, guildId }) {
     if (this._guilds.size >= this._config.voice.maxSessions && !this._guilds.has(guildId)) {
@@ -104,6 +106,10 @@ class VoiceService {
         followupWindowMs: this._config.voice.followupWindowMs, now: this._deps.now });
       g.session = null;
       g.sessionOpenedAtMs = null;
+      // Discard any in-flight wake-word detection state from the tail of
+      // this same utterance so it can't immediately re-fire onWake once the
+      // sidecar recovers (mirrors the reset in _endSession).
+      if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
       return;
     }
 

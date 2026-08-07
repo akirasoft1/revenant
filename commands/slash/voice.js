@@ -32,7 +32,8 @@ class VoiceSlashCommand extends BaseSlashCommand {
       }
       try {
         await this.voiceService.join({ channel, guildId: interaction.guildId });
-        await this.sendReply(interaction, { content: `Joined <#${channel.id}>. Say "computer" to get my attention.`, ephemeral: true });
+        const wake = this.voiceService.wakeWord();
+        await this.sendReply(interaction, { content: `Joined <#${channel.id}>. Say "${wake}" to get my attention.`, ephemeral: true });
       } catch (e) {
         await this.sendError(interaction, `Couldn't join: ${e.message}`);
       }

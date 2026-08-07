@@ -1,0 +1,124 @@
+# Voice Sidecar Manifests
+
+These manifests support `discord-article-bot-voice`, the Python gRPC sidecar
+that hosts a Gemini Live voice session per active Discord voice channel (see
+`docs/superpowers/specs/2026-08-06-discord-voice-live-design.md`).
+
+## Why a separate sidecar (not folded into the agent sidecar)
+
+The agent sidecar (`discord-article-bot-agent`) is a single-replica
+`Recreate` Deployment — its sandbox-orchestration concurrency state lives
+in-process, so it must never scale and can drop connections during a
+redeploy without losing anything long-lived. The voice sidecar holds
+long-lived, real-time gRPC streams (audio in/out, Gemini Live session state)
+for as long as the bot is in a voice channel; a `Recreate` rollout would drop
+every active call. It ships as its own `RollingUpdate`, horizontally
+scalable Deployment instead.
+
+## `dynatrace.com/inject` — not disabled here
+
+The Kata sandbox pods (`k8s/sandbox/`) disable OneAgent injection because
+ephemeral guests don't release PID 1 cleanly under it, ballooning per-call
+wall clock. That doesn't apply here: this is a long-lived,
+observability-first service, same posture as `discord-article-bot-agent`
+(whose deployed manifest also does not set the annotation). Injection stays
+enabled so OneAgent and this pod's own OTLP spans both reach Dynatrace.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. |
+| `voice-service.yaml` | ClusterIP Service exposing the sidecar's gRPC port (50051). |
+| `voice-networkpolicy.yaml` | Egress: kube-dns, GEAP/Vertex AI (`aiplatform.googleapis.com`, public 443 minus RFC1918), Dynatrace OTLP (4317/4318). Ingress only from the bot pod on 50051. |
+
+## Apply order
+
+```bash
+kubectl apply -f k8s/voice/ -n discord-article-bot
+kubectl rollout status deployment/discord-article-bot-voice -n discord-article-bot --timeout=120s
+kubectl logs deployment/discord-article-bot-voice -n discord-article-bot | tail -20
+# expect: "voice sidecar listening on 0.0.0.0:50051"
+```
+
+## Real values live in the gitignored deployed overlay
+
+The image tag is tracked as a placeholder:
+
+- `image: mvilliger/discord-article-bot-voice:REPLACE_WITH_SHA`
+
+Substitute the real git short-SHA in the working copy under
+`k8s/overlays/deployed/` (gitignored, contains real secrets) before applying —
+never commit the resolved SHA here.
+
+`VOICE_LIVE_MODEL` is already set to `gemini-live-2.5-flash`, confirmed by the
+Task 1 GEAP pre-flight probe (`voice-sidecar/scripts/probe_live_model.py`) on
+project `revenant-discord-bot-2` / `location=global`. It's a non-secret model
+ID, so it's baked in here; re-run the probe and override via env only if the
+model is deprecated or a newer live-audio model is preferred.
+
+## No new secrets
+
+Both `agent-genai-sa` (mounted at `/var/secrets/genai/key.json` for GEAP
+ADC) and `agent-sa` (`serviceAccountName`) are reused verbatim from the
+agent sidecar. Nothing new to create in the cluster for this Deployment.
+
+## Required modifications to existing manifests
+
+Two small additions to the bot's own manifests (working copies in the
+gitignored `k8s/overlays/deployed/`; diffs reproduced here for
+traceability — same pattern as `k8s/sandbox/README.md`).
+
+### `configmap.yaml` (bot)
+
+Add to the bot's ConfigMap:
+
+```yaml
+VOICE_ENABLED: "true"
+VOICE_GRPC_ADDR: "discord-article-bot-voice.discord-article-bot.svc.cluster.local:50051"
+```
+
+Wake-word detection uses **openWakeWord** — keyless and fully offline. No secret
+is required. The pretrained ONNX models are vendored under `models/openwakeword/`
+and baked into the bot image (`COPY . .`; `models/` is not in `.dockerignore`),
+so there is nothing to mount. Optional overrides: `VOICE_WAKE_WORD` (label,
+default `hey jarvis`), `VOICE_WAKE_MODEL` / `VOICE_MEL_MODEL` /
+`VOICE_EMBEDDING_MODEL` (model paths), `VOICE_WAKE_THRESHOLD` (default `0.5`).
+Available pretrained phrases: hey jarvis, alexa, hey mycroft, hey rhasspy.
+
+> **Bot image base:** the bot `Dockerfile` must be `node:22-slim` (Debian/glibc),
+> NOT `node:22-alpine` — `onnxruntime-node` ships glibc-only prebuilt binaries and
+> will not load on musl/Alpine.
+
+### `networkpolicy.yaml` (bot)
+
+Append an egress rule allowing the bot to reach the voice sidecar's gRPC
+port (mirrors the existing "bot -> agent sidecar" rule):
+
+```yaml
+    # Allow bot -> voice sidecar gRPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app: discord-article-bot-voice
+      ports:
+        - protocol: TCP
+          port: 50051
+```
+
+## Build and push
+
+```bash
+SHA=$(git rev-parse --short HEAD)
+docker build -f voice-sidecar/Dockerfile -t mvilliger/discord-article-bot-voice:$SHA voice-sidecar/
+docker push mvilliger/discord-article-bot-voice:$SHA
+```
+
+## Smoke test
+
+After deploying both the voice sidecar and the bot (with `VOICE_ENABLED=true`)
+and running `node scripts/registerCommands.js`:
+
+1. In Discord: `/voice join`
+2. Say "hey jarvis, what's 2 + 2" — expect a spoken reply.
+3. Run `/tldr` and confirm the voice exchange appears as a transcript.
