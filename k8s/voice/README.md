@@ -28,7 +28,7 @@ enabled so OneAgent and this pod's own OTLP spans both reach Dynatrace.
 
 | File | Purpose |
 |---|---|
-| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA and `VOICE_LIVE_MODEL` to the Task-1-probe-validated model at deploy time. |
+| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. |
 | `voice-service.yaml` | ClusterIP Service exposing the sidecar's gRPC port (50051). |
 | `voice-networkpolicy.yaml` | Egress: kube-dns, GEAP/Vertex AI (`aiplatform.googleapis.com`, public 443 minus RFC1918), Dynatrace OTLP (4317/4318). Ingress only from the bot pod on 50051. |
 
@@ -43,15 +43,19 @@ kubectl logs deployment/discord-article-bot-voice -n discord-article-bot | tail 
 
 ## Real values live in the gitignored deployed overlay
 
-The manifests here are tracked with placeholders:
+The image tag is tracked as a placeholder:
 
 - `image: mvilliger/discord-article-bot-voice:REPLACE_WITH_SHA`
-- `VOICE_LIVE_MODEL: REPLACE_WITH_VALIDATED_MODEL`
 
-Substitute the real git short-SHA and the model ID confirmed by the Task 1
-GEAP pre-flight probe in the working copy under `k8s/overlays/deployed/`
-(gitignored, contains real secrets) before applying — never commit the
-resolved values here.
+Substitute the real git short-SHA in the working copy under
+`k8s/overlays/deployed/` (gitignored, contains real secrets) before applying —
+never commit the resolved SHA here.
+
+`VOICE_LIVE_MODEL` is already set to `gemini-live-2.5-flash`, confirmed by the
+Task 1 GEAP pre-flight probe (`voice-sidecar/scripts/probe_live_model.py`) on
+project `revenant-discord-bot-2` / `location=global`. It's a non-secret model
+ID, so it's baked in here; re-run the probe and override via env only if the
+model is deprecated or a newer live-audio model is preferred.
 
 ## No new secrets
 
