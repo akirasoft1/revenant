@@ -80,7 +80,8 @@ class DiscordBot {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates
       ],
       partials: [
         Partials.Message,
@@ -203,6 +204,73 @@ class DiscordBot {
       config,
       condenser: null, // llm-condense disabled by default
     });
+
+    // VoiceClient/VoiceService - live Discord voice channel presence via the
+    // Python voice sidecar. Native discord.js voice deps (opus/sodium/porcupine)
+    // are lazily required here so the rest of the bot works even if they
+    // aren't installed (e.g. VOICE_ENABLED=false, as in tests/CI).
+    this.voiceClient = null;
+    this.voiceService = null;
+    if (config.voice.enabled) {
+      try {
+        // Voice sessions should sound like the same bot as channel-voice text
+        // chat. Only fill in systemPrompt from the personality if it wasn't
+        // already set explicitly via VOICE_SYSTEM_PROMPT.
+        if (!config.voice.systemPrompt) {
+          const channelVoicePersonality = personalityManager.get('channel-voice');
+          if (channelVoicePersonality && channelVoicePersonality.systemPrompt) {
+            // channel-voice's systemPrompt contains a {VOICE_INSTRUCTIONS}
+            // placeholder that ChatService._buildGroupSystemPrompt normally
+            // substitutes with a dynamic per-channel voice profile (or, when
+            // none is available, the same static fallback used here). The
+            // voice sidecar has no equivalent substitution step, so without
+            // this the Live model would receive the literal, unsubstituted
+            // "{VOICE_INSTRUCTIONS}" token. Use the identical static fallback
+            // string as services/ChatService.js so the two paths don't drift.
+            // Dynamic per-channel voice-profile injection for Live sessions
+            // remains a documented follow-up.
+            config.voice.systemPrompt = channelVoicePersonality.systemPrompt.replace(
+              '{VOICE_INSTRUCTIONS}',
+              'Be casual, direct, and conversational. Match the energy of the group.'
+            );
+            logger.info('Voice systemPrompt sourced from channel-voice personality');
+          }
+        }
+        const VoiceClient = require('./services/VoiceClient');
+        const VoiceService = require('./services/VoiceService');
+        const dv = require('@discordjs/voice');
+        const prism = require('prism-media');
+        const { createPorcupineEngine, WakeWordGate } = require('./services/voice/wakeword');
+        this.voiceClient = new VoiceClient({
+          address: config.voice.address,
+          protoPath: require('path').join(__dirname, 'proto', 'voice.proto'),
+        });
+        this.voiceService = new VoiceService({
+          voiceClient: this.voiceClient,
+          recallService: this.recallService,
+          mongoService: this.mongoService,
+          config,
+          deps: {
+            joinVoiceChannel: dv.joinVoiceChannel,
+            createAudioPlayer: dv.createAudioPlayer,
+            createAudioResource: dv.createAudioResource,
+            StreamType: dv.StreamType,
+            EndBehaviorType: dv.EndBehaviorType,
+            opusDecoderFactory: () => new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }),
+            makeWakeGate: () => new WakeWordGate(createPorcupineEngine({
+              accessKey: config.voice.picovoiceAccessKey, keyword: config.voice.wakeWord })),
+            now: () => Date.now(), setInterval, clearInterval,
+          },
+        });
+        logger.info(`VoiceService initialized -> ${config.voice.address}`);
+      } catch (e) {
+        logger.error(`voice init failed: ${e.message}`);
+        this.voiceClient = null;
+        this.voiceService = null;
+      }
+    } else {
+      logger.info('Voice (live voice channel) is disabled');
+    }
 
     // ChatService - all dependencies injected via constructor
     this.chatService = new ChatService(
@@ -461,6 +529,13 @@ class DiscordBot {
     // Register admin observability command (degrades gracefully if the agent
     // sidecar is disabled — this.agentClient is null in that case).
     this.slashCommandHandler.register(new ObserveSlashCommand(this.agentClient));
+
+    // Register voice slash command (only if voice is enabled and initialized)
+    if (config.voice.enabled && this.voiceService) {
+      const VoiceSlashCommand = require('./commands/slash/voice');
+      this.slashCommandHandler.register(new VoiceSlashCommand(this.voiceService));
+      logger.info('Voice slash command registered');
+    }
 
     logger.info(`Registered ${this.slashCommandHandler.size} slash commands`);
   }

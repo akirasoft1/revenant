@@ -1,0 +1,44 @@
+syntax = "proto3";
+package discordbot.voice;
+
+service Voice {
+  rpc Converse (stream VoiceClientEvent) returns (stream VoiceServerEvent);
+  rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+message HealthResponse { bool healthy = 1; }
+
+message SessionStart {
+  string user_id = 1;
+  string user_tag = 2;
+  string channel_id = 3;
+  string guild_id = 4;
+  string system_prompt = 5;
+  string recall_context = 6;
+  string voice_name = 7;
+}
+message AudioChunk { bytes pcm = 1; }
+message SessionEnd {}
+message Transcript { string text = 1; }
+message TurnComplete {}
+message Interrupted {}
+message ErrorEvent { string message = 1; }
+
+message VoiceClientEvent {
+  oneof event {
+    SessionStart session_start = 1;
+    AudioChunk   audio         = 2;
+    SessionEnd   session_end   = 3;
+  }
+}
+message VoiceServerEvent {
+  oneof event {
+    AudioChunk   audio             = 1;
+    Transcript   input_transcript  = 2;
+    Transcript   output_transcript = 3;
+    TurnComplete turn_complete      = 4;
+    Interrupted  interrupted        = 5;
+    ErrorEvent   error              = 6;
+  }
+}

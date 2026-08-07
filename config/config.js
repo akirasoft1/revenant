@@ -39,6 +39,18 @@ module.exports = {
     healthIntervalMs: parseInt(process.env.AGENT_HEALTH_INTERVAL_MS || '5000', 10),
     unhealthyThresholdMs: parseInt(process.env.AGENT_UNHEALTHY_THRESHOLD_MS || '30000', 10),
   },
+  voice: {
+    enabled: process.env.VOICE_ENABLED === 'true',
+    address: process.env.VOICE_GRPC_ADDR || 'discord-article-bot-voice.discord-article-bot.svc.cluster.local:50051',
+    wakeWord: process.env.VOICE_WAKE_WORD || 'computer',
+    liveVoice: process.env.VOICE_LIVE_VOICE || 'Puck',
+    picovoiceAccessKey: process.env.PICOVOICE_ACCESS_KEY || '',
+    followupWindowMs: parseInt(process.env.VOICE_FOLLOWUP_WINDOW_MS || '15000', 10),
+    idleTimeoutMs: parseInt(process.env.VOICE_IDLE_TIMEOUT_MS || '120000', 10),
+    maxSessions: parseInt(process.env.VOICE_MAX_SESSIONS || '2', 10),
+    maxSessionSeconds: parseInt(process.env.VOICE_MAX_SESSION_SECONDS || '600', 10),
+    systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
+  },
   discord: {
     token: process.env.DISCORD_TOKEN,
     // Application/Client ID for slash command registration
