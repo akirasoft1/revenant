@@ -108,6 +108,7 @@ class VoiceClient {
           system_prompt: s.systemPrompt || '',
           recall_context: s.recallContext || '',
           voice_name: s.voiceName || '',
+          history: Array.isArray(s.history) ? s.history.map((t) => ({ role: t.role, content: t.content })) : [],
         },
       });
     session.sendAudio = (buf) => call.write({ audio: { pcm: buf } });
