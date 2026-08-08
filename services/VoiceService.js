@@ -12,7 +12,7 @@
 const logger = require('../logger');
 const VoiceSessionMachine = require('./voice/VoiceSessionMachine');
 const { downsampleTo16kMono, upsample24kMonoTo48kStereo } = require('./voice/audio');
-const { Readable } = require('stream');
+const { Readable, PassThrough } = require('stream');
 
 class VoiceService {
   constructor({ voiceClient, mongoService, config, deps, contextBuilder }) {
@@ -53,6 +53,19 @@ class VoiceService {
       selfDeaf: false, selfMute: false });
     const player = d.createAudioPlayer();
     connection.subscribe(player);
+
+    // Defense-in-depth: a voice connection/networking failure must never crash
+    // the whole bot. Root cause of an observed crash was the voice-gateway WSS
+    // connect failing (a non-443 endpoint blocked by NetworkPolicy) and the
+    // socket error surfacing as an uncaught AggregateError. The NetworkPolicy is
+    // the real fix; these handlers ensure any future connection/player error
+    // degrades to a log instead of taking the process down.
+    if (typeof connection.on === 'function') {
+      connection.on('error', (e) => logger.warn(`voice: connection error in guild ${guildId}: ${e && e.message ? e.message : e}`));
+    }
+    if (typeof player.on === 'function') {
+      player.on('error', (e) => logger.warn(`voice: player error in guild ${guildId}: ${e && e.message ? e.message : e}`));
+    }
     const machine = new VoiceSessionMachine({
       followupWindowMs: this._config.voice.followupWindowMs, now: d.now });
 
@@ -66,7 +79,7 @@ class VoiceService {
     // `leave()`/`_endSession()` already guard for a still-null gate.
     const state = { connection, player, gate: null, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
-      sessionOpenedAtMs: null, receiving: new Set() };
+      sessionOpenedAtMs: null, receiving: new Set(), playback: null };
     this._guilds.set(guildId, state);
 
     state.gate = d.makeWakeGate();
@@ -149,7 +162,7 @@ class VoiceService {
       switch (a.type) {
         case 'startSession': await this._startSession(guildId, ctx.userId); break;
         case 'play': this._play(g, a.pcm); break;
-        case 'stopPlayback': g.player.stop(); break;
+        case 'stopPlayback': this._stopPlayback(g); break;
         case 'armFollowup': break; // follow-up deadline lives inside the machine; nothing to wire here
         case 'cancelFollowup': break;
         case 'endSession': this._endSession(g); break;
@@ -215,6 +228,10 @@ class VoiceService {
     session.on('interrupted', () => applyGuarded({ type: 'interrupted' }));
     session.on('turnComplete', () => {
       if (g.session !== session) return;
+      // End (not destroy) the turn's playback stream so its buffered audio
+      // drains and the resource completes naturally; the next turn opens a
+      // fresh stream.
+      this._endPlayback(g);
       this._persistTurn(guildId).catch((e) => logger.warn(`voice: persist failed: ${e.message}`));
       applyGuarded({ type: 'turnComplete' });
     });
@@ -231,8 +248,40 @@ class VoiceService {
   _play(g, pcm24Mono) {
     const d = this._deps;
     const pcm48 = upsample24kMonoTo48kStereo(pcm24Mono);
-    const resource = d.createAudioResource(Readable.from(pcm48), { inputType: d.StreamType.Raw });
-    g.player.play(resource);
+    // Gemini Live streams many small 24kHz-mono PCM chunks per turn, faster than
+    // real-time. Playing each chunk as its own AudioResource made every chunk
+    // interrupt the previous one (AudioPlayer.play replaces the current
+    // resource), so only slivers were heard -> garbled noise. Instead, open ONE
+    // continuous 48kHz-stereo raw stream per turn and write chunks into it, so
+    // the whole reply plays as a single uninterrupted resource.
+    if (!g.playback) {
+      const stream = new PassThrough({ highWaterMark: 1 << 22 });
+      // A raw-PCM stream that only ever ends between turns must not surface an
+      // unhandled 'error' if the player tears it down mid-write.
+      stream.on('error', (e) => logger.warn(`voice: playback stream error: ${e.message}`));
+      const resource = d.createAudioResource(stream, { inputType: d.StreamType.Raw });
+      g.playback = { stream };
+      g.player.play(resource);
+    }
+    g.playback.stream.write(pcm48);
+  }
+
+  // Barge-in / hard stop: cut playback immediately and drop the buffered audio.
+  _stopPlayback(g) {
+    g.player.stop();
+    if (g.playback) {
+      try { g.playback.stream.destroy(); } catch (_) { /* already gone */ }
+      g.playback = null;
+    }
+  }
+
+  // End of a turn: close the stream so buffered audio drains and the resource
+  // completes; the next turn's first chunk opens a fresh stream.
+  _endPlayback(g) {
+    if (g.playback) {
+      try { g.playback.stream.end(); } catch (_) { /* already ended */ }
+      g.playback = null;
+    }
   }
 
   async _persistTurn(guildId) {
@@ -266,6 +315,9 @@ class VoiceService {
   }
 
   _endSession(g) {
+    // Tear down any in-progress playback so a half-streamed reply doesn't linger
+    // into the next session.
+    this._stopPlayback(g);
     if (g.session) {
       const session = g.session;
       // Belt-and-suspenders with the identity guards in _startSession:

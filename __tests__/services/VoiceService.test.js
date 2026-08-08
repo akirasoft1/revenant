@@ -437,6 +437,56 @@ test('repeated speaking-start for the same user does not re-subscribe until the 
   expect(subscribe).toHaveBeenCalledTimes(2);
 });
 
+test('audio chunks within a turn play as ONE continuous resource, not one per chunk', async () => {
+  // Regression for garbled playback: Gemini Live streams many small PCM chunks
+  // per turn. Creating a new AudioResource + player.play() per chunk made each
+  // chunk interrupt the previous one (only slivers heard -> garbled noise).
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024)); // wake -> open session
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+
+  // Three audio chunks in one turn -> exactly ONE resource and ONE play().
+  session.emit('audio', Buffer.alloc(480));
+  session.emit('audio', Buffer.alloc(480));
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  expect(deps.createAudioResource).toHaveBeenCalledTimes(1);
+  expect(player.play).toHaveBeenCalledTimes(1);
+
+  // Turn ends -> stream closed; the next turn's first chunk opens a fresh one.
+  session.emit('turnComplete');
+  await new Promise((r) => setImmediate(r));
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  expect(deps.createAudioResource).toHaveBeenCalledTimes(2);
+  expect(player.play).toHaveBeenCalledTimes(2);
+});
+
+test('barge-in (interrupted) stops playback and drops the buffered stream', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  session.emit('interrupted');
+  await new Promise((r) => setImmediate(r));
+  expect(player.stop).toHaveBeenCalled();
+
+  // After a barge-in, the next chunk opens a brand-new resource.
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  expect(deps.createAudioResource).toHaveBeenCalledTimes(2);
+});
+
 test('a second /voice join for the same guild is idempotent -- no second connection or re-wiring', async () => {
   const joinVoiceChannel = jest.fn(() => {
     const c = new EventEmitter();
