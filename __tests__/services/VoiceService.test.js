@@ -33,14 +33,13 @@ function makeService(deps, configOverrides = {}, contextBuilder) {
     }),
     isHealthy: jest.fn(() => true),
   };
-  const recallService = { recall: jest.fn().mockResolvedValue({ block: 'past context' }) };
   const mongoService = { recordChannelMessage: jest.fn().mockResolvedValue({}) };
   const config = { voice: { enabled: true, wakeWord: 'hey jarvis', liveVoice: 'Puck',
     followupWindowMs: 1000, idleTimeoutMs: 60000, maxSessions: 2, maxSessionSeconds: 600,
     ...configOverrides } };
   const builder = contextBuilder || jest.fn().mockResolvedValue({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
-  return { svc: new VoiceService({ voiceClient, recallService, mongoService, config, deps, contextBuilder: builder }),
-           voiceClient, recallService, mongoService, contextBuilder: builder };
+  return { svc: new VoiceService({ voiceClient, mongoService, config, deps, contextBuilder: builder }),
+           voiceClient, mongoService, contextBuilder: builder };
 }
 
 test('isEnabled reflects config', () => {
