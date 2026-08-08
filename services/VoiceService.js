@@ -40,13 +40,23 @@ class VoiceService {
       selfDeaf: false, selfMute: false });
     const player = d.createAudioPlayer();
     connection.subscribe(player);
-    const gate = d.makeWakeGate();
     const machine = new VoiceSessionMachine({
       followupWindowMs: this._config.voice.followupWindowMs, now: d.now });
-    const state = { connection, player, gate, machine, session: null,
+
+    // Record state as soon as we have a live connection -- BEFORE the
+    // (potentially slow) wake-gate factory runs. `makeWakeGate()` can trigger
+    // an ONNX model load (services/voice/wakeword.js) that, on a cold cache,
+    // saturates the bot's CPU limit for tens of seconds. If `_guilds.set()`
+    // happened after that call, a `/voice leave` racing the slow setup would
+    // find no entry and silently no-op while the bot stayed connected to the
+    // VC. `gate` is filled in moments later, synchronously, once created;
+    // `leave()`/`_endSession()` already guard for a still-null gate.
+    const state = { connection, player, gate: null, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null };
     this._guilds.set(guildId, state);
+
+    state.gate = d.makeWakeGate();
 
     connection.receiver.speaking.on('start', (userId) => {
       const stream = connection.receiver.subscribe(userId, { end: { behavior: d.EndBehaviorType.AfterSilence, duration: 800 } });
@@ -216,7 +226,19 @@ class VoiceService {
 
   async leave(guildId) {
     const g = this._guilds.get(guildId);
-    if (!g) return;
+    if (!g) {
+      // No in-memory state -- most likely `/voice leave` raced a slow join()
+      // (see join()'s early `_guilds.set` above), or the process restarted
+      // mid-session. Fall back to @discordjs/voice's own connection registry
+      // so the bot always disconnects instead of leaving a ghost connection.
+      const getVoiceConnection = this._deps.getVoiceConnection;
+      const existing = typeof getVoiceConnection === 'function' ? getVoiceConnection(guildId) : null;
+      if (existing && typeof existing.destroy === 'function') {
+        existing.destroy();
+        logger.info(`voice: left guild ${guildId} (via fallback connection lookup, no _guilds entry)`);
+      }
+      return;
+    }
     if (g.tickTimer) this._deps.clearInterval(g.tickTimer);
     this._endSession(g);
     if (g.connection && g.connection.destroy) g.connection.destroy();

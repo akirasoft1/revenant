@@ -94,14 +94,69 @@ const MEL_STRIDE = 8;        // mel frames advanced between embeddings
 const EMBEDDING_DIM = 96;    // embedding vector length
 const DEFAULT_WAKE_WINDOW = 16; // embeddings per wake-model window (pretrained)
 
+// Memoized so every production createOpenWakeWordEngine() call (which never
+// passes sessionFactory) shares the SAME backend identity -- required for the
+// module-level session cache below to actually hit across joins/preload
+// instead of missing every time because it saw a fresh backend object.
+let _defaultBackend = null;
 function defaultSessionFactory() {
+  if (_defaultBackend) return _defaultBackend;
   // Lazy require so unit tests (which inject a fake) never load the native
   // binding. onnxruntime-node ships glibc-only prebuilt binaries.
   const ort = require('onnxruntime-node');
-  return {
+  _defaultBackend = {
     createSession: (path) => ort.InferenceSession.create(path),
     tensor: (type, data, dims) => new ort.Tensor(type, data, dims),
   };
+  return _defaultBackend;
+}
+
+// --- module-level ONNX session cache ------------------------------------------
+//
+// Root cause of the ~97s /voice join stall: sessions were created PER ENGINE
+// (per join), so every join re-ran ort.InferenceSession.create() for all 3
+// models, saturating the bot's 0.5-CPU limit and stalling the event loop.
+//
+// Sessions are safe to reuse across concurrent inferences, so cache the
+// Promise<[melSession, embSession, wakeSession]> keyed by (backend identity,
+// model paths). Keying on backend identity -- not just paths -- keeps unit
+// tests isolated (each test's own fake backend gets its own cache slot even
+// when path strings are reused across tests), while production always shares
+// one backend (see `defaultSessionFactory` above), so real joins/preload
+// share the cache.
+const _sessionCacheByBackend = new WeakMap(); // backend -> Map(pathKey -> Promise<[mel, emb, wake]>)
+
+function _pathKey({ melModelPath, embeddingModelPath, wakeModelPath }) {
+  return `${melModelPath}::${embeddingModelPath}::${wakeModelPath}`;
+}
+
+function _loadSessions(backend, paths) {
+  let byPathKey = _sessionCacheByBackend.get(backend);
+  if (!byPathKey) {
+    byPathKey = new Map();
+    _sessionCacheByBackend.set(backend, byPathKey);
+  }
+  const key = _pathKey(paths);
+  let entry = byPathKey.get(key);
+  if (!entry) {
+    entry = Promise.all([
+      backend.createSession(paths.melModelPath),
+      backend.createSession(paths.embeddingModelPath),
+      backend.createSession(paths.wakeModelPath),
+    ]);
+    // Don't poison the cache with a failed load -- let the next caller retry.
+    entry.catch(() => { byPathKey.delete(key); });
+    byPathKey.set(key, entry);
+  }
+  return entry;
+}
+
+// Triggers/awaits the module-level session cache load so callers (bot.js at
+// startup) can warm it off the request path -- the one-time ONNX load then
+// happens at boot instead of on the first `/voice join`.
+function preloadOpenWakeWord({ wakeModelPath, melModelPath, embeddingModelPath, sessionFactory } = {}) {
+  const backend = sessionFactory || defaultSessionFactory();
+  return _loadSessions(backend, { melModelPath, embeddingModelPath, wakeModelPath });
 }
 
 function inferWakeWindow(session) {
@@ -138,11 +193,11 @@ function createOpenWakeWordEngine({
   let inFlight = null;         // the single pending inference promise, or null
 
   const readyPromise = (async () => {
-    [melSession, embSession, wakeSession] = await Promise.all([
-      backend.createSession(melModelPath),
-      backend.createSession(embeddingModelPath),
-      backend.createSession(wakeModelPath),
-    ]);
+    // Shared, module-level cache: reuses sessions across engines (joins) that
+    // share the same backend + model paths instead of reloading per-engine.
+    [melSession, embSession, wakeSession] = await _loadSessions(backend, {
+      melModelPath, embeddingModelPath, wakeModelPath,
+    });
     wakeWindow = inferWakeWindow(wakeSession) || DEFAULT_WAKE_WINDOW;
     embHistory = [];
     for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
@@ -240,4 +295,4 @@ function createOpenWakeWordEngine({
   };
 }
 
-module.exports = { WakeWordGate, createOpenWakeWordEngine };
+module.exports = { WakeWordGate, createOpenWakeWordEngine, preloadOpenWakeWord };
