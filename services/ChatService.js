@@ -262,6 +262,46 @@ ${context}`;
   }
 
   /**
+   * Build the shared per-turn context (personality system prompt + recall
+   * memory block + recent-buffer history) consumed by BOTH the text agent
+   * sidecar and the voice Live sidecar, so the channel-voice brain replies
+   * consistently in-voice with memory across surfaces.
+   *
+   * The memory block is returned SEPARATELY from systemPrompt (not folded in)
+   * so callers can place it wherever their prompt/turn format expects it,
+   * instead of always at the tail of one big system string.
+   *
+   * @param {Object} params
+   * @param {string} params.userId - Discord user ID
+   * @param {string} [params.userTag] - Discord user tag/display name
+   * @param {string} params.channelId - Discord channel ID
+   * @param {string|null} [params.guildId] - Discord guild ID (reserved for future scoping; unused today)
+   * @param {string} params.userMessage - Current user message (drives recall query + voice few-shot)
+   * @param {string} [params.personalityId] - Personality to resolve (defaults to channel-voice)
+   * @returns {Promise<{systemPrompt: string, memoryBlock: string, historyTurns: Array<{role: 'user'|'assistant', content: string}>}>}
+   */
+  async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice' }) {
+    void guildId; // reserved for future per-guild scoping; not used yet
+    const personality = personalityManager.get(personalityId);
+    const user = { id: userId, tag: userTag, username: userTag || userId };
+
+    const { memoryContext = '', channelContext = '', sharedContext = '', voiceContext = null } =
+      await this._composeRecallContexts(channelId, userMessage, user, personalityId, personality);
+
+    // systemPrompt WITHOUT the memory block: memory travels separately as memoryBlock.
+    const systemPrompt = this._buildGroupSystemPrompt(personality, '', channelContext, sharedContext, voiceContext);
+
+    const raw = this.channelContextService?.getRecentMessagesRaw
+      ? (this.channelContextService.getRecentMessagesRaw(channelId) || [])
+      : [];
+    const historyTurns = raw
+      .filter((m) => m && m.content)
+      .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
+
+    return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
+  }
+
+  /**
    * Write an A/B comparison of the legacy vs v2 recall blocks to MongoDB.
    * Best-effort: callers should not await this in the hot path.
    * @private
