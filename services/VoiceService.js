@@ -15,9 +15,8 @@ const { downsampleTo16kMono, upsample24kMonoTo48kStereo } = require('./voice/aud
 const { Readable } = require('stream');
 
 class VoiceService {
-  constructor({ voiceClient, recallService, mongoService, config, deps, contextBuilder }) {
+  constructor({ voiceClient, mongoService, config, deps, contextBuilder }) {
     this._client = voiceClient;
-    this._recall = recallService;
     this._mongo = mongoService;
     this._config = config;
     this._deps = deps;

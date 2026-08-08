@@ -266,7 +266,6 @@ class DiscordBot {
         });
         this.voiceService = new VoiceService({
           voiceClient: this.voiceClient,
-          recallService: this.recallService,
           mongoService: this.mongoService,
           config,
           contextBuilder: (args) => this.chatService.buildTurnContext(args),

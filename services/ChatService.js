@@ -330,6 +330,14 @@ ${context}`;
     // other branch) since there's simply nothing to match.
     historyTurns = this._dropDuplicatedCurrentTurn(historyTurns, userMessage);
 
+    // Deliberate: memoryBlock/historyTurns are returned as-is, WITHOUT the
+    // legacy `config.recall.promptMaxTokens` trim that `_buildGroupSystemPrompt`
+    // applies below for the direct-OpenAI path. This context feeds the unified
+    // agent path (Gemini, ~1M-token context window), where that trim — built
+    // for small-window models — isn't needed; recall volume is already bounded
+    // upstream by RecallService's own budget (`maxItems`/`tokenBudget`) and by
+    // the `channelContext.promptRecentCount` history cap above. Not DRY debt —
+    // see CLAUDE.md's Agentic Sandbox section for the split rationale.
     return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
   }
 
@@ -769,6 +777,13 @@ ${context}`;
         await this._composeRecallContexts(channelId, userMessage, user, personalityId, personality);
 
       // Build system prompt and format history
+      // This is the direct-OpenAI path (falls through to here when the agent
+      // sidecar is disabled/unhealthy, or for any non-channel-voice
+      // personality). It INTENTIONALLY keeps `_buildGroupSystemPrompt`'s
+      // `promptMaxTokens` trim — unlike `buildTurnContext` above, which feeds
+      // the unified Gemini agent path untrimmed. This is the unhappy-path
+      // fallback on a smaller-window, cost-sensitive model, so bounding the
+      // memory block here still matters. Deliberate split, not DRY debt.
       const systemPrompt = this._buildGroupSystemPrompt(personality, memoryContext, channelContext, sharedContext, voiceContext);
       const historyMessages = this._formatMessagesForAPI(conversation.messages || []);
 
