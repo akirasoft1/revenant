@@ -61,10 +61,30 @@ class VoiceService {
     connection.receiver.speaking.on('start', (userId) => {
       const stream = connection.receiver.subscribe(userId, { end: { behavior: d.EndBehaviorType.AfterSilence, duration: 800 } });
       const decoder = d.opusDecoderFactory();
-      stream.pipe(decoder);
-      decoder.on('data', (pcm48) => {
+      // Decode each received Opus packet individually in a try/catch rather
+      // than piping the receive stream through a decoder Transform. Discord's
+      // first frame(s) after a "speaking" start can carry an RTP header
+      // extension / silence marker that isn't valid Opus, and the decoder
+      // throws "The compressed data passed is corrupted". Piped, that throw
+      // surfaces as an UNHANDLED stream 'error' that crashes the entire bot
+      // process (the pod restarts and the bot drops out of the voice channel).
+      // Per-packet decode lets us drop the bad frame and keep decoding the
+      // good ones so wake-word detection still runs.
+      let dropped = 0;
+      stream.on('data', (opusPacket) => {
+        let pcm48;
+        try {
+          pcm48 = decoder.decode(opusPacket);
+        } catch (e) {
+          dropped += 1;
+          return;
+        }
         this._handleUserPcm(guildId, userId, pcm48).catch((e) => logger.warn(`voice: pcm handling failed: ${e.message}`));
       });
+      stream.on('end', () => {
+        if (dropped) logger.debug(`voice: dropped ${dropped} undecodable opus frame(s) from user ${userId} in guild ${guildId}`);
+      });
+      stream.on('error', (e) => logger.warn(`voice: receive stream error from user ${userId} in guild ${guildId}: ${e.message}`));
     });
 
     state.tickTimer = d.setInterval(() => this._tick(guildId), 250);

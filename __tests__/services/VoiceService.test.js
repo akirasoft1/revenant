@@ -15,7 +15,7 @@ function makeDeps(overrides = {}) {
     createAudioResource: jest.fn((s) => ({ s })),
     StreamType: { Raw: 'raw' },
     EndBehaviorType: { AfterSilence: 1 },
-    opusDecoderFactory: () => new EventEmitter(),
+    opusDecoderFactory: () => ({ decode: jest.fn((buf) => buf) }),
     makeWakeGate: () => ({ push: jest.fn(() => false), reset: jest.fn() }),
     now: () => 0,
     setInterval: jest.fn(() => 1),
@@ -328,8 +328,8 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
   process.on('unhandledRejection', onUnhandledRejection);
   try {
     const gate = { push: jest.fn(() => true), reset: jest.fn() }; // fire wake immediately
-    const rxStream = new EventEmitter(); rxStream.pipe = jest.fn();
-    const decoder = new EventEmitter();
+    const rxStream = new EventEmitter();
+    const decoder = { decode: jest.fn((buf) => buf) };
     const connection = new EventEmitter();
     connection.subscribe = jest.fn();
     connection.receiver = { subscribe: jest.fn(() => rxStream), speaking: new EventEmitter() };
@@ -342,25 +342,70 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
     });
     const { svc, voiceClient } = makeService(deps);
     // Force the wake path to throw synchronously inside _startSession (invoked via
-    // _apply, which _handleUserPcm awaits internally but whose *caller* -- the decoder's
-    // 'data' listener wired in join() -- does not await or catch).
+    // _apply, which _handleUserPcm awaits internally but whose *caller* -- the receive
+    // stream's 'data' listener wired in join() -- does not await or catch).
     voiceClient.converse.mockImplementation(() => { throw new Error('converse boom'); });
 
     await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
 
     // Wire up exactly as production join() does: a user starts speaking.
     connection.receiver.speaking.emit('start', 'user1');
-    expect(rxStream.pipe).toHaveBeenCalledWith(decoder);
 
-    // This is the exact call site under test: decoder 'data' -> this._handleUserPcm(...).
+    // This is the exact call site under test: stream 'data' -> decode -> this._handleUserPcm(...).
     // It must not throw synchronously and must not produce an unhandled rejection.
-    expect(() => decoder.emit('data', Buffer.alloc(1024))).not.toThrow();
+    expect(() => rxStream.emit('data', Buffer.alloc(1024))).not.toThrow();
 
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('voice: pcm handling failed'));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('converse boom'));
+    expect(unhandledRejections).toHaveLength(0);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandledRejection);
+  }
+});
+
+test('an undecodable opus frame is dropped without crashing, and later good frames still decode', async () => {
+  // Regression for the live crash: Discord sends non-Opus frames (RTP header
+  // extension / silence markers) that make the decoder throw "The compressed
+  // data passed is corrupted". Previously piped through a Transform, that throw
+  // was an unhandled stream error that crashed the whole bot process; per-packet
+  // decode must drop the bad frame and keep decoding the good ones.
+  const unhandledRejections = [];
+  const onUnhandledRejection = (err) => unhandledRejections.push(err);
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    const gate = { push: jest.fn(() => false), reset: jest.fn() };
+    const rxStream = new EventEmitter();
+    const decode = jest.fn()
+      .mockImplementationOnce(() => { throw new Error('The compressed data passed is corrupted'); })
+      .mockImplementationOnce((buf) => buf);
+    const decoder = { decode };
+    const connection = new EventEmitter();
+    connection.subscribe = jest.fn();
+    connection.receiver = { subscribe: jest.fn(() => rxStream), speaking: new EventEmitter() };
+    connection.destroy = jest.fn();
+
+    const deps = makeDeps({
+      makeWakeGate: () => gate,
+      joinVoiceChannel: jest.fn(() => connection),
+      opusDecoderFactory: () => decoder,
+    });
+    const { svc } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    connection.receiver.speaking.emit('start', 'user1');
+
+    // Corrupt frame: must NOT throw and must NOT reach the wake gate.
+    expect(() => rxStream.emit('data', Buffer.from([0xbe, 0xde, 0xff]))).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+    expect(gate.push).not.toHaveBeenCalled();
+
+    // A good frame after the bad one still decodes and reaches the wake gate.
+    rxStream.emit('data', Buffer.alloc(1024));
+    await new Promise((r) => setImmediate(r));
+    expect(gate.push).toHaveBeenCalledTimes(1);
+
     expect(unhandledRejections).toHaveLength(0);
   } finally {
     process.removeListener('unhandledRejection', onUnhandledRejection);
