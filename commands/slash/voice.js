@@ -13,6 +13,13 @@ class VoiceSlashCommand extends BaseSlashCommand {
         .addSubcommand((s) => s.setName('join').setDescription('Join your current voice channel'))
         .addSubcommand((s) => s.setName('leave').setDescription('Leave the voice channel')),
       cooldown: 5,
+      // A cold-cache /voice join can trigger a slow ONNX wake-word model load
+      // (see services/voice/wakeword.js) that saturates the bot's CPU limit
+      // and blows Discord's 3s interaction-ack window ("The application did
+      // not respond"). Auto-defer so SlashCommandHandler acks within 3s
+      // regardless of how long join()/leave() takes.
+      deferReply: true,
+      ephemeral: true,
     });
     this.voiceService = voiceService;
   }

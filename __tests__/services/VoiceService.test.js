@@ -20,6 +20,7 @@ function makeDeps(overrides = {}) {
     now: () => 0,
     setInterval: jest.fn(() => 1),
     clearInterval: jest.fn(),
+    getVoiceConnection: jest.fn(() => null),
     ...overrides,
   };
 }
@@ -53,6 +54,26 @@ test('join creates a voice connection and a wake gate', async () => {
   const { svc } = makeService(deps);
   await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
   expect(deps.joinVoiceChannel).toHaveBeenCalledWith(expect.objectContaining({ channelId: 'c1', guildId: 'g1' }));
+});
+
+// --- join-latency fix: guild state must be recorded before slow gate setup ---
+//
+// Root cause of a ~90s window where `/voice leave` was a no-op: the wake-word
+// gate factory can trigger a long ONNX model load (see services/voice/wakeword.js)
+// that saturates the CPU limit. `_guilds.set()` must happen as soon as the
+// connection exists, BEFORE `deps.makeWakeGate()` runs, so a `/voice leave`
+// racing that slow setup still finds the connection.
+test('join records _guilds state (with connection) before invoking the wake-gate factory', async () => {
+  const deps = makeDeps();
+  let sawStateWhenGateFactoryRan = null;
+  deps.makeWakeGate = jest.fn(() => {
+    const g = svc._guilds.get('g1');
+    sawStateWhenGateFactoryRan = !!(g && g.connection);
+    return { push: jest.fn(() => false), reset: jest.fn() };
+  });
+  const { svc } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  expect(sawStateWhenGateFactoryRan).toBe(true);
 });
 
 test('leave destroys the connection and cleans up the tick timer', async () => {
@@ -130,6 +151,33 @@ test('output transcript is persisted to the message store on turnComplete', asyn
     content: 'a heavier one', authorId: 'bot', isBot: true,
   }));
   expect(mongoService.recordChannelMessage).toHaveBeenCalledTimes(2);
+});
+
+// --- join-latency fix: leave() must always disconnect, even with no _guilds entry ---
+//
+// Root cause: during the ~90s wake-gate-setup window above, `_guilds` had no
+// entry yet, so `/voice leave` was a no-op even though the bot was connected.
+// leave() must fall back to @discordjs/voice's own connection registry.
+test('leave with no _guilds entry falls back to deps.getVoiceConnection to still disconnect', async () => {
+  const fakeConnection = { destroy: jest.fn() };
+  const deps = makeDeps({ getVoiceConnection: jest.fn(() => fakeConnection) });
+  const { svc } = makeService(deps);
+  await svc.leave('never-joined-guild');
+  expect(deps.getVoiceConnection).toHaveBeenCalledWith('never-joined-guild');
+  expect(fakeConnection.destroy).toHaveBeenCalled();
+});
+
+test('leave with no _guilds entry and no live connection does not throw', async () => {
+  const deps = makeDeps({ getVoiceConnection: jest.fn(() => null) });
+  const { svc } = makeService(deps);
+  await expect(svc.leave('never-joined-guild')).resolves.toBeUndefined();
+});
+
+test('leave with no _guilds entry and deps.getVoiceConnection absent does not throw', async () => {
+  const deps = makeDeps();
+  delete deps.getVoiceConnection;
+  const { svc } = makeService(deps);
+  await expect(svc.leave('never-joined-guild')).resolves.toBeUndefined();
 });
 
 // --- Required refinement 1: maxSessionSeconds hard cap ---

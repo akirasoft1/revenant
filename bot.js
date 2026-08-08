@@ -251,7 +251,7 @@ class DiscordBot {
         const VoiceService = require('./services/VoiceService');
         const dv = require('@discordjs/voice');
         const prism = require('prism-media');
-        const { createOpenWakeWordEngine, WakeWordGate } = require('./services/voice/wakeword');
+        const { createOpenWakeWordEngine, WakeWordGate, preloadOpenWakeWord } = require('./services/voice/wakeword');
         // Warn (don't fail) if the wake-phrase label doesn't match the wake model
         // filename, e.g. VOICE_WAKE_WORD="alexa" but VOICE_WAKE_MODEL points at
         // hey_jarvis -> /voice would announce the wrong phrase.
@@ -283,9 +283,25 @@ class DiscordBot {
               threshold: config.voice.wakeThreshold,
             })),
             now: () => Date.now(), setInterval, clearInterval,
+            getVoiceConnection: dv.getVoiceConnection,
           },
         });
         logger.info(`VoiceService initialized -> ${config.voice.address}`);
+
+        // Warm the openWakeWord ONNX sessions at boot, off the request path.
+        // Root cause of the ~97s /voice join stall: sessions were previously
+        // (re)loaded per-join, saturating the bot's 0.5-CPU limit and stalling
+        // the event loop long enough to blow Discord's 3s interaction-ack
+        // window. createOpenWakeWordEngine's module-level session cache (see
+        // services/voice/wakeword.js) means this one-time load is reused by
+        // every subsequent `makeWakeGate()` call above. Fire-and-forget --
+        // must not block bot startup.
+        preloadOpenWakeWord({
+          wakeModelPath: config.voice.wakeModel,
+          melModelPath: config.voice.melModel,
+          embeddingModelPath: config.voice.embeddingModel,
+        }).then(() => logger.info('voice: wake-word models preloaded'))
+          .catch((e) => logger.warn(`voice: wake-word model preload failed (will load lazily on first join): ${e.message}`));
       } catch (e) {
         logger.error(`voice init failed: ${e.message}`);
         this.voiceClient = null;

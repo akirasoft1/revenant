@@ -1,6 +1,6 @@
 'use strict';
 
-const { WakeWordGate, createOpenWakeWordEngine } = require('../../../services/voice/wakeword');
+const { WakeWordGate, createOpenWakeWordEngine, preloadOpenWakeWord } = require('../../../services/voice/wakeword');
 
 class FakeEngine {
   constructor(detectAtCall) { this.frameLength = 4; this._n = 0; this._at = detectAtCall; }
@@ -240,4 +240,71 @@ test('WakeWordGate drives the openWakeWord engine end-to-end (fake sessions)', a
   // mirroring the decoder feeding the gate over successive events.
   for (let i = 0; i < 16; i++) { gate.push(Buffer.alloc(1280 * 2)); await engine.whenIdle(); }
   expect(gate.push(Buffer.alloc(1280 * 2))).toBe(true); // detection surfaces on next push
+});
+
+// --- module-level session cache (join-latency fix) ---------------------------
+//
+// Root cause of the ~97s /voice join stall: sessions were created PER ENGINE,
+// so every join() re-ran ort.InferenceSession.create() for all 3 models.
+// The fix caches created sessions at module scope, keyed by (paths, backend
+// identity), so repeated createOpenWakeWordEngine() calls with the SAME
+// sessionFactory + paths reuse the already-loaded sessions instead of
+// reloading them. Keying includes backend identity (not just paths) so that
+// two DIFFERENT fake backends in two different tests -- which happen to reuse
+// the same literal `paths` strings above -- never collide.
+
+test('module-level cache: two engines with the same paths + same sessionFactory load sessions ONCE (3 creates, not 6)', async () => {
+  const calls = [];
+  const melSession = { inputNames: ['input'], outputNames: ['output'],
+    run: () => Promise.resolve({ output: { data: new Float32Array(5 * 32) } }) };
+  const embSession = { inputNames: ['input_1'], outputNames: ['conv2d_19'],
+    run: () => Promise.resolve({ conv2d_19: { data: new Float32Array(96) } }) };
+  const wakeSession = { inputNames: ['x.1'], outputNames: ['53'],
+    inputMetadata: [{ name: 'x.1', isTensor: true, type: 'float32', shape: [1, 16, 96] }],
+    run: () => Promise.resolve({ 53: { data: [0] } }) };
+  const backend = {
+    createSession: (path) => {
+      calls.push(path);
+      if (/mel/i.test(path)) return Promise.resolve(melSession);
+      if (/embed/i.test(path)) return Promise.resolve(embSession);
+      return Promise.resolve(wakeSession);
+    },
+    tensor: (type, data, dims) => ({ type, data, dims }),
+  };
+
+  const engine1 = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine2 = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  await Promise.all([engine1.ready(), engine2.ready()]);
+
+  expect(calls.length).toBe(3); // NOT 6 -- engine2 reused engine1's cached sessions
+});
+
+test('preloadOpenWakeWord resolves and warms the cache for a later createOpenWakeWordEngine using the same factory', async () => {
+  const calls = [];
+  const melSession = { inputNames: ['input'], outputNames: ['output'],
+    run: () => Promise.resolve({ output: { data: new Float32Array(5 * 32) } }) };
+  const embSession = { inputNames: ['input_1'], outputNames: ['conv2d_19'],
+    run: () => Promise.resolve({ conv2d_19: { data: new Float32Array(96) } }) };
+  const wakeSession = { inputNames: ['x.1'], outputNames: ['53'],
+    inputMetadata: [{ name: 'x.1', isTensor: true, type: 'float32', shape: [1, 16, 96] }],
+    run: () => Promise.resolve({ 53: { data: [0] } }) };
+  const backend = {
+    createSession: (path) => {
+      calls.push(path);
+      if (/mel/i.test(path)) return Promise.resolve(melSession);
+      if (/embed/i.test(path)) return Promise.resolve(embSession);
+      return Promise.resolve(wakeSession);
+    },
+    tensor: (type, data, dims) => ({ type, data, dims }),
+  };
+
+  await expect(preloadOpenWakeWord({ ...paths, sessionFactory: backend })).resolves.toBeDefined();
+  expect(calls.length).toBe(3);
+
+  // A subsequent engine creation with the SAME backend + paths must not
+  // trigger any additional createSession calls -- the preload already warmed
+  // the cache off the request path.
+  const engine = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  await engine.ready();
+  expect(calls.length).toBe(3);
 });
