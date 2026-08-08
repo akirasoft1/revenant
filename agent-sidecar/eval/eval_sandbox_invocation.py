@@ -28,10 +28,14 @@ from eval.sandbox_eval_set import EVAL_SET  # noqa: E402
 _BASE_PROMPT = "You are a helpful assistant in a private Discord channel."
 
 
-async def _invoked_once(prompt: str) -> bool:
+async def _invoked_once(case: dict) -> bool:
+    ctx = case.get("context") or {}
     fo = FakeOrchestrator()
     agent = ChannelVoiceAgent(config=load(), orchestrator=fo, base_system_prompt=_BASE_PROMPT)
-    res = await agent.process_chat(user_id="eval", user_message=prompt)
+    res = await agent.process_chat(
+        user_id="eval", user_message=case["prompt"],
+        system_prompt=ctx.get("system_prompt", ""), memory_context=ctx.get("memory_context", ""),
+        history=ctx.get("history", []))
     return len(res.execution_ids) > 0
 
 
@@ -39,7 +43,7 @@ async def _run(runs: int):
     records: list[tuple[str, bool]] = []
     per_prompt = []
     for item in EVAL_SET:
-        invs = [await _invoked_once(item["prompt"]) for _ in range(runs)]
+        invs = [await _invoked_once(item) for _ in range(runs)]
         per_prompt.append((item, sum(invs) / runs))
         records.extend((item["expect"], inv) for inv in invs)
     return records, per_prompt

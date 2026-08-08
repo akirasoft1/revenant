@@ -30,6 +30,33 @@ the production model (`gemini-3.6-flash`); override via env to test another.
 Cost: ~30 prompts × N runs of `gemini-3.6-flash` — a few cents. Do NOT wire into
 CI (needs creds + spend); it's an on-demand tuning tool.
 
+## Context-dependent classes (2026-08-08, unified-chat-context)
+
+Since Task 3, `process_chat` accepts bot-supplied `system_prompt`, `memory_context`,
+and `history` — the agent's direct-vs-sandbox decision can depend on that context,
+not just the bare prompt. Two classes slipped through the original (context-free)
+set because they only look like they need "doing" in isolation:
+
+- **Document/authoring asks** — "draft/craft a doc", "write up X". These read as
+  produce-an-artifact requests but are answerable directly (composing text needs
+  no execution).
+- **Context-dependent asks** — "based on our earlier discussion of X, draft
+  section 2(a)." Whether this is answerable directly depends on whether the
+  referenced context is actually present in `memory_context`/`history`.
+
+`EVAL_SET` entries for these classes carry an optional `"context"` dict
+(`system_prompt`/`memory_context`/`history`) with representative content, and
+`_invoked_once(case)` threads it into `process_chat(...)` — without this, the
+eval would run these prompts context-free, which doesn't reflect production
+(the bot always supplies a context-rich brain) and can score misleadingly.
+Entries without a `"context"` key still work: `_invoked_once` defaults to
+empty string/list, matching `process_chat`'s own backward-compat fallback.
+
+**A full live run (`--runs`, needs GEAP creds) must score all of these classes
+`direct`** — a `direct`-labeled document/authoring or context-dependent prompt
+that fires the sandbox is a false-invocation like any other and should be
+investigated the same way (prompt tuning first, per the design doc).
+
 ## Result (2026-08-06 preamble rewrite)
 
 | metric | before (aggressive preamble) | after (answer-directly-by-default) |
