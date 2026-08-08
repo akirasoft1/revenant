@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bvoice.proto\x12\x10\x64iscordbot.voice\"\x0f\n\rHealthRequest\"!\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\"\x9a\x01\n\x0cSessionStart\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x10\n\x08user_tag\x18\x02 \x01(\t\x12\x12\n\nchannel_id\x18\x03 \x01(\t\x12\x10\n\x08guild_id\x18\x04 \x01(\t\x12\x15\n\rsystem_prompt\x18\x05 \x01(\t\x12\x16\n\x0erecall_context\x18\x06 \x01(\t\x12\x12\n\nvoice_name\x18\x07 \x01(\t\"\x19\n\nAudioChunk\x12\x0b\n\x03pcm\x18\x01 \x01(\x0c\"\x0c\n\nSessionEnd\"\x1a\n\nTranscript\x12\x0c\n\x04text\x18\x01 \x01(\t\"\x0e\n\x0cTurnComplete\"\r\n\x0bInterrupted\"\x1d\n\nErrorEvent\x12\x0f\n\x07message\x18\x01 \x01(\t\"\xb8\x01\n\x10VoiceClientEvent\x12\x37\n\rsession_start\x18\x01 \x01(\x0b\x32\x1e.discordbot.voice.SessionStartH\x00\x12-\n\x05\x61udio\x18\x02 \x01(\x0b\x32\x1c.discordbot.voice.AudioChunkH\x00\x12\x33\n\x0bsession_end\x18\x03 \x01(\x0b\x32\x1c.discordbot.voice.SessionEndH\x00\x42\x07\n\x05\x65vent\"\xdd\x02\n\x10VoiceServerEvent\x12-\n\x05\x61udio\x18\x01 \x01(\x0b\x32\x1c.discordbot.voice.AudioChunkH\x00\x12\x38\n\x10input_transcript\x18\x02 \x01(\x0b\x32\x1c.discordbot.voice.TranscriptH\x00\x12\x39\n\x11output_transcript\x18\x03 \x01(\x0b\x32\x1c.discordbot.voice.TranscriptH\x00\x12\x37\n\rturn_complete\x18\x04 \x01(\x0b\x32\x1e.discordbot.voice.TurnCompleteH\x00\x12\x34\n\x0binterrupted\x18\x05 \x01(\x0b\x32\x1d.discordbot.voice.InterruptedH\x00\x12-\n\x05\x65rror\x18\x06 \x01(\x0b\x32\x1c.discordbot.voice.ErrorEventH\x00\x42\x07\n\x05\x65vent2\xac\x01\n\x05Voice\x12V\n\x08\x43onverse\x12\".discordbot.voice.VoiceClientEvent\x1a\".discordbot.voice.VoiceServerEvent(\x01\x30\x01\x12K\n\x06Health\x12\x1f.discordbot.voice.HealthRequest\x1a .discordbot.voice.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bvoice.proto\x12\x10\x64iscordbot.voice\"\x0f\n\rHealthRequest\"!\n\x0eHealthResponse\x12\x0f\n\x07healthy\x18\x01 \x01(\x08\"%\n\x04Turn\x12\x0c\n\x04role\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\t\"\xc3\x01\n\x0cSessionStart\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x10\n\x08user_tag\x18\x02 \x01(\t\x12\x12\n\nchannel_id\x18\x03 \x01(\t\x12\x10\n\x08guild_id\x18\x04 \x01(\t\x12\x15\n\rsystem_prompt\x18\x05 \x01(\t\x12\x16\n\x0erecall_context\x18\x06 \x01(\t\x12\x12\n\nvoice_name\x18\x07 \x01(\t\x12\'\n\x07history\x18\x08 \x03(\x0b\x32\x16.discordbot.voice.Turn\"\x19\n\nAudioChunk\x12\x0b\n\x03pcm\x18\x01 \x01(\x0c\"\x0c\n\nSessionEnd\"\x1a\n\nTranscript\x12\x0c\n\x04text\x18\x01 \x01(\t\"\x0e\n\x0cTurnComplete\"\r\n\x0bInterrupted\"\x1d\n\nErrorEvent\x12\x0f\n\x07message\x18\x01 \x01(\t\"\xb8\x01\n\x10VoiceClientEvent\x12\x37\n\rsession_start\x18\x01 \x01(\x0b\x32\x1e.discordbot.voice.SessionStartH\x00\x12-\n\x05\x61udio\x18\x02 \x01(\x0b\x32\x1c.discordbot.voice.AudioChunkH\x00\x12\x33\n\x0bsession_end\x18\x03 \x01(\x0b\x32\x1c.discordbot.voice.SessionEndH\x00\x42\x07\n\x05\x65vent\"\xdd\x02\n\x10VoiceServerEvent\x12-\n\x05\x61udio\x18\x01 \x01(\x0b\x32\x1c.discordbot.voice.AudioChunkH\x00\x12\x38\n\x10input_transcript\x18\x02 \x01(\x0b\x32\x1c.discordbot.voice.TranscriptH\x00\x12\x39\n\x11output_transcript\x18\x03 \x01(\x0b\x32\x1c.discordbot.voice.TranscriptH\x00\x12\x37\n\rturn_complete\x18\x04 \x01(\x0b\x32\x1e.discordbot.voice.TurnCompleteH\x00\x12\x34\n\x0binterrupted\x18\x05 \x01(\x0b\x32\x1d.discordbot.voice.InterruptedH\x00\x12-\n\x05\x65rror\x18\x06 \x01(\x0b\x32\x1c.discordbot.voice.ErrorEventH\x00\x42\x07\n\x05\x65vent2\xac\x01\n\x05Voice\x12V\n\x08\x43onverse\x12\".discordbot.voice.VoiceClientEvent\x1a\".discordbot.voice.VoiceServerEvent(\x01\x30\x01\x12K\n\x06Health\x12\x1f.discordbot.voice.HealthRequest\x1a .discordbot.voice.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,24 +35,26 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHREQUEST']._serialized_end=48
   _globals['_HEALTHRESPONSE']._serialized_start=50
   _globals['_HEALTHRESPONSE']._serialized_end=83
-  _globals['_SESSIONSTART']._serialized_start=86
-  _globals['_SESSIONSTART']._serialized_end=240
-  _globals['_AUDIOCHUNK']._serialized_start=242
-  _globals['_AUDIOCHUNK']._serialized_end=267
-  _globals['_SESSIONEND']._serialized_start=269
-  _globals['_SESSIONEND']._serialized_end=281
-  _globals['_TRANSCRIPT']._serialized_start=283
-  _globals['_TRANSCRIPT']._serialized_end=309
-  _globals['_TURNCOMPLETE']._serialized_start=311
-  _globals['_TURNCOMPLETE']._serialized_end=325
-  _globals['_INTERRUPTED']._serialized_start=327
-  _globals['_INTERRUPTED']._serialized_end=340
-  _globals['_ERROREVENT']._serialized_start=342
-  _globals['_ERROREVENT']._serialized_end=371
-  _globals['_VOICECLIENTEVENT']._serialized_start=374
-  _globals['_VOICECLIENTEVENT']._serialized_end=558
-  _globals['_VOICESERVEREVENT']._serialized_start=561
-  _globals['_VOICESERVEREVENT']._serialized_end=910
-  _globals['_VOICE']._serialized_start=913
-  _globals['_VOICE']._serialized_end=1085
+  _globals['_TURN']._serialized_start=85
+  _globals['_TURN']._serialized_end=122
+  _globals['_SESSIONSTART']._serialized_start=125
+  _globals['_SESSIONSTART']._serialized_end=320
+  _globals['_AUDIOCHUNK']._serialized_start=322
+  _globals['_AUDIOCHUNK']._serialized_end=347
+  _globals['_SESSIONEND']._serialized_start=349
+  _globals['_SESSIONEND']._serialized_end=361
+  _globals['_TRANSCRIPT']._serialized_start=363
+  _globals['_TRANSCRIPT']._serialized_end=389
+  _globals['_TURNCOMPLETE']._serialized_start=391
+  _globals['_TURNCOMPLETE']._serialized_end=405
+  _globals['_INTERRUPTED']._serialized_start=407
+  _globals['_INTERRUPTED']._serialized_end=420
+  _globals['_ERROREVENT']._serialized_start=422
+  _globals['_ERROREVENT']._serialized_end=451
+  _globals['_VOICECLIENTEVENT']._serialized_start=454
+  _globals['_VOICECLIENTEVENT']._serialized_end=638
+  _globals['_VOICESERVEREVENT']._serialized_start=641
+  _globals['_VOICESERVEREVENT']._serialized_end=990
+  _globals['_VOICE']._serialized_start=993
+  _globals['_VOICE']._serialized_end=1165
 # @@protoc_insertion_point(module_scope)
