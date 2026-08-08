@@ -85,6 +85,9 @@ class AgentClient {
           interaction_id: req.interactionId,
           user_message: req.userMessage,
           image_url: req.imageUrl || '',
+          system_prompt: req.systemPrompt || '',
+          memory_context: req.memoryContext || '',
+          history: Array.isArray(req.history) ? req.history.map((t) => ({ role: t.role, content: t.content })) : [],
         },
         { deadline },
         (err, resp) => {
