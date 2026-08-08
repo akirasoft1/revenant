@@ -40,6 +40,9 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
                 result = await self._agent.process_chat(
                     user_id=request.user_id,
                     user_message=request.user_message,
+                    system_prompt=request.system_prompt,
+                    memory_context=request.memory_context,
+                    history=[{"role": t.role, "content": t.content} for t in request.history],
                 )
             except Exception as e:  # noqa: BLE001
                 log.exception("Chat handler failed")
