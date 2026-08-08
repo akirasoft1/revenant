@@ -857,8 +857,8 @@ class DiscordBot {
       const imageAttachments = this._createImageAttachments(result.images);
 
       // Split if too long for Discord (2000 char limit). Capture the last sent
-      // message so we can record sandbox executionIds against it for the
-      // reaction-reveal feature.
+      // message so we can persist it as an assistant turn (and, when this turn
+      // ran sandbox code, attach executionIds for reaction-reveal lookups).
       const executionIds = result.executionSummary?.executionIds || [];
       let lastReply = null;
       if (response.length > 2000) {
@@ -879,10 +879,10 @@ class DiscordBot {
         }
       }
 
-      // Persist the executionIds attached to this reply so 🔍/📜/🐛 can resolve.
-      if (executionIds.length > 0) {
-        await this._recordBotReplyExecutions(lastReply, response, executionIds);
-      }
+      // Persist this channel-voice reply as an assistant turn in channel_messages
+      // (ChatService.buildTurnContext maps isBot -> assistant), carrying any
+      // sandbox executionIds so a later 🔍/📜/🐛 reaction can resolve them.
+      await this._recordBotReply(lastReply, response, channelId, guildId, executionIds);
     });
   }
 
@@ -905,26 +905,47 @@ class DiscordBot {
   }
 
   /**
-   * Persist the bot's own reply when it has sandbox executionIds attached, so
-   * future 🔍/📜/🐛 reactions on that reply can look up the executions.
+   * Persist a channel-voice bot reply to `channel_messages` as an assistant
+   * turn (`isBot: true`), so `ChatService.buildTurnContext` can forward the
+   * bot's own prior replies as history on the next turn. Also carries any
+   * sandbox `executionIds` produced by this turn so a later 🔍/📜/🐛 reaction
+   * on the reply can resolve them.
+   *
+   * This unifies what used to be a separate `_recordBotReplyExecutions`
+   * helper, which only recorded a reply when it had sandbox executionIds
+   * attached and never set `isBot` (so those turns mis-mapped to `user` in
+   * history). There is now exactly one record call per successful
+   * channel-voice reply, made unconditionally from `_handleMentionChat`.
+   *
+   * Never throws - a persistence failure must not break a reply that has
+   * already been sent to Discord.
+   * @param {import('discord.js').Message} reply - The Discord message the bot just sent
+   * @param {string} content - The reply text
+   * @param {string} channelId
+   * @param {string|null} guildId
+   * @param {string[]} [executionIds] - Sandbox execution ids produced by this turn
    * @private
    */
-  async _recordBotReplyExecutions(reply, content, executionIds) {
-    if (!reply || !reply.id || !executionIds || executionIds.length === 0) return;
+  async _recordBotReply(reply, content, channelId, guildId, executionIds = []) {
+    if (!reply || !reply.id) return;
     if (!this.mongoService) return;
     try {
-      await this.mongoService.recordChannelMessage({
+      const doc = {
         messageId: reply.id,
-        channelId: reply.channel?.id || null,
-        guildId: reply.guild?.id || null,
+        channelId: channelId || null,
+        guildId: guildId || null,
         authorId: this.client.user?.id || null,
         authorName: this.client.user?.username || 'bot',
         content,
+        isBot: true,
         timestamp: new Date(),
-        executionIds,
-      });
+      };
+      if (executionIds && executionIds.length > 0) {
+        doc.executionIds = executionIds;
+      }
+      await this.mongoService.recordChannelMessage(doc);
     } catch (e) {
-      logger.warn(`Failed to record executionIds on bot reply ${reply.id}: ${e.message}`);
+      logger.warn(`Failed to record bot reply ${reply.id}: ${e.message}`);
     }
   }
 
