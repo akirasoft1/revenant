@@ -291,12 +291,35 @@ ${context}`;
     // systemPrompt WITHOUT the memory block: memory travels separately as memoryBlock.
     const systemPrompt = this._buildGroupSystemPrompt(personality, '', channelContext, sharedContext, voiceContext);
 
-    const raw = this.channelContextService?.getRecentMessagesRaw
-      ? (this.channelContextService.getRecentMessagesRaw(channelId) || [])
-      : [];
-    const historyTurns = raw
-      .filter((m) => m && m.content)
-      .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
+    // History MUST carry both sides of the conversation (user turns AND the
+    // bot's own prior replies mapped to 'assistant') so the model has real
+    // continuity across surfaces. ChannelContextService.getRecentMessagesRaw
+    // is NOT a valid source for this: it reads the in-memory per-channel
+    // buffer, which is only ever populated from bot.js's `messageCreate`
+    // handler — and that handler unconditionally does
+    // `if (message.author.bot) return;` before recording anything, so the
+    // bot's own replies never make it into that buffer at all (not merely
+    // filtered on read). Source from MongoService's `channel_messages`
+    // collection instead — the same store /tldr (CatchMeUpService) reads,
+    // and the one durable place bot replies ARE recorded with `isBot: true`
+    // (see VoiceService._persistTurn and bot.js's sandbox-executionIds path).
+    // getRecentChannelMessages(channelId, limit) already returns the most
+    // recent `limit` docs sorted oldest->newest, matching the contract.
+    let historyTurns = [];
+    try {
+      const docs = this.mongoService?.getRecentChannelMessages
+        ? await this.mongoService.getRecentChannelMessages(
+            channelId,
+            this.config?.channelContext?.promptRecentCount || 10
+          )
+        : [];
+      historyTurns = (docs || [])
+        .filter((m) => m && m.content)
+        .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
+    } catch (error) {
+      logger.debug(`buildTurnContext: history lookup failed, degrading to []: ${error.message}`);
+      historyTurns = [];
+    }
 
     return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
   }
