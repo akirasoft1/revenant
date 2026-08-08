@@ -337,10 +337,16 @@ ${context}`;
    * Drop a trailing `role:'user'` history turn whose content is the current
    * userMessage, so the current turn isn't forwarded twice (once via history,
    * once as the separate current-turn field). Normalizes Discord mention
-   * markup and whitespace before comparing. Only ever removes the LAST turn,
-   * only when it's a user turn, and only when it matches — earlier turns are
-   * never touched. No-op when userMessage is empty (e.g. the voice path,
-   * which doesn't have a separate current-turn field to dedupe against).
+   * markup and whitespace before comparing, then requires an EXACT match
+   * (no endsWith/prefix fallback: getRecentChannelMessages stores raw
+   * content with no `[username]: ` prefix today, so exact match already
+   * covers the real duplicate case; a fuzzy suffix match would risk
+   * false-positive-dropping a genuinely different prior turn that merely
+   * ends with the current short message, e.g. prior "let me know if
+   * that's ok" + current "ok"). Only ever removes the LAST turn, only when
+   * it's a user turn, and only when it matches — earlier turns are never
+   * touched. No-op when userMessage is empty (e.g. the voice path, which
+   * doesn't have a separate current-turn field to dedupe against).
    * @param {Array<{role: 'user'|'assistant', content: string}>} historyTurns
    * @param {string} userMessage
    * @returns {Array<{role: 'user'|'assistant', content: string}>}
@@ -357,9 +363,7 @@ ${context}`;
     if (lastTurn.role !== 'user') return historyTurns;
 
     const normalizedLastTurn = normalize(lastTurn.content);
-    const isDuplicate = normalizedLastTurn === normalizedUserMessage
-      || normalizedLastTurn.endsWith(normalizedUserMessage);
-    if (!isDuplicate) return historyTurns;
+    if (normalizedLastTurn !== normalizedUserMessage) return historyTurns;
 
     return historyTurns.slice(0, -1);
   }

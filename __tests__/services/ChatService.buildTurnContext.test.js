@@ -112,3 +112,23 @@ test('buildTurnContext does not drop a real trailing user turn when userMessage 
     { role: 'user', content: 'the quarterly report' },
   ]);
 });
+
+test('buildTurnContext preserves a trailing user turn that merely ENDS WITH userMessage but is not an exact match', async () => {
+  const svc = makeChat();
+  // Prior turn is a genuinely different message that happens to end with the
+  // short current userMessage ("ok"). A fuzzy endsWith match would wrongly
+  // drop this real turn; exact normalized-equality must not.
+  svc.mongoService.getRecentChannelMessages = async () => ([
+    { authorName: 'bot', content: 'let me know if that\'s ok', isBot: true },
+    { authorName: 'alice', content: 'sounds ok', isBot: false },
+  ]);
+
+  const ctx = await svc.buildTurnContext({
+    userId: 'u1', channelId: 'c1', userMessage: 'ok', personalityId: 'channel-voice',
+  });
+
+  expect(ctx.historyTurns).toEqual([
+    { role: 'assistant', content: 'let me know if that\'s ok' },
+    { role: 'user', content: 'sounds ok' },
+  ]);
+});
