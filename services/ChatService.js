@@ -601,6 +601,14 @@ ${context}`;
       && process.env.AGENT_ENABLED !== 'false'
     ) {
       try {
+        const turnCtx = await this.buildTurnContext({
+          userId: user.id,
+          userTag: user.tag || user.username || '',
+          channelId: channelId || '',
+          guildId: guildId || '',
+          userMessage,
+          personalityId,
+        }).catch(() => ({ systemPrompt: '', memoryBlock: '', historyTurns: [] }));
         const agentResp = await this.agentClient.chat({
           userId: user.id,
           userTag: user.tag || user.username || '',
@@ -609,6 +617,9 @@ ${context}`;
           interactionId: user.interactionId || '',
           userMessage,
           imageUrl: imageUrl || '',
+          systemPrompt: turnCtx.systemPrompt,
+          memoryContext: turnCtx.memoryBlock,
+          history: turnCtx.historyTurns,
         });
         const cvPersonality = personalityManager.get('channel-voice') || {
           id: 'channel-voice',
