@@ -321,7 +321,47 @@ ${context}`;
       historyTurns = [];
     }
 
+    // bot.js persists the incoming user message to channel_messages
+    // fire-and-forget BEFORE calling chat(), so by the time we read history
+    // here the current turn is usually already present as the last doc —
+    // and would otherwise be forwarded twice (once via historyTurns with raw
+    // `<@id>` mention markup, once via the separate stripped userMessage).
+    // Drop it defensively; no-op if the write hasn't landed yet (the race's
+    // other branch) since there's simply nothing to match.
+    historyTurns = this._dropDuplicatedCurrentTurn(historyTurns, userMessage);
+
     return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
+  }
+
+  /**
+   * Drop a trailing `role:'user'` history turn whose content is the current
+   * userMessage, so the current turn isn't forwarded twice (once via history,
+   * once as the separate current-turn field). Normalizes Discord mention
+   * markup and whitespace before comparing. Only ever removes the LAST turn,
+   * only when it's a user turn, and only when it matches — earlier turns are
+   * never touched. No-op when userMessage is empty (e.g. the voice path,
+   * which doesn't have a separate current-turn field to dedupe against).
+   * @param {Array<{role: 'user'|'assistant', content: string}>} historyTurns
+   * @param {string} userMessage
+   * @returns {Array<{role: 'user'|'assistant', content: string}>}
+   * @private
+   */
+  _dropDuplicatedCurrentTurn(historyTurns, userMessage) {
+    if (!userMessage || historyTurns.length === 0) return historyTurns;
+
+    const normalize = (s) => String(s || '').replace(/<@!?\d+>/g, '').trim();
+    const normalizedUserMessage = normalize(userMessage);
+    if (!normalizedUserMessage) return historyTurns;
+
+    const lastTurn = historyTurns[historyTurns.length - 1];
+    if (lastTurn.role !== 'user') return historyTurns;
+
+    const normalizedLastTurn = normalize(lastTurn.content);
+    const isDuplicate = normalizedLastTurn === normalizedUserMessage
+      || normalizedLastTurn.endsWith(normalizedUserMessage);
+    if (!isDuplicate) return historyTurns;
+
+    return historyTurns.slice(0, -1);
   }
 
   /**

@@ -56,3 +56,59 @@ test('buildTurnContext resolves voice profile, returns separate memory + history
   ]);
   expect(ctx.historyTurns.some((t) => t.role === 'assistant')).toBe(true);
 });
+
+test('buildTurnContext drops a trailing history turn that duplicates the current userMessage (already-persisted race)', async () => {
+  const svc = makeChat();
+  // Simulate bot.js's fire-and-forget persist of the incoming message having
+  // already landed in channel_messages by the time buildTurnContext reads it —
+  // the last doc is the CURRENT turn, with raw Discord mention markup intact.
+  svc.mongoService.getRecentChannelMessages = async () => ([
+    { authorName: 'alice', content: 'can you write something for me?', isBot: false },
+    { authorName: 'bot', content: 'what document?', isBot: true },
+    { authorName: 'alice', content: '<@1234567890> craft it from scratch', isBot: false },
+  ]);
+
+  const ctx = await svc.buildTurnContext({
+    userId: 'u1', channelId: 'c1', userMessage: 'craft it from scratch', personalityId: 'channel-voice',
+  });
+
+  // Prior turns are preserved...
+  expect(ctx.historyTurns).toEqual([
+    { role: 'user', content: 'can you write something for me?' },
+    { role: 'assistant', content: 'what document?' },
+  ]);
+  // ...but the duplicated current turn must not appear at all.
+  const dupCount = ctx.historyTurns.filter((t) => t.role === 'user' && t.content.includes('craft it from scratch')).length;
+  expect(dupCount).toBe(0);
+});
+
+test('buildTurnContext is a no-op when the current turn has NOT yet been persisted (no race)', async () => {
+  const svc = makeChat();
+  // History ends on the bot's prior reply — current user message never landed
+  // in channel_messages yet. Nothing should be dropped.
+  const ctx = await svc.buildTurnContext({
+    userId: 'u1', channelId: 'c1', userMessage: 'craft it from scratch', personalityId: 'channel-voice',
+  });
+
+  expect(ctx.historyTurns).toEqual([
+    { role: 'user', content: 'can you write something for me?' },
+    { role: 'assistant', content: 'what document?' },
+  ]);
+});
+
+test('buildTurnContext does not drop a real trailing user turn when userMessage is empty (voice path)', async () => {
+  const svc = makeChat();
+  svc.mongoService.getRecentChannelMessages = async () => ([
+    { authorName: 'bot', content: 'what document?', isBot: true },
+    { authorName: 'alice', content: 'the quarterly report', isBot: false },
+  ]);
+
+  const ctx = await svc.buildTurnContext({
+    userId: 'u1', channelId: 'c1', userMessage: '', personalityId: 'channel-voice',
+  });
+
+  expect(ctx.historyTurns).toEqual([
+    { role: 'assistant', content: 'what document?' },
+    { role: 'user', content: 'the quarterly report' },
+  ]);
+});
