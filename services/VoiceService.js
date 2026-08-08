@@ -31,7 +31,20 @@ class VoiceService {
   wakeWord() { return (this._config.voice && this._config.voice.wakeWord) || 'hey jarvis'; }
 
   async join({ channel, guildId }) {
-    if (this._guilds.size >= this._config.voice.maxSessions && !this._guilds.has(guildId)) {
+    // Idempotent join: if we're already connected in this guild, do NOT create a
+    // second connection or re-wire the receiver. discord.js reuses the existing
+    // voice connection for a repeat join, so re-running the wiring stacked a new
+    // `speaking.on('start')` handler (and, via re-subscribe, duplicate
+    // data/end/error listeners) on the SAME AudioReceiveStream every time --
+    // observed live as "11 data listeners added to [AudioReceiveStream]". That
+    // made `_handleUserPcm` fire up to 11x per audio frame, feeding the
+    // wake-word gate's continuous mel window duplicated audio and destroying the
+    // temporal structure of the wake phrase so it could never be detected.
+    if (this._guilds.has(guildId)) {
+      logger.info(`voice: already connected in guild ${guildId} (channel ${this._guilds.get(guildId).channelId}); ignoring duplicate /voice join`);
+      return;
+    }
+    if (this._guilds.size >= this._config.voice.maxSessions) {
       throw new Error('voice session limit reached');
     }
     const d = this._deps;
@@ -53,12 +66,19 @@ class VoiceService {
     // `leave()`/`_endSession()` already guard for a still-null gate.
     const state = { connection, player, gate: null, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
-      sessionOpenedAtMs: null };
+      sessionOpenedAtMs: null, receiving: new Set() };
     this._guilds.set(guildId, state);
 
     state.gate = d.makeWakeGate();
 
     connection.receiver.speaking.on('start', (userId) => {
+      // De-dupe per user: `speaking start` can fire repeatedly for a user whose
+      // subscription is still open, and `receiver.subscribe` returns the SAME
+      // AudioReceiveStream in that case -- re-wiring would stack duplicate
+      // listeners and feed each audio frame to the wake gate multiple times.
+      // Skip until the current subscription for this user ends.
+      if (state.receiving.has(userId)) return;
+      state.receiving.add(userId);
       const stream = connection.receiver.subscribe(userId, { end: { behavior: d.EndBehaviorType.AfterSilence, duration: 800 } });
       const decoder = d.opusDecoderFactory();
       // Decode each received Opus packet individually in a try/catch rather
@@ -70,7 +90,9 @@ class VoiceService {
       // process (the pod restarts and the bot drops out of the voice channel).
       // Per-packet decode lets us drop the bad frame and keep decoding the
       // good ones so wake-word detection still runs.
+      let decoded = 0;
       let dropped = 0;
+      logger.debug(`voice: speaking start from user ${userId} in guild ${guildId}`);
       stream.on('data', (opusPacket) => {
         let pcm48;
         try {
@@ -79,12 +101,24 @@ class VoiceService {
           dropped += 1;
           return;
         }
+        decoded += 1;
         this._handleUserPcm(guildId, userId, pcm48).catch((e) => logger.warn(`voice: pcm handling failed: ${e.message}`));
       });
-      stream.on('end', () => {
-        if (dropped) logger.debug(`voice: dropped ${dropped} undecodable opus frame(s) from user ${userId} in guild ${guildId}`);
-      });
-      stream.on('error', (e) => logger.warn(`voice: receive stream error from user ${userId} in guild ${guildId}: ${e.message}`));
+      let ended = false;
+      const onEnd = (reason) => {
+        if (ended) return;
+        ended = true;
+        state.receiving.delete(userId);
+        // Boundary instrumentation: how much audio decoded vs. was dropped, the
+        // best wake score the engine reached, and any ONNX-chain error. This
+        // distinguishes "no audio", "audio all-corrupt (DAVE/encryption)",
+        // "wake engine erroring", and "audio fine but below threshold".
+        const wakeErr = state.gate && typeof state.gate.lastError === 'function' ? state.gate.lastError() : null;
+        const wakeScore = state.gate && typeof state.gate.lastScore === 'function' ? state.gate.lastScore() : null;
+        logger.debug(`voice: utterance end (${reason}) user ${userId} guild ${guildId}: decoded ${decoded} frame(s), dropped ${dropped}, wake maxScore ${wakeScore}${wakeErr ? `, wake-engine error: ${wakeErr.message}` : ''}`);
+      };
+      stream.once('end', () => onEnd('end'));
+      stream.once('error', (e) => { logger.warn(`voice: receive stream error from user ${userId} in guild ${guildId}: ${e.message}`); onEnd('error'); });
     });
 
     state.tickTimer = d.setInterval(() => this._tick(guildId), 250);
@@ -97,7 +131,10 @@ class VoiceService {
     const pcm16 = downsampleTo16kMono(pcm48Stereo);
 
     if (g.machine.state === 'idle') {
-      if (g.gate.push(pcm16)) await this._apply(guildId, g.machine.onWake(), { userId });
+      if (g.gate.push(pcm16)) {
+        logger.info(`voice: wake word detected in guild ${guildId} (user ${userId})`);
+        await this._apply(guildId, g.machine.onWake(), { userId });
+      }
       return;
     }
     // active/hot: barge-in signal + stream audio to the live session.

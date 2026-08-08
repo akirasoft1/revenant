@@ -39,6 +39,13 @@ class WakeWordGate {
     // listening period cannot surface in the next one (see engine.reset()).
     this._engine.reset?.();
   }
+
+  // Diagnostic passthroughs (not part of the detection contract): let callers
+  // surface *why* a listening period produced no wake -- an erroring ONNX chain
+  // (lastError) vs. audio that scored below threshold (lastScore) vs. no audio
+  // at all. Guarded so fake engines in tests without these methods return null.
+  lastError() { return typeof this._engine.lastError === 'function' ? this._engine.lastError() : null; }
+  lastScore() { return typeof this._engine.lastScore === 'function' ? this._engine.lastScore() : null; }
 }
 
 // --- openWakeWord ONNX engine -------------------------------------------------
@@ -187,6 +194,7 @@ function createOpenWakeWordEngine({
   let melBuffer = [];          // Float32Array(MEL_BINS) per mel frame
   let embHistory = [];         // Float32Array(EMBEDDING_DIM) per embedding
   let detected = false;
+  let maxScore = 0;            // highest wake score since the last reset() (diagnostic)
   let lastError = null;
   let closed = false;
   let generation = 0;          // bumped on reset(); ties results to a period
@@ -247,6 +255,7 @@ function createOpenWakeWordEngine({
       });
       if (gen !== generation) return; // reset() during wake inference
       const score = wakeOut[wakeSession.outputNames[0]].data[0];
+      if (score > maxScore) maxScore = score;
       if (score >= threshold) detected = true;
 
       melBuffer.splice(0, MEL_STRIDE);
@@ -282,6 +291,7 @@ function createOpenWakeWordEngine({
     reset() {
       generation += 1;
       detected = false;
+      maxScore = 0;
       melBuffer = [];
       embHistory = [];
       for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
@@ -291,6 +301,7 @@ function createOpenWakeWordEngine({
     ready() { return readyPromise; },
     whenIdle() { return Promise.resolve(inFlight); },
     lastError() { return lastError; },
+    lastScore() { return maxScore; },
     close() { closed = true; },
   };
 }

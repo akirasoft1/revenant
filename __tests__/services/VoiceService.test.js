@@ -411,3 +411,46 @@ test('an undecodable opus frame is dropped without crashing, and later good fram
     process.removeListener('unhandledRejection', onUnhandledRejection);
   }
 });
+
+test('repeated speaking-start for the same user does not re-subscribe until the subscription ends (no listener stacking)', async () => {
+  const rxStream = new EventEmitter();
+  const subscribe = jest.fn(() => rxStream);
+  const connection = new EventEmitter();
+  connection.subscribe = jest.fn();
+  connection.receiver = { subscribe, speaking: new EventEmitter() };
+  connection.destroy = jest.fn();
+
+  const deps = makeDeps({ joinVoiceChannel: jest.fn(() => connection) });
+  const { svc } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+  // Two starts for the same user while the subscription is still open: only the
+  // first subscribes; the second is a no-op (prevents the AudioReceiveStream
+  // listener leak observed live).
+  connection.receiver.speaking.emit('start', 'user1');
+  connection.receiver.speaking.emit('start', 'user1');
+  expect(subscribe).toHaveBeenCalledTimes(1);
+
+  // Once the subscription ends, a subsequent start re-subscribes.
+  rxStream.emit('end');
+  connection.receiver.speaking.emit('start', 'user1');
+  expect(subscribe).toHaveBeenCalledTimes(2);
+});
+
+test('a second /voice join for the same guild is idempotent -- no second connection or re-wiring', async () => {
+  const joinVoiceChannel = jest.fn(() => {
+    const c = new EventEmitter();
+    c.subscribe = jest.fn();
+    c.receiver = { subscribe: jest.fn(() => new EventEmitter()), speaking: new EventEmitter() };
+    c.destroy = jest.fn();
+    return c;
+  });
+  const deps = makeDeps({ joinVoiceChannel });
+  const { svc } = makeService(deps);
+  const channel = { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } };
+
+  await svc.join({ channel, guildId: 'g1' });
+  await svc.join({ channel, guildId: 'g1' });
+
+  expect(joinVoiceChannel).toHaveBeenCalledTimes(1);
+});
