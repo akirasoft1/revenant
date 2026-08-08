@@ -1355,5 +1355,19 @@ describe('ChatService', () => {
         else process.env.AGENT_ENABLED = prev;
       }
     });
+
+    it('channel-voice agent route forwards built context', async () => {
+      chatServiceLocal.buildTurnContext = jest.fn().mockResolvedValue({
+        systemPrompt: 'SP',
+        memoryBlock: 'MEM',
+        historyTurns: [{ role: 'user', content: 'a' }],
+      });
+      await chatServiceLocal.chat('channel-voice', 'hello', user, 'c1', 'g1', null);
+      expect(mockAgentClient.chat).toHaveBeenCalledWith(expect.objectContaining({
+        systemPrompt: 'SP',
+        memoryContext: 'MEM',
+        history: [{ role: 'user', content: 'a' }],
+      }));
+    });
   });
 });

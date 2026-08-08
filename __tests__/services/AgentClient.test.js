@@ -91,3 +91,29 @@ describe('AgentClient.runDql', () => {
     client.close();
   });
 });
+
+describe('AgentClient.chat', () => {
+  it('forwards system_prompt, memory_context, history to the proto', async () => {
+    const c = makeClient();
+    let sent;
+    c._stub.Chat = (req, opts, cb) => {
+      sent = req;
+      cb(null, { message_text: 'ok', summary: {}, fallback_occurred: false });
+    };
+    await c.chat({
+      userId: 'u',
+      userTag: 'u#0',
+      channelId: 'c',
+      guildId: 'g',
+      interactionId: 'i',
+      userMessage: 'hi',
+      systemPrompt: 'SP',
+      memoryContext: 'MEM',
+      history: [{ role: 'user', content: 'a' }],
+    });
+    expect(sent.system_prompt).toBe('SP');
+    expect(sent.memory_context).toBe('MEM');
+    expect(sent.history).toEqual([{ role: 'user', content: 'a' }]);
+    c.close();
+  });
+});

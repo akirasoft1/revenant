@@ -15,12 +15,13 @@ const { downsampleTo16kMono, upsample24kMonoTo48kStereo } = require('./voice/aud
 const { Readable } = require('stream');
 
 class VoiceService {
-  constructor({ voiceClient, recallService, mongoService, config, deps }) {
+  constructor({ voiceClient, recallService, mongoService, config, deps, contextBuilder }) {
     this._client = voiceClient;
     this._recall = recallService;
     this._mongo = mongoService;
     this._config = config;
     this._deps = deps;
+    this._contextBuilder = contextBuilder;
     // guildId -> { connection, player, gate, machine, session, channelId,
     //              buffers, tickTimer, sessionOpenedAtMs }
     this._guilds = new Map();
@@ -113,11 +114,18 @@ class VoiceService {
       return;
     }
 
+    let systemPrompt = this._config.voice.systemPrompt || '';
     let recallContext = '';
+    let history = [];
     try {
-      const r = await this._recall.recall({ recentMessages: [], scope: { userId, channelId: g.channelId, personalityId: 'channel-voice' } });
-      recallContext = (r && r.block) || '';
-    } catch (e) { logger.warn(`voice: recall failed: ${e.message}`); }
+      const ctx = await this._contextBuilder({
+        userId, userTag: '', channelId: g.channelId, guildId,
+        userMessage: '', personalityId: 'channel-voice',
+      });
+      systemPrompt = ctx.systemPrompt || systemPrompt;
+      recallContext = ctx.memoryBlock || '';
+      history = ctx.historyTurns || [];
+    } catch (e) { logger.warn(`voice: context build failed: ${e.message}`); }
 
     const session = this._client.converse();
     g.session = session;
@@ -151,8 +159,7 @@ class VoiceService {
     });
 
     session.sendStart({ userId, channelId: g.channelId, guildId,
-      systemPrompt: this._config.voice.systemPrompt || '',
-      recallContext, voiceName: this._config.voice.liveVoice });
+      systemPrompt, recallContext, history, voiceName: this._config.voice.liveVoice });
   }
 
   _play(g, pcm24Mono) {

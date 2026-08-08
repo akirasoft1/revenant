@@ -233,7 +233,36 @@ class ChannelVoiceAgent:
         self._orch = orchestrator
         self._base_system_prompt = base_system_prompt
 
-    async def process_chat(self, *, user_id: str, user_message: str) -> AgentChatResult:
+    def _compose_instruction(self, *, system_prompt: str) -> str:
+        """Build the ADK Agent instruction: bot-supplied system_prompt when
+        present, else the sidecar's own base prompt (old-bot-client
+        backward compat), always followed by the sandbox tool preamble."""
+        base = system_prompt.strip() if system_prompt and system_prompt.strip() else self._base_system_prompt
+        return f"{base}\n\n{TOOL_AVAILABILITY_PREAMBLE}"
+
+    def _compose_context_block(self, *, memory_context: str, history) -> str:
+        """Build the memory + recent-history block prepended to the turn's
+        user content. Pure/stateless — no ADK/model objects touched."""
+        parts = []
+        if memory_context and memory_context.strip():
+            parts.append(memory_context.strip())
+        if history:
+            lines = [
+                f"{('User' if t.get('role') != 'assistant' else 'You')}: {t.get('content', '')}"
+                for t in history
+            ]
+            parts.append("## Recent conversation\n" + "\n".join(lines))
+        return "\n\n".join(parts)
+
+    async def process_chat(
+        self,
+        *,
+        user_id: str,
+        user_message: str,
+        system_prompt: str = "",
+        memory_context: str = "",
+        history=None,
+    ) -> AgentChatResult:
         tool = RunInSandboxTool(
             orch=self._orch,
             user_id=user_id,
@@ -272,7 +301,7 @@ class ChannelVoiceAgent:
         agent = Agent(
             name="channel_voice",
             description="Discord channel-voice agent with sandboxed execution capabilities.",
-            instruction=f"{self._base_system_prompt}\n\n{TOOL_AVAILABILITY_PREAMBLE}",
+            instruction=self._compose_instruction(system_prompt=system_prompt),
             tools=[run_in_sandbox],
             model=_build_model(self._config.agent_model),
             generate_content_config=_build_generate_content_config(),
@@ -282,7 +311,9 @@ class ChannelVoiceAgent:
             app_name=_APP_NAME, user_id=user_id, session_id=user_id,
         )
 
-        new_message = types.Content(role="user", parts=[types.Part(text=user_message)])
+        ctx = self._compose_context_block(memory_context=memory_context, history=history)
+        text = f"{ctx}\n\n{user_message}" if ctx else user_message
+        new_message = types.Content(role="user", parts=[types.Part(text=text)])
         message_text = ""
         try:
             async for event in runner.run_async(

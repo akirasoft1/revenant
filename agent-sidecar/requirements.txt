@@ -1,7 +1,7 @@
 google-adk[extensions]>=1.31.0
-grpcio>=1.66.2
-grpcio-tools>=1.66.2
-protobuf>=5.27.2
+grpcio>=1.80.0
+grpcio-tools>=1.80.0
+protobuf>=6.31.1
 # Cap below 2.0: mcp 2.0.0 dropped streamablehttp_client and mcp.shared.session
 # (breaking the dql_runner + observability paths). Last-good image ran 1.28.1.
 mcp>=1.13.0,<2.0.0

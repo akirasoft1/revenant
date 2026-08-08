@@ -23,6 +23,17 @@ EVAL_SET = [
     {"prompt": "how would I structure a Python package? just describe it", "expect": "direct", "manual": False},
     {"prompt": "what's your opinion on rust vs go for CLI tools?", "expect": "direct", "manual": False},
 
+    # --- document/authoring asks (should answer directly, no execution needed) ---
+    {"prompt": "based on our earlier discussion of the Friday no-work rule, draft section 2(a).",
+     "expect": "direct", "manual": True,
+     "context": {"system_prompt": "You are the channel's voice. Be casual and direct.",
+                 "memory_context": "## Memory Context\nThe crew discussed a 'no-work on Fridays' rule.",
+                 "history": [{"role": "user", "content": "we should codify the Friday no-work thing"}]}},
+    {"prompt": "craft a short doc from scratch summarizing our nmap tips.",
+     "expect": "direct", "manual": True, "context": {"system_prompt": "You are the channel's voice.", "memory_context": "", "history": []}},
+    {"prompt": "write up a quick onboarding note for new members.",
+     "expect": "direct", "manual": True, "context": {"system_prompt": "You are the channel's voice.", "memory_context": "", "history": []}},
+
     # --- genuinely needs the SANDBOX ---
     {"prompt": "nmap the top 100 ports on scanme.nmap.org and tell me what's open", "expect": "sandbox", "manual": True},
     {"prompt": "what HTTP response headers does https://example.com return?", "expect": "sandbox", "manual": True},

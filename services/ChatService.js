@@ -262,6 +262,113 @@ ${context}`;
   }
 
   /**
+   * Build the shared per-turn context (personality system prompt + recall
+   * memory block + recent-buffer history) consumed by BOTH the text agent
+   * sidecar and the voice Live sidecar, so the channel-voice brain replies
+   * consistently in-voice with memory across surfaces.
+   *
+   * The memory block is returned SEPARATELY from systemPrompt (not folded in)
+   * so callers can place it wherever their prompt/turn format expects it,
+   * instead of always at the tail of one big system string.
+   *
+   * @param {Object} params
+   * @param {string} params.userId - Discord user ID
+   * @param {string} [params.userTag] - Discord user tag/display name
+   * @param {string} params.channelId - Discord channel ID
+   * @param {string|null} [params.guildId] - Discord guild ID (reserved for future scoping; unused today)
+   * @param {string} params.userMessage - Current user message (drives recall query + voice few-shot)
+   * @param {string} [params.personalityId] - Personality to resolve (defaults to channel-voice)
+   * @returns {Promise<{systemPrompt: string, memoryBlock: string, historyTurns: Array<{role: 'user'|'assistant', content: string}>}>}
+   */
+  async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice' }) {
+    void guildId; // reserved for future per-guild scoping; not used yet
+    const personality = personalityManager.get(personalityId);
+    const user = { id: userId, tag: userTag, username: userTag || userId };
+
+    const { memoryContext = '', channelContext = '', sharedContext = '', voiceContext = null } =
+      await this._composeRecallContexts(channelId, userMessage, user, personalityId, personality);
+
+    // systemPrompt WITHOUT the memory block: memory travels separately as memoryBlock.
+    const systemPrompt = this._buildGroupSystemPrompt(personality, '', channelContext, sharedContext, voiceContext);
+
+    // History MUST carry both sides of the conversation (user turns AND the
+    // bot's own prior replies mapped to 'assistant') so the model has real
+    // continuity across surfaces. ChannelContextService.getRecentMessagesRaw
+    // is NOT a valid source for this: it reads the in-memory per-channel
+    // buffer, which is only ever populated from bot.js's `messageCreate`
+    // handler — and that handler unconditionally does
+    // `if (message.author.bot) return;` before recording anything, so the
+    // bot's own replies never make it into that buffer at all (not merely
+    // filtered on read). Source from MongoService's `channel_messages`
+    // collection instead — the same store /tldr (CatchMeUpService) reads,
+    // and the one durable place bot replies ARE recorded with `isBot: true`
+    // (see VoiceService._persistTurn and bot.js's sandbox-executionIds path).
+    // getRecentChannelMessages(channelId, limit) already returns the most
+    // recent `limit` docs sorted oldest->newest, matching the contract.
+    let historyTurns = [];
+    try {
+      const docs = this.mongoService?.getRecentChannelMessages
+        ? await this.mongoService.getRecentChannelMessages(
+            channelId,
+            this.config?.channelContext?.promptRecentCount || 10
+          )
+        : [];
+      historyTurns = (docs || [])
+        .filter((m) => m && m.content)
+        .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
+    } catch (error) {
+      logger.debug(`buildTurnContext: history lookup failed, degrading to []: ${error.message}`);
+      historyTurns = [];
+    }
+
+    // bot.js persists the incoming user message to channel_messages
+    // fire-and-forget BEFORE calling chat(), so by the time we read history
+    // here the current turn is usually already present as the last doc —
+    // and would otherwise be forwarded twice (once via historyTurns with raw
+    // `<@id>` mention markup, once via the separate stripped userMessage).
+    // Drop it defensively; no-op if the write hasn't landed yet (the race's
+    // other branch) since there's simply nothing to match.
+    historyTurns = this._dropDuplicatedCurrentTurn(historyTurns, userMessage);
+
+    return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
+  }
+
+  /**
+   * Drop a trailing `role:'user'` history turn whose content is the current
+   * userMessage, so the current turn isn't forwarded twice (once via history,
+   * once as the separate current-turn field). Normalizes Discord mention
+   * markup and whitespace before comparing, then requires an EXACT match
+   * (no endsWith/prefix fallback: getRecentChannelMessages stores raw
+   * content with no `[username]: ` prefix today, so exact match already
+   * covers the real duplicate case; a fuzzy suffix match would risk
+   * false-positive-dropping a genuinely different prior turn that merely
+   * ends with the current short message, e.g. prior "let me know if
+   * that's ok" + current "ok"). Only ever removes the LAST turn, only when
+   * it's a user turn, and only when it matches — earlier turns are never
+   * touched. No-op when userMessage is empty (e.g. the voice path, which
+   * doesn't have a separate current-turn field to dedupe against).
+   * @param {Array<{role: 'user'|'assistant', content: string}>} historyTurns
+   * @param {string} userMessage
+   * @returns {Array<{role: 'user'|'assistant', content: string}>}
+   * @private
+   */
+  _dropDuplicatedCurrentTurn(historyTurns, userMessage) {
+    if (!userMessage || historyTurns.length === 0) return historyTurns;
+
+    const normalize = (s) => String(s || '').replace(/<@!?\d+>/g, '').trim();
+    const normalizedUserMessage = normalize(userMessage);
+    if (!normalizedUserMessage) return historyTurns;
+
+    const lastTurn = historyTurns[historyTurns.length - 1];
+    if (lastTurn.role !== 'user') return historyTurns;
+
+    const normalizedLastTurn = normalize(lastTurn.content);
+    if (normalizedLastTurn !== normalizedUserMessage) return historyTurns;
+
+    return historyTurns.slice(0, -1);
+  }
+
+  /**
    * Write an A/B comparison of the legacy vs v2 recall blocks to MongoDB.
    * Best-effort: callers should not await this in the hot path.
    * @private
@@ -538,6 +645,14 @@ ${context}`;
       && process.env.AGENT_ENABLED !== 'false'
     ) {
       try {
+        const turnCtx = await this.buildTurnContext({
+          userId: user.id,
+          userTag: user.tag || user.username || '',
+          channelId: channelId || '',
+          guildId: guildId || '',
+          userMessage,
+          personalityId,
+        }).catch(() => ({ systemPrompt: '', memoryBlock: '', historyTurns: [] }));
         const agentResp = await this.agentClient.chat({
           userId: user.id,
           userTag: user.tag || user.username || '',
@@ -546,6 +661,9 @@ ${context}`;
           interactionId: user.interactionId || '',
           userMessage,
           imageUrl: imageUrl || '',
+          systemPrompt: turnCtx.systemPrompt,
+          memoryContext: turnCtx.memoryBlock,
+          history: turnCtx.historyTurns,
         });
         const cvPersonality = personalityManager.get('channel-voice') || {
           id: 'channel-voice',

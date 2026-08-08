@@ -73,7 +73,9 @@ async def test_chat_returns_message_text_and_summary():
         assert list(resp.summary.execution_ids) == ["exec-1", "exec-2"]
         assert resp.summary.any_failed is False
         assert resp.fallback_occurred is False
-        fake_agent.process_chat.assert_awaited_once_with(user_id="u", user_message="hi")
+        fake_agent.process_chat.assert_awaited_once_with(
+            user_id="u", user_message="hi", system_prompt="", memory_context="", history=[],
+        )
     finally:
         await server.stop(grace=0)
 

@@ -136,6 +136,8 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 
 ### Agentic Sandbox (channel-voice + run_in_sandbox)
 - **ADK Agent Sidecar**: Channel-voice chats route through a Python sidecar that wraps a `google-adk` Agent. The agent has one tool (`run_in_sandbox`) for autonomous code execution.
+- **Unified Chat Context**: Both text and voice paths feed the same `system_prompt` (dynamic channel-voice with live profile), `memory_context` (ranked recall), and `history` (recent turns) to the sidecar via a shared `ChatService.buildTurnContext` builder. Sandbox executor does not receive memory/history — context goes to the model turn only.
+- **Execution-First Gating**: Sandbox is used only when execution is genuinely required — correct answers to most direct asks come instantly without spawning pods. `TOOL_AVAILABILITY_PREAMBLE` guides the model to invoke `run_in_sandbox` for real network/recon, computing over data it can't derive, or observing real runtime behavior; answering directly is preferred.
 - **Ephemeral Kata Pods**: Each `run_in_sandbox` call spawns a fresh K8s Job under the `kata-qemu` RuntimeClass — every sandbox pod gets its own tiny QEMU/KVM guest with 2 vCPU, 2 Gi RAM, 256 Mi tmpfs, 300 s wall-clock. The host kernel never executes the workload's syscalls.
 - **Multi-language**: Sandbox base image ships python, node, dotnet, go, rust, ollama plus common build/network tools.
 - **Egress Policy**: Public internet open; RFC1918, link-local, CGNAT, cluster pod/service CIDRs and the K8s API are denied at the NetworkPolicy layer. Optional Calico flow-log scraping records denied egress events on each trace.
@@ -150,9 +152,9 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Dedicated Sidecar**: A separate Python gRPC sidecar (`discord-article-bot-voice`, distinct from the agent sandbox sidecar) hosts the Live session per active voice channel — `RollingUpdate` and horizontally scalable, since it holds long-lived real-time audio streams (unlike the agent sidecar's single-replica `Recreate`)
 - **Wake Word Gate**: openWakeWord (keyless, offline ONNX models via `onnxruntime-node`) detects the wake phrase locally before any audio is sent to the Live model, keeping ambient conversation private and cutting bandwidth/cost. Four pretrained phrases available: hey jarvis, alexa, hey mycroft, hey rhasspy
 - **Turn Rhythm**: wake → reply → brief "hot" follow-up window (no wake word needed) → idle, with a configurable hard session-length cap as a cost guard
-- **Reuses the Channel Voice Personality**: The learned channel-voice system prompt is passed into the Live session, so spoken replies match the same learned communication style as text chat
+- **Unified Chat Context & In-Voice Memory**: The channel-voice system prompt (dynamic, with live profile substituted) is passed into the Live session, so spoken replies match the same learned communication style as text chat. Ranked recall context (Mem0 + channel semantic + facts) and recent conversation history are available to voice turns via the same shared `ChatService.buildTurnContext` builder used for text; in-voice replies are memory-aware just like text responses.
 - **Barge-in / Interruption**: Configurable barge-in support so the bot's own playback can be interrupted by the user speaking
-- **Memory In, Transcripts Out**: Recall context is available to voice turns; every voice exchange lands in the MongoDB message store as a transcript, feeding `/tldr` and recall just like text messages
+- **Memory In, Transcripts Out**: Recall context feeds into voice turns the same way it does text chat; every voice exchange lands in the MongoDB message store as a transcript, feeding `/tldr` and recall just like text messages
 - **Graceful Degradation**: `/voice` reports unavailable if the sidecar is unreachable or `VOICE_ENABLED=false`; no restart needed to flip
 - **Deferred**: idle auto-leave, per-speaker transcript attribution, and dynamic (non-static) voice-profile injection are tracked as follow-ups, not yet implemented
 

@@ -9,6 +9,11 @@ service Agent {
   rpc RunDql(RunDqlRequest) returns (RunDqlResponse);
 }
 
+message Turn {
+  string role    = 1;  // "user" | "assistant"
+  string content = 2;
+}
+
 message ChatRequest {
   string user_id        = 1;
   string user_tag       = 2;
@@ -17,6 +22,9 @@ message ChatRequest {
   string interaction_id = 5;
   string user_message   = 6;
   string image_url      = 7;
+  string system_prompt  = 8;
+  string memory_context = 9;
+  repeated Turn history = 10;
 }
 
 message ChatResponse {

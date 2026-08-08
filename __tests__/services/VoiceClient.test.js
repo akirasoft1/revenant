@@ -74,7 +74,27 @@ describe('VoiceClient', () => {
         system_prompt: '',
         recall_context: 'past',
         voice_name: 'Kore',
+        history: [],
       },
+    });
+    c.close();
+  });
+
+  test('sendStart forwards history turns', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.sendStart({
+      userId: 'u', systemPrompt: 'SP', recallContext: 'MEM',
+      history: [{ role: 'user', content: 'a' }], voiceName: 'Puck',
+    });
+
+    expect(fakeCall.write).toHaveBeenCalledWith({
+      session_start: expect.objectContaining({
+        system_prompt: 'SP', recall_context: 'MEM', history: [{ role: 'user', content: 'a' }],
+      }),
     });
     c.close();
   });

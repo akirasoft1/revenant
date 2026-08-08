@@ -21,7 +21,7 @@ class _FakeAgent:
     def __init__(self, n):
         self._n = n
 
-    async def process_chat(self, *, user_id, user_message):
+    async def process_chat(self, *, user_id, user_message, system_prompt='', memory_context='', history=None):
         return AgentChatResult(
             message_text="ok",
             execution_ids=[f"e{i}" for i in range(self._n)],
