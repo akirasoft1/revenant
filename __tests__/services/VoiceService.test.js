@@ -24,7 +24,7 @@ function makeDeps(overrides = {}) {
   };
 }
 
-function makeService(deps, configOverrides = {}) {
+function makeService(deps, configOverrides = {}, contextBuilder) {
   const voiceClient = {
     converse: jest.fn(() => {
       const s = new EventEmitter();
@@ -38,8 +38,9 @@ function makeService(deps, configOverrides = {}) {
   const config = { voice: { enabled: true, wakeWord: 'hey jarvis', liveVoice: 'Puck',
     followupWindowMs: 1000, idleTimeoutMs: 60000, maxSessions: 2, maxSessionSeconds: 600,
     ...configOverrides } };
-  return { svc: new VoiceService({ voiceClient, recallService, mongoService, config, deps }),
-           voiceClient, recallService, mongoService };
+  const builder = contextBuilder || jest.fn().mockResolvedValue({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
+  return { svc: new VoiceService({ voiceClient, recallService, mongoService, config, deps, contextBuilder: builder }),
+           voiceClient, recallService, mongoService, contextBuilder: builder };
 }
 
 test('isEnabled reflects config', () => {
@@ -66,17 +67,32 @@ test('leave destroys the connection and cleans up the tick timer', async () => {
   expect(deps.clearInterval).toHaveBeenCalledWith(1);
 });
 
-test('on wake, fetches recall and opens a converse session with seeded context', async () => {
+test('on wake, builds context via the shared builder and opens a converse session with seeded context', async () => {
   const gate = { push: jest.fn(() => true), reset: jest.fn() }; // fire immediately
   const deps = makeDeps({ makeWakeGate: () => gate });
-  const { svc, voiceClient, recallService } = makeService(deps);
+  const contextBuilder = jest.fn().mockResolvedValue({ systemPrompt: 'STATIC', memoryBlock: 'past context', historyTurns: [] });
+  const { svc, voiceClient } = makeService(deps, {}, contextBuilder);
   await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
   // Simulate a user speaking: the receiver subscribe stream emits decoded PCM via the decoder.
   await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
-  expect(recallService.recall).toHaveBeenCalled();
+  expect(contextBuilder).toHaveBeenCalled();
   expect(voiceClient.converse).toHaveBeenCalled();
   const session = voiceClient.converse.mock.results[0].value;
   expect(session.sendStart).toHaveBeenCalledWith(expect.objectContaining({ recallContext: 'past context' }));
+});
+
+test('voice start uses the shared context builder', async () => {
+  const contextBuilder = jest.fn().mockResolvedValue({
+    systemPrompt: 'DYN', memoryBlock: 'MEM', historyTurns: [{ role: 'user', content: 'a' }] });
+  const gate = { push: jest.fn(() => true), reset: jest.fn() }; // fires wake immediately
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps, {}, contextBuilder);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+  const session = voiceClient.converse.mock.results[0].value;
+  expect(contextBuilder).toHaveBeenCalled();
+  expect(session.sendStart).toHaveBeenCalledWith(expect.objectContaining({
+    systemPrompt: 'DYN', recallContext: 'MEM', history: [{ role: 'user', content: 'a' }] }));
 });
 
 test('output transcript is persisted to the message store on turnComplete', async () => {

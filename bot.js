@@ -205,6 +205,17 @@ class DiscordBot {
       condenser: null, // llm-condense disabled by default
     });
 
+    // ChatService - all dependencies injected via constructor. Constructed
+    // here (before VoiceService) so VoiceService can be given a
+    // `contextBuilder` bound to `chatService.buildTurnContext`, giving voice
+    // sessions the same dynamic channel-voice prompt + memory + history as
+    // text chat.
+    this.chatService = new ChatService(
+      this.openaiClient, config, this.mongoService, this.mem0Service,
+      this.channelContextService, this.voiceProfileService, this.qdrantService,
+      this.agentClient, this.recallService
+    );
+
     // VoiceClient/VoiceService - live Discord voice channel presence via the
     // Python voice sidecar. Native deps (opus/sodium/onnxruntime-node)
     // are lazily required here so the rest of the bot works even if they
@@ -258,6 +269,7 @@ class DiscordBot {
           recallService: this.recallService,
           mongoService: this.mongoService,
           config,
+          contextBuilder: (args) => this.chatService.buildTurnContext(args),
           deps: {
             joinVoiceChannel: dv.joinVoiceChannel,
             createAudioPlayer: dv.createAudioPlayer,
@@ -283,13 +295,6 @@ class DiscordBot {
     } else {
       logger.info('Voice (live voice channel) is disabled');
     }
-
-    // ChatService - all dependencies injected via constructor
-    this.chatService = new ChatService(
-      this.openaiClient, config, this.mongoService, this.mem0Service,
-      this.channelContextService, this.voiceProfileService, this.qdrantService,
-      this.agentClient, this.recallService
-    );
 
     // Initialize Imagen (image generation) service
     this.imagenService = null;
