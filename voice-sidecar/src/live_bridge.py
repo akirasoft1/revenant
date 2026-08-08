@@ -46,7 +46,16 @@ class LiveBridge:
 
         try:
             async with self._session_factory(self._model, self._live_config(start)) as session:
-                # 2. Seed recall + system context as prior (non-final) turn.
+                # 2. Seed conversation history, then recall + system context, as
+                # prior (non-final) turns.
+                for turn in start.history:
+                    if turn.content:
+                        await session.send_client_content(
+                            turns=types.Content(
+                                role=("model" if turn.role == "assistant" else "user"),
+                                parts=[types.Part(text=turn.content)]),
+                            turn_complete=False,
+                        )
                 if start.recall_context:
                     await session.send_client_content(
                         turns=types.Content(role="user",

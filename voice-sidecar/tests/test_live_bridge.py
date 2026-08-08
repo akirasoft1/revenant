@@ -78,6 +78,17 @@ async def test_seeds_recall_and_forwards_audio_and_transcripts():
     assert audio_out.audio.pcm == b"\x01\x02"
 
 
+async def test_seeds_history_turns_then_recall():
+    session = FakeSession([_msg(turn_complete=True)])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(
+        user_id="u", system_prompt="SP", recall_context="MEM",
+        history=[voice_pb2.Turn(role="user", content="hey"), voice_pb2.Turn(role="assistant", content="hi")]))
+    await _drive(bridge, [start], session)
+    seeded_texts = [t.parts[0].text for (t, _tc) in session.seeded]
+    assert "hey" in seeded_texts and "hi" in seeded_texts and "MEM" in seeded_texts
+
+
 async def test_maps_interrupted():
     session = FakeSession([_msg(interrupted=True)])
     bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
