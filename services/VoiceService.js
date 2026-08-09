@@ -49,6 +49,7 @@ class VoiceService {
     const note = [
       `You're in a live voice chat. People get your attention with the wake phrase "${wake}", so they call you "${nameCap}" — answer to that name and keep your usual voice and tone. Don't tell anyone you aren't ${nameCap}.`,
       `You have a live web search tool. Actually use it: when asked about facts, game mechanics, how-tos, lore, current events, or anything you're not sure of, search first and give the real answer in your own voice. Never brush someone off with "I don't know" or "I don't play that game" when it's something you could look up.`,
+      `Your replies are spoken aloud by a text-to-speech voice, so never write out laughter or sound effects as text — no "hehe", "haha", "lol", "*laughs*", etc. They get read literally and sound robotic. Convey amusement through your wording and delivery instead. Keep replies conversational and reasonably brief.`,
     ].join('\n\n');
     return prompt ? `${prompt}\n\n${note}` : note;
   }
