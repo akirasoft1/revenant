@@ -115,6 +115,17 @@ async def test_seeds_history_turns_then_recall():
     assert "hey" in seeded_texts and "hi" in seeded_texts and "MEM" in seeded_texts
 
 
+def test_live_config_enables_google_search():
+    # Grounding: the Live session must advertise the google_search tool so the
+    # model can answer with current web knowledge, not just training data.
+    bridge = LiveBridge(_factory(None), model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u")
+    cfg = bridge._live_config(start)
+    assert cfg.tools, "expected at least one tool configured"
+    assert any(getattr(t, "google_search", None) is not None for t in cfg.tools), \
+        "expected the google_search grounding tool"
+
+
 async def test_maps_interrupted():
     session = FakeSession([_msg(interrupted=True)])
     bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")

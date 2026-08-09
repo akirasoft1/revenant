@@ -79,6 +79,12 @@ class LiveBridge:
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
                 )
             ),
+            # Google Search grounding: lets the model answer with current, real
+            # web knowledge (e.g. game specifics) instead of only its training
+            # data. Grounding is handled SERVER-SIDE for the built-in search tool
+            # -- no client-side tool-response plumbing needed (that caveat is only
+            # for function_declarations). gemini-live-2.5-flash supports Search.
+            tools=[types.Tool(google_search=types.GoogleSearch())],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(

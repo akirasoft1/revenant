@@ -111,8 +111,10 @@ test('voice start uses the shared context builder', async () => {
   await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
   const session = voiceClient.converse.mock.results[0].value;
   expect(contextBuilder).toHaveBeenCalled();
-  expect(session.sendStart).toHaveBeenCalledWith(expect.objectContaining({
-    systemPrompt: 'DYN', recallContext: 'MEM', history: [{ role: 'user', content: 'a' }] }));
+  const sent = session.sendStart.mock.calls[0][0];
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('DYN'));      // dynamic persona preserved
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('Jarvis'));   // voice-persona note appended (wake "hey jarvis")
+  expect(sent).toEqual(expect.objectContaining({ recallContext: 'MEM', history: [{ role: 'user', content: 'a' }] }));
 });
 
 test('output transcript is persisted to the message store on turnComplete', async () => {

@@ -30,6 +30,17 @@ class VoiceService {
 
   wakeWord() { return (this._config.voice && this._config.voice.wakeWord) || 'hey jarvis'; }
 
+  // Derive the address-name from the wake phrase ("hey jarvis" -> "Jarvis") and
+  // append a voice-only note so the model answers to that name and stays in
+  // character instead of correcting people ("I'm not Jarvis").
+  _appendVoicePersona(prompt) {
+    const wake = this.wakeWord();
+    const name = (wake || '').replace(/^\s*(hey|ok|okay|hi|yo|hello)\s+/i, '').trim() || wake;
+    const nameCap = name ? name.charAt(0).toUpperCase() + name.slice(1) : 'the assistant';
+    const note = `In voice chat, people get your attention with the wake phrase "${wake}", so they address you as "${nameCap}". Answer to that name naturally and stay in character — never tell anyone you aren't ${nameCap} or break character.`;
+    return prompt ? `${prompt}\n\n${note}` : note;
+  }
+
   async join({ channel, guildId }) {
     // Idempotent join: if we're already connected in this guild, do NOT create a
     // second connection or re-wire the receiver. discord.js reuses the existing
@@ -233,6 +244,10 @@ class VoiceService {
       recallContext = ctx.memoryBlock || '';
       history = ctx.historyTurns || [];
     } catch (e) { logger.warn(`voice: context build failed: ${e.message}`); }
+
+    // Voice-only persona note: people summon the bot by its wake phrase, so they
+    // address it by that name. Without this the model replies "I'm not Jarvis".
+    systemPrompt = this._appendVoicePersona(systemPrompt);
 
     const session = this._client.converse();
     g.session = session;
