@@ -46,6 +46,7 @@ class WakeWordGate {
   // at all. Guarded so fake engines in tests without these methods return null.
   lastError() { return typeof this._engine.lastError === 'function' ? this._engine.lastError() : null; }
   lastScore() { return typeof this._engine.lastScore === 'function' ? this._engine.lastScore() : null; }
+  frameStats() { return typeof this._engine.frameStats === 'function' ? this._engine.frameStats() : null; }
 }
 
 // --- openWakeWord ONNX engine -------------------------------------------------
@@ -195,6 +196,8 @@ function createOpenWakeWordEngine({
   let embHistory = [];         // Float32Array(EMBEDDING_DIM) per embedding
   let detected = false;
   let maxScore = 0;            // highest wake score since the last reset() (diagnostic)
+  let inferScheduled = 0;      // frames actually run through the ONNX chain (diagnostic)
+  let inferDroppedBusy = 0;    // frames skipped because an inference was in flight (diagnostic)
   let lastError = null;
   let closed = false;
   let generation = 0;          // bumped on reset(); ties results to a period
@@ -263,7 +266,8 @@ function createOpenWakeWordEngine({
   }
 
   function schedule(int16Frame) {
-    if (inFlight) return; // single in-flight: drop this frame, one is running
+    if (inFlight) { inferDroppedBusy += 1; return; } // single in-flight: drop this frame, one is running
+    inferScheduled += 1;
     // Copy: the gate hands out a subarray view into a buffer it reuses.
     const copy = new Int16Array(int16Frame.length);
     copy.set(int16Frame);
@@ -292,6 +296,8 @@ function createOpenWakeWordEngine({
       generation += 1;
       detected = false;
       maxScore = 0;
+      inferScheduled = 0;
+      inferDroppedBusy = 0;
       melBuffer = [];
       embHistory = [];
       for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
@@ -302,6 +308,10 @@ function createOpenWakeWordEngine({
     whenIdle() { return Promise.resolve(inFlight); },
     lastError() { return lastError; },
     lastScore() { return maxScore; },
+    // Diagnostic: how many frames actually ran the ONNX chain vs. were skipped
+    // because an inference was still in flight. Heavy skipping starves the
+    // rolling wake window and tanks scores.
+    frameStats() { return { scheduled: inferScheduled, droppedBusy: inferDroppedBusy }; },
     close() { closed = true; },
   };
 }

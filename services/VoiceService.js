@@ -105,6 +105,9 @@ class VoiceService {
       // good ones so wake-word detection still runs.
       let decoded = 0;
       let dropped = 0;
+      let peak = 0;       // max |sample| seen (int16 scale, 32767 = full) -- wake-debug
+      let sumAbs = 0;     // running sum of |sample| over strided probe
+      let probes = 0;
       logger.debug(`voice: speaking start from user ${userId} in guild ${guildId}`);
       stream.on('data', (opusPacket) => {
         let pcm48;
@@ -115,6 +118,14 @@ class VoiceService {
           return;
         }
         decoded += 1;
+        // Cheap strided amplitude probe (every 32nd 16-bit sample): is the mic
+        // audio actually loud speech, or near-silence? A flat-zero wake score on
+        // decoded audio is usually too-quiet input (or Discord noise suppression).
+        for (let off = 0; off + 1 < pcm48.length; off += 64) {
+          const s = Math.abs(pcm48.readInt16LE(off));
+          if (s > peak) peak = s;
+          sumAbs += s; probes += 1;
+        }
         this._handleUserPcm(guildId, userId, pcm48).catch((e) => logger.warn(`voice: pcm handling failed: ${e.message}`));
       });
       let ended = false;
@@ -128,7 +139,9 @@ class VoiceService {
         // "wake engine erroring", and "audio fine but below threshold".
         const wakeErr = state.gate && typeof state.gate.lastError === 'function' ? state.gate.lastError() : null;
         const wakeScore = state.gate && typeof state.gate.lastScore === 'function' ? state.gate.lastScore() : null;
-        logger.debug(`voice: utterance end (${reason}) user ${userId} guild ${guildId}: decoded ${decoded} frame(s), dropped ${dropped}, wake maxScore ${wakeScore}${wakeErr ? `, wake-engine error: ${wakeErr.message}` : ''}`);
+        const fs = state.gate && typeof state.gate.frameStats === 'function' ? state.gate.frameStats() : null;
+        const meanAbs = probes ? Math.round(sumAbs / probes) : 0;
+        logger.debug(`voice: utterance end (${reason}) user ${userId} guild ${guildId}: decoded ${decoded} frame(s), dropped ${dropped}, peak ${peak}/32767, meanAbs ${meanAbs}, wake maxScore ${wakeScore}${fs ? `, engine scheduled ${fs.scheduled}/droppedBusy ${fs.droppedBusy}` : ''}${wakeErr ? `, wake-engine error: ${wakeErr.message}` : ''}`);
       };
       stream.once('end', () => onEnd('end'));
       stream.once('error', (e) => { logger.warn(`voice: receive stream error from user ${userId} in guild ${guildId}: ${e.message}`); onEnd('error'); });
