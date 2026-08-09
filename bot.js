@@ -279,6 +279,7 @@ class DiscordBot {
             createAudioResource: dv.createAudioResource,
             StreamType: dv.StreamType,
             EndBehaviorType: dv.EndBehaviorType,
+            VoiceConnectionStatus: dv.VoiceConnectionStatus,
             opusDecoderFactory: () => new OpusEncoder(48000, 2),
             makeWakeGate: () => new WakeWordGate(createOpenWakeWordEngine({
               wakeModelPath: config.voice.wakeModel,

@@ -48,9 +48,14 @@ class VoiceService {
       throw new Error('voice session limit reached');
     }
     const d = this._deps;
+    // DAVE (Discord's MLS end-to-end voice encryption) defaults ON in
+    // @discordjs/voice; set it explicitly so the choice is intentional. Decrypt
+    // happens transparently before we see packets -- but if it ever fails,
+    // packets are dropped UPSTREAM (silent gaps, not decode errors), which would
+    // show up as a low "decoded N frames" count in the utterance diagnostics.
     const connection = d.joinVoiceChannel({
       channelId: channel.id, guildId, adapterCreator: channel.guild.voiceAdapterCreator,
-      selfDeaf: false, selfMute: false });
+      selfDeaf: false, selfMute: false, daveEncryption: true });
     const player = d.createAudioPlayer();
     connection.subscribe(player);
 
@@ -65,6 +70,16 @@ class VoiceService {
     }
     if (typeof player.on === 'function') {
       player.on('error', (e) => logger.warn(`voice: player error in guild ${guildId}: ${e && e.message ? e.message : e}`));
+    }
+    // Observability for DAVE E2EE: log its state once the connection is Ready so
+    // a silent-drop DAVE failure is diagnosable (see daveEncryption note above).
+    if (d.VoiceConnectionStatus && typeof connection.on === 'function') {
+      connection.on(d.VoiceConnectionStatus.Ready, () => {
+        let privacy;
+        try { privacy = connection.state && connection.state.networking && connection.state.networking.state
+          && connection.state.networking.state.dave && connection.state.networking.state.dave.voicePrivacyCode; } catch (_) { /* internal */ }
+        logger.info(`voice: connection ready in guild ${guildId}; DAVE E2EE on${privacy ? `, privacy code ${privacy}` : ''}`);
+      });
     }
     const machine = new VoiceSessionMachine({
       followupWindowMs: this._config.voice.followupWindowMs, now: d.now });

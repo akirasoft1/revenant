@@ -11,14 +11,38 @@ from . import voice_pb2
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
-# A clean websocket close (code 1000) is how a Gemini Live session normally ends
-# when we cancel it -- it is NOT an error. Import defensively: websockets is a
-# transitive dep of google-genai, but keep the bridge importable without it.
+# A clean websocket close (code 1000/1001) is how a Gemini Live session normally
+# ends when we cancel it -- it is NOT an error. The google-genai SDK may surface
+# it EITHER as a raw websockets ConnectionClosedOK OR wrapped in its own APIError
+# carrying the ws close code, depending on which layer raised it. Detect both so
+# a normal end never logs an error or emits a spurious ErrorEvent to the bot.
+# Import defensively: both are transitive deps of google-genai, but keep the
+# bridge importable without them.
 try:  # pragma: no cover - import shape depends on the installed websockets
     from websockets.exceptions import ConnectionClosedOK
-    _NORMAL_CLOSE = (ConnectionClosedOK,)
+    _WS_NORMAL_CLOSE = (ConnectionClosedOK,)
 except Exception:  # pragma: no cover
-    _NORMAL_CLOSE = ()
+    _WS_NORMAL_CLOSE = ()
+try:  # pragma: no cover
+    from google.genai import errors as _genai_errors
+    _API_ERROR = (_genai_errors.APIError,)
+except Exception:  # pragma: no cover
+    _API_ERROR = ()
+
+
+def _is_normal_close(exc) -> bool:
+    """True if `exc` is a clean session close (ws code 1000/1001), whether raw
+    from websockets or wrapped by the genai SDK, so we don't treat it as an error."""
+    if _WS_NORMAL_CLOSE and isinstance(exc, _WS_NORMAL_CLOSE):
+        return True
+    if _API_ERROR and isinstance(exc, _API_ERROR):
+        code = getattr(exc, "code", None)
+        if code in (1000, 1001):
+            return True
+        msg = str(exc)
+        if "1000" in msg or "1001" in msg:
+            return True
+    return False
 
 
 class _SessionStats:
@@ -134,15 +158,16 @@ class LiveBridge:
         except asyncio.CancelledError:
             outcome = "cancelled"
             raise
-        except _NORMAL_CLOSE as e:  # normal websocket close (code 1000) on session end
-            outcome = "closed"
-            logger.info("voice: session closed normally (%s)", type(e).__name__)
         except Exception as e:  # noqa: BLE001
-            outcome = "error"
-            span.record_exception(e)
-            logger.exception("voice: live bridge error")
-            await emit(voice_pb2.VoiceServerEvent(
-                error=voice_pb2.ErrorEvent(message=str(e))))
+            if _is_normal_close(e):
+                outcome = "closed"
+                logger.info("voice: session closed normally (%s)", type(e).__name__)
+            else:
+                outcome = "error"
+                span.record_exception(e)
+                logger.exception("voice: live bridge error")
+                await emit(voice_pb2.VoiceServerEvent(
+                    error=voice_pb2.ErrorEvent(message=str(e))))
         finally:
             dur = time.monotonic() - started_at
             span.set_attribute("voice.outcome", outcome)

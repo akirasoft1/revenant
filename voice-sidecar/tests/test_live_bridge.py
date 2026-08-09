@@ -3,6 +3,9 @@ import contextlib
 import logging
 from types import SimpleNamespace
 
+from google.genai import errors as genai_errors
+from websockets.exceptions import ConnectionClosedOK
+
 from src import voice_pb2
 from src.live_bridge import LiveBridge
 
@@ -199,6 +202,40 @@ async def test_pump_exception_emits_error_event():
     errors = [e for e in out if e.WhichOneof("event") == "error"]
     assert errors, "expected an ErrorEvent when a pump raises"
     assert "boom" in errors[0].error.message
+
+
+class WsCloseSession(FakeSession):
+    """receive() raises a raw websockets normal-close (code 1000)."""
+    async def receive(self):
+        raise ConnectionClosedOK(None, None)
+        yield  # pragma: no cover - keeps this an async generator
+
+
+class ApiCloseSession(FakeSession):
+    """receive() raises the genai SDK's APIError wrapping a ws 1000 close."""
+    async def receive(self):
+        raise genai_errors.APIError(1000, {"message": "received 1000 (OK)"})
+        yield  # pragma: no cover
+
+
+async def test_normal_ws_close_emits_no_error_event():
+    # A clean session close (raw ConnectionClosedOK) is expected -- it must NOT
+    # surface to the bot as an ErrorEvent (which would trigger a premature
+    # endSession + error notice).
+    session = WsCloseSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+    out = await _drive(bridge, [start], session)
+    assert not any(e.WhichOneof("event") == "error" for e in out)
+
+
+async def test_api_error_normal_close_emits_no_error_event():
+    # The SDK may wrap a normal close as APIError(code=1000); still not an error.
+    session = ApiCloseSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+    out = await _drive(bridge, [start], session)
+    assert not any(e.WhichOneof("event") == "error" for e in out)
 
 
 class MultiTurnClosingSession:
