@@ -507,3 +507,39 @@ test('a second /voice join for the same guild is idempotent -- no second connect
 
   expect(joinVoiceChannel).toHaveBeenCalledTimes(1);
 });
+
+test('pre-roll: audio buffered before the wake is flushed into the session on open', async () => {
+  // fire the wake on the 3rd pushed frame
+  let n = 0;
+  const gate = { push: jest.fn(() => (++n === 3)), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // pre-roll frame 1
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // pre-roll frame 2
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // frame 3 -> wake -> open + flush
+  await new Promise((r) => setImmediate(r));
+  const session = voiceClient.converse.mock.results[0].value;
+  // all three pre-roll frames (including the wake frame) are flushed to the session
+  expect(session.sendAudio).toHaveBeenCalledTimes(3);
+});
+
+test('listen() opens a session immediately with no wake word', async () => {
+  const deps = makeDeps();
+  const { svc, voiceClient } = makeService(deps);
+  const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
+  expect(engaged).toBe(true);
+  expect(voiceClient.converse).toHaveBeenCalled();        // session opened without any gate/wake
+  const session = voiceClient.converse.mock.results[0].value;
+  expect(session.sendStart).toHaveBeenCalled();
+});
+
+test('listen() when already active is a no-op (returns false)', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024)); // wake -> active
+  const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
+  expect(engaged).toBe(false);
+});

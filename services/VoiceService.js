@@ -14,6 +14,12 @@ const VoiceSessionMachine = require('./voice/VoiceSessionMachine');
 const { downsampleTo16kMono, upsample24kMonoTo48kStereo } = require('./voice/audio');
 const { Readable, PassThrough } = require('stream');
 
+// Rolling pre-roll depth while idle: ~3s of ~20ms frames. Captures the wake
+// phrase (and any words spoken with it) so they can be flushed into the session
+// once it opens -- otherwise the first-turn question is lost in the wake->session
+// startup gap.
+const MAX_PREROLL_FRAMES = 150;
+
 class VoiceService {
   constructor({ voiceClient, mongoService, config, deps, contextBuilder }) {
     this._client = voiceClient;
@@ -111,7 +117,8 @@ class VoiceService {
     // `leave()`/`_endSession()` already guard for a still-null gate.
     const state = { connection, player, gate: null, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
-      sessionOpenedAtMs: null, receiving: new Set(), playback: null };
+      sessionOpenedAtMs: null, receiving: new Set(), playback: null,
+      preroll: [], pending: null };
     this._guilds.set(guildId, state);
 
     state.gate = d.makeWakeGate();
@@ -183,21 +190,52 @@ class VoiceService {
     logger.info(`voice: joined channel ${channel.id} in guild ${guildId}`);
   }
 
+  // Admin override (/voice listen): join if needed, then open a session
+  // immediately with NO wake word and keep it open (continuous listen) until
+  // /voice leave or the max-session cap. Returns true if listen mode engaged.
+  async listen({ channel, guildId, userId }) {
+    if (!this._guilds.has(guildId)) {
+      await this.join({ channel, guildId });
+    }
+    const g = this._guilds.get(guildId);
+    if (!g) return false;
+    const actions = g.machine.forceListen();
+    if (!actions.length) {
+      logger.info(`voice: listen requested but a session is already active in guild ${guildId}`);
+      return false;
+    }
+    await this._apply(guildId, actions, { userId });
+    logger.info(`voice: listen mode engaged in guild ${guildId} (user ${userId}) — no wake word required`);
+    return true;
+  }
+
   async _handleUserPcm(guildId, userId, pcm48Stereo) {
     const g = this._guilds.get(guildId);
     if (!g) return;
     const pcm16 = downsampleTo16kMono(pcm48Stereo);
 
     if (g.machine.state === 'idle') {
+      // Keep a short rolling pre-roll so the words spoken WITH the wake phrase
+      // aren't lost while the session opens.
+      g.preroll.push(pcm16);
+      if (g.preroll.length > MAX_PREROLL_FRAMES) g.preroll.shift();
       if (g.gate.push(pcm16)) {
         logger.info(`voice: wake word detected in guild ${guildId} (user ${userId})`);
+        g.pending = g.preroll.slice(); // carry the wake-phrase audio into the session
+        g.preroll = [];
         await this._apply(guildId, g.machine.onWake(), { userId });
       }
       return;
     }
     // active/hot: barge-in signal + stream audio to the live session.
     await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
-    if (g.session) g.session.sendAudio(pcm16);
+    if (g.session) {
+      g.session.sendAudio(pcm16);
+    } else {
+      // Session still opening (post-wake startup): buffer so nothing is lost;
+      // _startSession flushes g.pending (pre-roll + these) once the session is up.
+      (g.pending || (g.pending = [])).push(pcm16);
+    }
   }
 
   async _apply(guildId, actions, ctx = {}) {
@@ -231,6 +269,7 @@ class VoiceService {
         followupWindowMs: this._config.voice.followupWindowMs, now: this._deps.now });
       g.session = null;
       g.sessionOpenedAtMs = null;
+      g.pending = null; // drop the captured pre-roll; no session to receive it
       // Discard any in-flight wake-word detection state from the tail of
       // this same utterance so it can't immediately re-fire onWake once the
       // sidecar recovers (mirrors the reset in _endSession).
@@ -292,6 +331,15 @@ class VoiceService {
 
     session.sendStart({ userId, channelId: g.channelId, guildId,
       systemPrompt, recallContext, history, voiceName: this._config.voice.liveVoice });
+
+    // Flush the pre-roll (wake-phrase audio) plus anything buffered while the
+    // session was opening, so a first-turn question spoken with the wake phrase
+    // reaches the model. gRPC/the sidecar buffer these until the Live session is
+    // ready, so ordering (pre-roll first, then live) is preserved.
+    if (g.pending && g.pending.length) {
+      for (const f of g.pending) session.sendAudio(f);
+    }
+    g.pending = null;
   }
 
   _play(g, pcm24Mono) {
@@ -367,6 +415,9 @@ class VoiceService {
     // Tear down any in-progress playback so a half-streamed reply doesn't linger
     // into the next session.
     this._stopPlayback(g);
+    // Reset audio buffers so the next idle/listen period starts clean.
+    g.pending = null;
+    g.preroll = [];
     if (g.session) {
       const session = g.session;
       // Belt-and-suspenders with the identity guards in _startSession:

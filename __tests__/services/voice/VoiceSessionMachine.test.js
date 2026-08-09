@@ -61,3 +61,43 @@ test('error resets to idle and notifies', () => {
     .toEqual([{ type: 'endSession' }, { type: 'notifyError' }]);
   expect(m.state).toBe('idle');
 });
+
+// --- continuous listen (/voice listen admin override) ---
+
+test('forceListen from idle starts a session in continuous mode', () => {
+  const now = { t: 0 };
+  const m = mk(now);
+  expect(m.forceListen()).toEqual([{ type: 'startSession' }]);
+  expect(m.state).toBe('active');
+});
+
+test('forceListen while already active is a no-op', () => {
+  const now = { t: 0 };
+  const m = mk(now); m.forceListen();
+  expect(m.forceListen()).toEqual([]);
+});
+
+test('continuous listen: turnComplete goes hot with NO teardown timer and never idles out', () => {
+  const now = { t: 500 };
+  const m = mk(now); m.forceListen();
+  expect(m.onServerEvent({ type: 'turnComplete' })).toEqual([]); // no armFollowup
+  expect(m.state).toBe('hot');
+  expect(m.onTick(999999)).toEqual([]);   // however far time advances, no endSession
+  expect(m.state).toBe('hot');
+});
+
+test('continuous listen: a follow-up needs no wake word and stays continuous', () => {
+  const now = { t: 0 };
+  const m = mk(now); m.forceListen(); m.onServerEvent({ type: 'turnComplete' });
+  expect(m.onUserSpeechStart()).toEqual([{ type: 'cancelFollowup' }]);
+  expect(m.state).toBe('active');
+  expect(m.onServerEvent({ type: 'turnComplete' })).toEqual([]); // still no teardown
+  expect(m.onTick(999999)).toEqual([]);
+});
+
+test('continuous listen: an error still tears down (and clears continuous)', () => {
+  const now = { t: 0 };
+  const m = mk(now); m.forceListen();
+  expect(m.onServerEvent({ type: 'error' })).toEqual([{ type: 'endSession' }, { type: 'notifyError' }]);
+  expect(m.state).toBe('idle');
+});
