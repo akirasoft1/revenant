@@ -74,25 +74,31 @@ class WakeWordGate {
 // onnxruntime-node's `session.run` is async, but the WakeWordGate contract calls
 // `engine.process()` synchronously and expects a number back. Bridge design:
 //
-//   * Single in-flight, drop-when-busy. At most ONE inference runs at a time.
-//     If `process()` is called while one is in flight, the frame is skipped
-//     (no queue, no retained-Int16Array backlog) -- the models infer in
-//     ~5-15 ms, far under the 80 ms frame interval, so this virtually never
-//     drops in practice, and openWakeWord's rolling window tolerates the rare
-//     skipped frame.
+//   * Sequential frame QUEUE, contiguity-preserving. openWakeWord's rolling
+//     mel/embedding window REQUIRES contiguous frames -- dropping frames
+//     destroys the temporal structure of the wake phrase. `process()` enqueues
+//     the frame; a single drainer consumes the queue strictly in order, one
+//     inference at a time, as fast as the CPU allows. (The earlier design ran
+//     one inference and DROPPED any frame arriving while it was in flight; but
+//     the gate delivers frames in synchronous bursts and inference can exceed
+//     the 80 ms frame interval on constrained CPU, so ~70% of frames were
+//     dropped and real wakes -- verified at ~0.99 offline -- scored ~0 live.)
+//   * Bounded queue: on overflow (default 256 frames ~= 20 s) the OLDEST frame
+//     is dropped, so a long monologue can't grow it without limit. The wake
+//     phrase is spoken first, so it is processed long before overflow.
 //   * Generation token ties a result to the CURRENT listening period. Each
-//     scheduled inference captures `gen = generation`; on resolve it only sets
-//     `detected = true` if `gen === generation` (and score >= threshold).
-//   * `reset()` bumps `generation`, clears `detected`, and drops the mel/embed
-//     buffers -- so any in-flight inference no-ops on resolve and no stale
-//     detection can carry into the next period. WakeWordGate.reset() propagates
-//     to it (and VoiceService._endSession already calls gate.reset()).
+//     dequeued frame captures `gen = generation`; runChain only mutates buffers
+//     / sets `detected` while `gen === generation`.
+//   * `reset()` bumps `generation`, clears `detected`, empties the queue, and
+//     drops the mel/embed buffers -- so any in-flight inference no-ops and no
+//     stale detection carries into the next period. WakeWordGate.reset()
+//     propagates to it (and VoiceService._endSession already calls gate.reset()).
 //
 // `process()` stays synchronous and returns `0`/`-1` reflecting the latest
-// resolved, current-generation decision -- a sub-frame (<80 ms) lag that is
-// invisible for continuous wake-word gating. `whenIdle()`/`ready()` expose the
-// in-flight promise for deterministic testing; they are not part of the gate
-// contract.
+// resolved, current-generation decision -- a small lag (bounded by queue depth)
+// that is invisible for wake-word gating. `whenIdle()`/`ready()` expose the
+// drain completion / load promise for deterministic testing; they are not part
+// of the gate contract.
 
 const FRAME_LENGTH = 1280;   // audio samples per step (80 ms @ 16 kHz)
 const MELS_PER_FRAME = 5;    // mel frames the mel model emits per 1280 samples
@@ -196,12 +202,15 @@ function createOpenWakeWordEngine({
   let embHistory = [];         // Float32Array(EMBEDDING_DIM) per embedding
   let detected = false;
   let maxScore = 0;            // highest wake score since the last reset() (diagnostic)
-  let inferScheduled = 0;      // frames actually run through the ONNX chain (diagnostic)
-  let inferDroppedBusy = 0;    // frames skipped because an inference was in flight (diagnostic)
+  let inferScheduled = 0;      // frames enqueued for the ONNX chain (diagnostic)
+  let inferDroppedBusy = 0;    // frames dropped on queue overflow (diagnostic; ~0 normally)
   let lastError = null;
   let closed = false;
   let generation = 0;          // bumped on reset(); ties results to a period
-  let inFlight = null;         // the single pending inference promise, or null
+  const MAX_QUEUE = 256;       // ~20 s of 80 ms frames; bound memory under overload
+  let queue = [];              // pending Int16Array frames, processed strictly in order
+  let draining = false;        // true while the drainer loop is consuming the queue
+  let drainDone = Promise.resolve(); // resolves when the current drain finishes (for whenIdle)
 
   const readyPromise = (async () => {
     // Shared, module-level cache: reuses sessions across engines (joins) that
@@ -265,17 +274,35 @@ function createOpenWakeWordEngine({
     }
   }
 
+  // Consume the queue strictly in order, one inference at a time. Started
+  // (idempotently) by schedule(); exits when the queue drains or the engine
+  // closes. `drainDone` lets whenIdle() await completion for deterministic tests.
+  function drain() {
+    if (draining) return;
+    draining = true;
+    let resolveDone;
+    drainDone = new Promise((r) => { resolveDone = r; });
+    (async () => {
+      try { await readyPromise; } catch (_) { /* lastError already recorded */ }
+      while (queue.length && !closed) {
+        const frame = queue.shift();
+        const gen = generation;
+        try { await runChain(frame, gen); }
+        catch (e) { lastError = e; }
+      }
+      draining = false;
+      resolveDone();
+    })();
+  }
+
   function schedule(int16Frame) {
-    if (inFlight) { inferDroppedBusy += 1; return; } // single in-flight: drop this frame, one is running
     inferScheduled += 1;
     // Copy: the gate hands out a subarray view into a buffer it reuses.
     const copy = new Int16Array(int16Frame.length);
     copy.set(int16Frame);
-    const gen = generation;
-    inFlight = readyPromise
-      .then(() => runChain(copy, gen))
-      .catch((e) => { lastError = e; })
-      .finally(() => { inFlight = null; });
+    queue.push(copy);
+    if (queue.length > MAX_QUEUE) { queue.shift(); inferDroppedBusy += 1; } // drop OLDEST
+    drain();
   }
 
   return {
@@ -289,15 +316,17 @@ function createOpenWakeWordEngine({
       return fired ? 0 : -1;
     },
 
-    // Invalidate the current listening period: any in-flight inference no-ops on
-    // resolve (generation check), the detection flag is cleared, and the mel/
-    // embedding buffers are dropped so the next period starts clean.
+    // Invalidate the current listening period: the pending queue is emptied, any
+    // in-flight inference no-ops on resolve (generation check), the detection
+    // flag is cleared, and the mel/embedding buffers are dropped so the next
+    // period starts clean.
     reset() {
       generation += 1;
       detected = false;
       maxScore = 0;
       inferScheduled = 0;
       inferDroppedBusy = 0;
+      queue = [];
       melBuffer = [];
       embHistory = [];
       for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
@@ -305,12 +334,12 @@ function createOpenWakeWordEngine({
 
     // --- non-contract helpers (testing / lifecycle) ---
     ready() { return readyPromise; },
-    whenIdle() { return Promise.resolve(inFlight); },
+    whenIdle() { return drainDone; },
     lastError() { return lastError; },
     lastScore() { return maxScore; },
-    // Diagnostic: how many frames actually ran the ONNX chain vs. were skipped
-    // because an inference was still in flight. Heavy skipping starves the
-    // rolling wake window and tanks scores.
+    // Diagnostic: frames enqueued (scheduled) vs. dropped on queue overflow.
+    // droppedBusy should be ~0; a non-zero value means inference can't keep up
+    // with sustained audio and the oldest frames are being shed.
     frameStats() { return { scheduled: inferScheduled, droppedBusy: inferDroppedBusy }; },
     close() { closed = true; },
   };

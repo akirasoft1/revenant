@@ -46,3 +46,7 @@ docs/for-leaders-04-an-assistant-that-remembers.html
 *_key.json
 agent-sidecar/genai-sa-key.json
 todos_08162026.txt
+
+# Local wake-word test asset (personal voice recording)
+Recording.m4a
+*.m4a
