@@ -20,6 +20,19 @@ const { Readable, PassThrough } = require('stream');
 // startup gap.
 const MAX_PREROLL_FRAMES = 150;
 
+// Fallback silence threshold (mean |sample|, int16 scale) when config doesn't
+// provide one. Frames below this are ambient/near-silence and are not streamed
+// to the Live model (see the active-branch gate in _handleUserPcm).
+const DEFAULT_STREAM_SILENCE_MEANABS = 50;
+
+// Cheap strided mean-|sample| of an s16le PCM buffer.
+function frameMeanAbs(buf) {
+  let sum = 0;
+  let n = 0;
+  for (let off = 0; off + 1 < buf.length; off += 64) { sum += Math.abs(buf.readInt16LE(off)); n += 1; }
+  return n ? sum / n : 0;
+}
+
 class VoiceService {
   constructor({ voiceClient, mongoService, config, deps, contextBuilder }) {
     this._client = voiceClient;
@@ -228,6 +241,15 @@ class VoiceService {
       }
       return;
     }
+    // Energy gate: don't forward near-silent (ambient/breathing) frames to the
+    // Live model. Discord marks faint background noise as "speaking", and
+    // streaming that trickle kept Gemini's VAD from ever seeing a clean pause,
+    // so it held a single turn open for 45s+ (and the session never idled).
+    // Dropping it lets real pauses read as silence so turns finalize normally
+    // and avoids false barge-ins. Real speech is meanAbs ~2000+; ambient ~0-20.
+    const silenceThreshold = (this._config.voice && this._config.voice.streamSilenceMeanAbs) || DEFAULT_STREAM_SILENCE_MEANABS;
+    if (frameMeanAbs(pcm16) < silenceThreshold) return;
+
     // active/hot: barge-in signal + stream audio to the live session.
     await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
     if (g.session) {

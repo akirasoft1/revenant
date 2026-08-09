@@ -543,3 +543,26 @@ test('listen() when already active is a no-op (returns false)', async () => {
   const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
   expect(engaged).toBe(false);
 });
+
+function loudPcm(bytes = 48 * 4) {
+  const b = Buffer.alloc(bytes);
+  for (let i = 0; i + 1 < bytes; i += 2) b.writeInt16LE(20000, i);
+  return b;
+}
+
+test('near-silent frames are NOT streamed to the session; loud speech is (VAD turn-finalization fix)', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', loudPcm()); // wake (idle) -> active, session opens
+  const session = voiceClient.converse.mock.results[0].value;
+  await new Promise((r) => setImmediate(r));
+  session.sendAudio.mockClear();
+
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // silence/ambient -> gated
+  expect(session.sendAudio).not.toHaveBeenCalled();
+
+  await svc._handleUserPcm('g1', 'u1', loudPcm()); // real speech -> streamed
+  expect(session.sendAudio).toHaveBeenCalledTimes(1);
+});

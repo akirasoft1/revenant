@@ -53,6 +53,12 @@ module.exports = {
     idleTimeoutMs: parseInt(process.env.VOICE_IDLE_TIMEOUT_MS || '120000', 10),
     maxSessions: parseInt(process.env.VOICE_MAX_SESSIONS || '2', 10),
     maxSessionSeconds: parseInt(process.env.VOICE_MAX_SESSION_SECONDS || '600', 10),
+    // Below this per-frame mean |sample| (int16 scale), audio is treated as
+    // silence/ambient and NOT streamed to the Live model. Real speech is
+    // meanAbs ~2000+; background noise ~0-20. Streaming ambient kept Gemini's
+    // VAD from ever finalizing a turn (turns held open 45s+). Conservative
+    // default; raise if soft speech gets clipped, lower if noise leaks through.
+    streamSilenceMeanAbs: parseInt(process.env.VOICE_STREAM_SILENCE_MEANABS || '50', 10),
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
   },
   discord: {
