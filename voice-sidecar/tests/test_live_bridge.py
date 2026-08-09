@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from types import SimpleNamespace
 
 from src import voice_pb2
@@ -76,6 +77,28 @@ async def test_seeds_recall_and_forwards_audio_and_transcripts():
     assert "audio" in kinds and "turn_complete" in kinds
     audio_out = next(e for e in out if e.WhichOneof("event") == "audio")
     assert audio_out.audio.pcm == b"\x01\x02"
+
+
+async def test_logs_session_lifecycle_and_counts(caplog):
+    # Observability: a session must log START (with model/voice), the transcripts
+    # it heard/spoke, and an END summary with audio counters -- so the sidecar is
+    # not a black box during debugging.
+    session = FakeSession([
+        _msg(in_tx="what is a hornet"),
+        _msg(data=b"\x01\x02\x03\x04", out_tx="a light fighter"),
+        _msg(turn_complete=True),
+    ])
+    bridge = LiveBridge(_factory(session), model="m-test", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(
+        user_id="u1", voice_name="Kore"))
+    audio = voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\xaa\xbb"))
+    with caplog.at_level(logging.INFO):
+        await _drive(bridge, [start, audio], session)
+    text = caplog.text
+    assert "session START" in text and "m-test" in text and "Kore" in text
+    assert "user said: what is a hornet" in text
+    assert "model said: a light fighter" in text
+    assert "session END" in text and "audio_in=1" in text and "audio_out=1" in text
 
 
 async def test_seeds_history_turns_then_recall():

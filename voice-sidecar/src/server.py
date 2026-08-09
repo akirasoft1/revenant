@@ -71,7 +71,10 @@ def _build_bridge(config):
 
 
 def serve() -> None:
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     config = load_config()
     setup_tracing(config)
     bridge = _build_bridge(config)
