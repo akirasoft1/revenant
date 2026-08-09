@@ -30,14 +30,20 @@ class VoiceService {
 
   wakeWord() { return (this._config.voice && this._config.voice.wakeWord) || 'hey jarvis'; }
 
-  // Derive the address-name from the wake phrase ("hey jarvis" -> "Jarvis") and
-  // append a voice-only note so the model answers to that name and stays in
-  // character instead of correcting people ("I'm not Jarvis").
+  // Voice-only note appended to the system prompt: (1) own the wake-phrase name
+  // ("hey jarvis" -> "Jarvis") so it doesn't reply "I'm not Jarvis", and (2)
+  // mandate PROACTIVE web-search use so it looks things up instead of deflecting
+  // with "I don't know" / "I don't play that game" (the model has the
+  // google_search tool but, left to the persona + seeded history, won't use it
+  // unless explicitly told to -- observed live: it only searched when asked to).
   _appendVoicePersona(prompt) {
     const wake = this.wakeWord();
     const name = (wake || '').replace(/^\s*(hey|ok|okay|hi|yo|hello)\s+/i, '').trim() || wake;
     const nameCap = name ? name.charAt(0).toUpperCase() + name.slice(1) : 'the assistant';
-    const note = `In voice chat, people get your attention with the wake phrase "${wake}", so they address you as "${nameCap}". Answer to that name naturally and stay in character — never tell anyone you aren't ${nameCap} or break character.`;
+    const note = [
+      `You're in a live voice chat. People get your attention with the wake phrase "${wake}", so they call you "${nameCap}" — answer to that name and keep your usual voice and tone. Don't tell anyone you aren't ${nameCap}.`,
+      `You have a live web search tool. Actually use it: when asked about facts, game mechanics, how-tos, lore, current events, or anything you're not sure of, search first and give the real answer in your own voice. Never brush someone off with "I don't know" or "I don't play that game" when it's something you could look up.`,
+    ].join('\n\n');
     return prompt ? `${prompt}\n\n${note}` : note;
   }
 

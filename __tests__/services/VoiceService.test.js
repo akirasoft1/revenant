@@ -112,8 +112,9 @@ test('voice start uses the shared context builder', async () => {
   const session = voiceClient.converse.mock.results[0].value;
   expect(contextBuilder).toHaveBeenCalled();
   const sent = session.sendStart.mock.calls[0][0];
-  expect(sent.systemPrompt).toEqual(expect.stringContaining('DYN'));      // dynamic persona preserved
-  expect(sent.systemPrompt).toEqual(expect.stringContaining('Jarvis'));   // voice-persona note appended (wake "hey jarvis")
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('DYN'));       // dynamic persona preserved
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('Jarvis'));    // voice-persona note appended (wake "hey jarvis")
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('web search')); // proactive-search directive appended
   expect(sent).toEqual(expect.objectContaining({ recallContext: 'MEM', history: [{ role: 'user', content: 'a' }] }));
 });
 
