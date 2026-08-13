@@ -550,7 +550,29 @@ function loudPcm(bytes = 48 * 4) {
   return b;
 }
 
-test('all frames stream (no gate), and audio_stream_end fires once after a silence debounce', async () => {
+test('half-duplex: no user audio is streamed while the bot is playing its reply', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', loudPcm()); // wake -> active, session opens
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+  await new Promise((r) => setImmediate(r));
+  session.sendAudio.mockClear();
+
+  // Bot is speaking -> even loud user speech is NOT forwarded (no echo/loop, no barge-in).
+  player.state = { status: 'playing' };
+  await svc._handleUserPcm('g1', 'u1', loudPcm());
+  expect(session.sendAudio).not.toHaveBeenCalled();
+
+  // Bot finishes -> input flows again.
+  player.state = { status: 'idle' };
+  await svc._handleUserPcm('g1', 'u1', loudPcm());
+  expect(session.sendAudio).toHaveBeenCalledTimes(1);
+});
+
+test('real speech streams (ambient gated) and audio_stream_end fires once after a silence debounce', async () => {
   let t = 0;
   const gate = { push: jest.fn(() => true), reset: jest.fn() };
   const deps = makeDeps({ makeWakeGate: () => gate, now: () => t });
@@ -561,11 +583,12 @@ test('all frames stream (no gate), and audio_stream_end fires once after a silen
   await new Promise((r) => setImmediate(r));
   session.sendAudio.mockClear();
 
-  // Real speech (t=0) sets lastSpeechAt; a near-silent frame is ALSO streamed now.
+  // Real speech (t=0) streams + sets lastSpeechAt; ambient/near-silence is gated
+  // (not forwarded) so it can't false-barge-in or hold the turn open.
   t = 0;
   await svc._handleUserPcm('g1', 'u1', loudPcm());
-  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4));
-  expect(session.sendAudio).toHaveBeenCalledTimes(2); // nothing gated
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // ambient -> dropped
+  expect(session.sendAudio).toHaveBeenCalledTimes(1);
 
   // Before the window elapses, no end signal.
   t = 700; svc._tick('g1');

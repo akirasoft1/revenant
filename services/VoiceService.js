@@ -245,16 +245,28 @@ class VoiceService {
       }
       return;
     }
-    // active/hot: stream ALL frames (incl. trailing silence) so Gemini's VAD
-    // sees the speech->silence transition — an earlier "gate" that dropped
-    // near-silent frames starved that transition and the model never responded.
-    // Instead, note the last REAL-speech frame so _tick can send a debounced
-    // audio_stream_end after a pause, which finalizes the turn crisply even when
-    // ambient noise keeps streaming (the real cause of turns held open 45s+).
-    if (frameMeanAbs(pcm16) >= REAL_SPEECH_MEANABS) {
-      g.lastSpeechAt = this._deps.now();
-      g.audioEndSent = false;
-    }
+    // Half-duplex: while the bot is playing its OWN reply, don't feed the mic
+    // back to the model. Without echo cancellation, a speakers->mic loop feeds
+    // the bot's voice back as "user input" and it answers itself on a loop
+    // (observed: it re-read a whole weather forecast in response to an unrelated
+    // question). Trade-off: no barge-in while it's speaking -- use headphones
+    // for full-duplex. player.state.status stays 'playing'/'buffering' through
+    // the whole reply incl. drain, so this covers the tail too.
+    const playing = g.player && g.player.state && g.player.state.status;
+    if (playing === 'playing' || playing === 'buffering') return;
+
+    // active/hot: only forward REAL speech to the Live model; drop ambient/
+    // near-silence. This prevents (1) FALSE barge-ins -- with
+    // START_OF_ACTIVITY_INTERRUPTS, Gemini would otherwise hear breathing/room
+    // noise while the bot is talking and cut its own reply off ("Premature
+    // close" on the playback stream) -- and (2) ambient holding a turn open.
+    // Turn FINALIZATION no longer needs trailing silence: _tick sends an
+    // explicit audio_stream_end after the user goes quiet (that was the missing
+    // piece the first time we tried gating). Real speech is meanAbs ~200+;
+    // ambient ~0-20.
+    if (frameMeanAbs(pcm16) < REAL_SPEECH_MEANABS) return;
+    g.lastSpeechAt = this._deps.now();
+    g.audioEndSent = false;
     await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
     if (g.session) {
       g.session.sendAudio(pcm16);
@@ -382,7 +394,12 @@ class VoiceService {
       const stream = new PassThrough({ highWaterMark: 1 << 22 });
       // A raw-PCM stream that only ever ends between turns must not surface an
       // unhandled 'error' if the player tears it down mid-write.
-      stream.on('error', (e) => logger.warn(`voice: playback stream error: ${e.message}`));
+      stream.on('error', (e) => {
+        // ERR_STREAM_PREMATURE_CLOSE is expected when we intentionally destroy
+        // the playback stream on a barge-in / session end — don't cry wolf.
+        if (e && e.code === 'ERR_STREAM_PREMATURE_CLOSE') return;
+        logger.warn(`voice: playback stream error: ${e.message}`);
+      });
       const resource = d.createAudioResource(stream, { inputType: d.StreamType.Raw });
       g.playback = { stream };
       g.player.play(resource);
