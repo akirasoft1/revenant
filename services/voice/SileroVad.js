@@ -129,9 +129,12 @@ class VoiceActivityGate {
       else if (this._speaking && this._runSilence >= this._minSilence) { this._speaking = false; ended = true; }
     }
     // Copy (not a view): `buf` may be `pcm16Buf` itself, a Node Buffer slice of
-    // a shared pool that the caller can mutate/reuse after push() returns —
-    // same aliasing hazard WakeWordGate.push() guards against with `.slice()`.
-    this._carry = buf.subarray(off).slice(); // keep the sub-window remainder for next push
+    // a shared pool that the caller can mutate/reuse after push() returns.
+    // NOTE: unlike TypedArray#slice() (used by WakeWordGate.push() on its
+    // Int16Array _buf), Buffer.prototype.slice() is legacy-overridden to
+    // return a VIEW into the same memory, identical to subarray() — it does
+    // NOT copy. Use Buffer.from() instead, which does.
+    this._carry = Buffer.from(buf.subarray(off)); // keep the sub-window remainder for next push
     return { speaking: this._speaking, justStarted: started, justEnded: ended };
   }
 
