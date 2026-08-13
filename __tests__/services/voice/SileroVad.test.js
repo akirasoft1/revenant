@@ -1,5 +1,5 @@
 'use strict';
-const { createSileroVadEngine } = require('../../../services/voice/SileroVad');
+const { createSileroVadEngine, VoiceActivityGate } = require('../../../services/voice/SileroVad');
 
 // Fake backend: an InferenceSession stand-in whose run() returns a scripted
 // probability and echoes a mutated state so we can assert state is carried.
@@ -36,4 +36,33 @@ test('engine returns the model probability and carries state between frames', as
   engine.process(new Int16Array(512));
   await engine.whenIdle();
   expect(backend._session._lastStateIn.some((v) => v !== 0)).toBe(true);
+});
+
+// Fake engine: returns the next scripted prob on each process() call.
+function scriptedEngine(probs) {
+  let i = 0;
+  return {
+    _consumed: 0,
+    process() { this._consumed += 1; return probs[Math.min(i++, probs.length - 1)]; },
+    whenIdle: async () => {}, ready: async () => {}, reset() { i = 0; }, lastProb: () => 0,
+  };
+}
+
+test('gate opens after minSpeechFrames and closes after minSilenceFrames', () => {
+  // 512 samples = 1024 bytes per window. Feed 6 windows worth in one buffer.
+  const eng = scriptedEngine([0.9, 0.9, 0.1, 0.1, 0.1, 0.1]);
+  const gate = new VoiceActivityGate(eng, { threshold: 0.5, minSpeechFrames: 2, minSilenceFrames: 3 });
+  const buf = Buffer.alloc(512 * 2 * 6); // 6 windows of silence bytes; probs come from the fake
+  const r = gate.push(buf);
+  expect(eng._consumed).toBe(6);            // rebuffered into 6 windows
+  expect(r.speaking).toBe(false);           // 2 speech then 4 silence -> opened then closed
+  // opened on window 2, closed after 3 silence windows (5), so justEnded seen within this push
+});
+
+test('gate emits justStarted exactly on the opening transition', () => {
+  const eng = scriptedEngine([0.9, 0.9]);
+  const gate = new VoiceActivityGate(eng, { threshold: 0.5, minSpeechFrames: 2, minSilenceFrames: 3 });
+  const r = gate.push(Buffer.alloc(512 * 2 * 2));
+  expect(r.speaking).toBe(true);
+  expect(r.justStarted).toBe(true);
 });

@@ -96,4 +96,47 @@ function createSileroVadEngine({ modelPath, sessionFactory } = {}) {
   };
 }
 
-module.exports = { createSileroVadEngine, preloadSileroVad, WINDOW };
+class VoiceActivityGate {
+  constructor(engine, { threshold = 0.5, minSpeechFrames = 2, minSilenceFrames = 24 } = {}) {
+    this._engine = engine;
+    this._threshold = threshold;
+    this._minSpeech = minSpeechFrames;
+    this._minSilence = minSilenceFrames;
+    this._speaking = false;
+    this._runSpeech = 0;   // consecutive speech windows
+    this._runSilence = 0;  // consecutive silence windows
+    this._carry = Buffer.alloc(0); // leftover < one window
+    this._windows = 0;
+  }
+
+  push(pcm16Buf) {
+    let started = false, ended = false;
+    let buf = this._carry.length ? Buffer.concat([this._carry, pcm16Buf]) : pcm16Buf;
+    const bytesPerWindow = WINDOW * 2;
+    let off = 0;
+    for (; off + bytesPerWindow <= buf.length; off += bytesPerWindow) {
+      const frame = new Int16Array(WINDOW);
+      for (let i = 0; i < WINDOW; i++) frame[i] = buf.readInt16LE(off + i * 2);
+      const prob = this._engine.process(frame);
+      this._windows += 1;
+      const speechy = prob >= this._threshold;
+      if (speechy) { this._runSpeech += 1; this._runSilence = 0; }
+      else { this._runSilence += 1; this._runSpeech = 0; }
+      if (!this._speaking && this._runSpeech >= this._minSpeech) { this._speaking = true; started = true; }
+      else if (this._speaking && this._runSilence >= this._minSilence) { this._speaking = false; ended = true; }
+    }
+    this._carry = buf.subarray(off); // keep the sub-window remainder for next push
+    return { speaking: this._speaking, justStarted: started, justEnded: ended };
+  }
+
+  speaking() { return this._speaking; }
+  lastProb() { return typeof this._engine.lastProb === 'function' ? this._engine.lastProb() : null; }
+  frameStats() { return { windows: this._windows }; }
+  reset() {
+    this._speaking = false; this._runSpeech = 0; this._runSilence = 0;
+    this._carry = Buffer.alloc(0); this._windows = 0;
+    if (this._engine.reset) this._engine.reset();
+  }
+}
+
+module.exports = { createSileroVadEngine, preloadSileroVad, VoiceActivityGate, WINDOW };
