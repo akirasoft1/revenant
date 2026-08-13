@@ -572,6 +572,22 @@ test('half-duplex: no user audio is streamed while the bot is playing its reply'
   expect(session.sendAudio).toHaveBeenCalledTimes(1);
 });
 
+test('barge-in enabled (allowBargeIn): real speech IS streamed while the bot is playing', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps, { allowBargeIn: true });
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', loudPcm()); // wake -> active, session opens
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+  await new Promise((r) => setImmediate(r));
+  session.sendAudio.mockClear();
+
+  player.state = { status: 'playing' }; // bot speaking, but barge-in allowed
+  await svc._handleUserPcm('g1', 'u1', loudPcm());
+  expect(session.sendAudio).toHaveBeenCalledTimes(1); // real speech interrupts
+});
+
 test('real speech streams (ambient gated) and audio_stream_end fires once after a silence debounce', async () => {
   let t = 0;
   const gate = { push: jest.fn(() => true), reset: jest.fn() };

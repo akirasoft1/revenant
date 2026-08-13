@@ -245,15 +245,18 @@ class VoiceService {
       }
       return;
     }
-    // Half-duplex: while the bot is playing its OWN reply, don't feed the mic
-    // back to the model. Without echo cancellation, a speakers->mic loop feeds
-    // the bot's voice back as "user input" and it answers itself on a loop
-    // (observed: it re-read a whole weather forecast in response to an unrelated
-    // question). Trade-off: no barge-in while it's speaking -- use headphones
-    // for full-duplex. player.state.status stays 'playing'/'buffering' through
-    // the whole reply incl. drain, so this covers the tail too.
-    const playing = g.player && g.player.state && g.player.state.status;
-    if (playing === 'playing' || playing === 'buffering') return;
+    // Half-duplex (default): while the bot is playing its OWN reply, don't feed
+    // the mic back to the model. Without echo cancellation, a speakers->mic loop
+    // feeds the bot's voice back as "user input" and it answers itself on a loop.
+    // Trade-off: no barge-in while it's speaking. Set VOICE_ALLOW_BARGE_IN=true
+    // (headphones only) to permit barge-in -- real speech then interrupts the
+    // reply; the energy gate below still blocks ambient from false-triggering it.
+    // player.state.status stays 'playing'/'buffering' through the reply incl.
+    // drain, so this covers the tail too.
+    if (!(this._config.voice && this._config.voice.allowBargeIn)) {
+      const playing = g.player && g.player.state && g.player.state.status;
+      if (playing === 'playing' || playing === 'buffering') return;
+    }
 
     // active/hot: only forward REAL speech to the Live model; drop ambient/
     // near-silence. This prevents (1) FALSE barge-ins -- with

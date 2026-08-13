@@ -58,6 +58,11 @@ module.exports = {
     // replies but risks cutting off long thinking pauses; higher = more
     // forgiving. All audio is still streamed (this only times the end signal).
     speechEndSilenceMs: parseInt(process.env.VOICE_SPEECH_END_SILENCE_MS || '800', 10),
+    // Allow barge-in (interrupting the bot mid-reply). Default false = half-duplex
+    // (mic muted while the bot talks) which is echo-safe on speakers. Set true
+    // ONLY on headphones — real speech then interrupts the reply; the energy gate
+    // still blocks ambient noise from false-triggering it.
+    allowBargeIn: process.env.VOICE_ALLOW_BARGE_IN === 'true',
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
   },
   discord: {
