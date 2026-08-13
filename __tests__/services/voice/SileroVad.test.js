@@ -56,7 +56,8 @@ test('gate opens after minSpeechFrames and closes after minSilenceFrames', () =>
   const r = gate.push(buf);
   expect(eng._consumed).toBe(6);            // rebuffered into 6 windows
   expect(r.speaking).toBe(false);           // 2 speech then 4 silence -> opened then closed
-  // opened on window 2, closed after 3 silence windows (5), so justEnded seen within this push
+  // opened on window 2, closed after 3 silence windows (5), so justEnded fires within this push
+  expect(r.justEnded).toBe(true);
 });
 
 test('gate emits justStarted exactly on the opening transition', () => {
@@ -65,4 +66,22 @@ test('gate emits justStarted exactly on the opening transition', () => {
   const r = gate.push(Buffer.alloc(512 * 2 * 2));
   expect(r.speaking).toBe(true);
   expect(r.justStarted).toBe(true);
+});
+
+test('gate carries a partial window across two push() calls and processes every complete window exactly once', () => {
+  // 512 samples = 1024 bytes/window. Split 3 windows worth of audio across two
+  // push() calls at a MID-window boundary (1.5 windows each), forcing the
+  // _carry / Buffer.concat rebuffer path to bridge the two calls.
+  const eng = scriptedEngine([0.1, 0.1, 0.1]);
+  const gate = new VoiceActivityGate(eng, { threshold: 0.5, minSpeechFrames: 2, minSilenceFrames: 3 });
+
+  const firstPush = gate.push(Buffer.alloc(512 * 2 * 1.5)); // 1536 bytes: 1 full window + 512-byte remainder
+  expect(eng._consumed).toBe(1);            // only the one complete window is processed so far
+  expect(gate.frameStats().windows).toBe(1);
+  expect(firstPush.speaking).toBe(false);
+
+  const secondPush = gate.push(Buffer.alloc(512 * 2 * 1.5)); // carried 512 bytes + new 1536 = 2048 = 2 windows
+  expect(eng._consumed).toBe(3);            // carried remainder consumed + 2 more complete windows = 3 total
+  expect(gate.frameStats().windows).toBe(3);
+  expect(secondPush.speaking).toBe(false);
 });

@@ -81,7 +81,10 @@ function createSileroVadEngine({ modelPath, sessionFactory } = {}) {
     window: WINDOW,
     ready: () => readyP,
     process(int16Frame) {
-      queue.push({ frame: int16Frame, gen: generation });
+      // Copy: process() is a public API and a caller (e.g. the gate) may hand
+      // us a subarray view into a buffer it reuses across calls — same hazard
+      // documented in wakeword.js's schedule().
+      queue.push({ frame: Int16Array.from(int16Frame), gen: generation });
       drain();
       return lastProb;
     },
@@ -125,7 +128,10 @@ class VoiceActivityGate {
       if (!this._speaking && this._runSpeech >= this._minSpeech) { this._speaking = true; started = true; }
       else if (this._speaking && this._runSilence >= this._minSilence) { this._speaking = false; ended = true; }
     }
-    this._carry = buf.subarray(off); // keep the sub-window remainder for next push
+    // Copy (not a view): `buf` may be `pcm16Buf` itself, a Node Buffer slice of
+    // a shared pool that the caller can mutate/reuse after push() returns —
+    // same aliasing hazard WakeWordGate.push() guards against with `.slice()`.
+    this._carry = buf.subarray(off).slice(); // keep the sub-window remainder for next push
     return { speaking: this._speaking, justStarted: started, justEnded: ended };
   }
 
