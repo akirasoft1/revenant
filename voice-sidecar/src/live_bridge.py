@@ -203,6 +203,12 @@ class LiveBridge:
                 stats.audio_in_bytes += len(ev.audio.pcm)
                 await session.send_realtime_input(
                     audio=types.Blob(data=ev.audio.pcm, mime_type="audio/pcm;rate=16000"))
+            elif kind == "audio_stream_end":
+                # Debounced end-of-speech from the bot: tell the Live model the
+                # user paused so it finalizes the turn now, instead of ambient
+                # audio holding it open. Automatic VAD still applies.
+                await session.send_realtime_input(audio_stream_end=True)
+                logger.debug("voice: signaled audio_stream_end")
             elif kind == "session_end":
                 logger.info("voice: client requested session_end after %d audio chunk(s)",
                             stats.audio_in_chunks)

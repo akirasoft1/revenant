@@ -26,6 +26,7 @@ message SessionStart {
 }
 message AudioChunk { bytes pcm = 1; }
 message SessionEnd {}
+message AudioStreamEnd {}
 message Transcript { string text = 1; }
 message TurnComplete {}
 message Interrupted {}
@@ -33,9 +34,13 @@ message ErrorEvent { string message = 1; }
 
 message VoiceClientEvent {
   oneof event {
-    SessionStart session_start = 1;
-    AudioChunk   audio         = 2;
-    SessionEnd   session_end   = 3;
+    SessionStart   session_start    = 1;
+    AudioChunk     audio            = 2;
+    SessionEnd     session_end      = 3;
+    // Debounced end-of-speech: sent after the user has been silent for a bit so
+    // the Live model finalizes the turn promptly (instead of ambient noise
+    // holding it open).
+    AudioStreamEnd audio_stream_end = 4;
   }
 }
 message VoiceServerEvent {

@@ -29,7 +29,7 @@ function makeService(deps, configOverrides = {}, contextBuilder) {
   const voiceClient = {
     converse: jest.fn(() => {
       const s = new EventEmitter();
-      s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.end = jest.fn();
+      s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.sendAudioStreamEnd = jest.fn(); s.end = jest.fn();
       return s;
     }),
     isHealthy: jest.fn(() => true),
@@ -550,19 +550,34 @@ function loudPcm(bytes = 48 * 4) {
   return b;
 }
 
-test('near-silent frames are NOT streamed to the session; loud speech is (VAD turn-finalization fix)', async () => {
+test('all frames stream (no gate), and audio_stream_end fires once after a silence debounce', async () => {
+  let t = 0;
   const gate = { push: jest.fn(() => true), reset: jest.fn() };
-  const deps = makeDeps({ makeWakeGate: () => gate });
-  const { svc, voiceClient } = makeService(deps);
+  const deps = makeDeps({ makeWakeGate: () => gate, now: () => t });
+  const { svc, voiceClient } = makeService(deps, { speechEndSilenceMs: 800 });
   await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
-  await svc._handleUserPcm('g1', 'u1', loudPcm()); // wake (idle) -> active, session opens
+  await svc._handleUserPcm('g1', 'u1', loudPcm()); // wake -> active, session opens
   const session = voiceClient.converse.mock.results[0].value;
   await new Promise((r) => setImmediate(r));
   session.sendAudio.mockClear();
 
-  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // silence/ambient -> gated
-  expect(session.sendAudio).not.toHaveBeenCalled();
+  // Real speech (t=0) sets lastSpeechAt; a near-silent frame is ALSO streamed now.
+  t = 0;
+  await svc._handleUserPcm('g1', 'u1', loudPcm());
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4));
+  expect(session.sendAudio).toHaveBeenCalledTimes(2); // nothing gated
 
-  await svc._handleUserPcm('g1', 'u1', loudPcm()); // real speech -> streamed
-  expect(session.sendAudio).toHaveBeenCalledTimes(1);
+  // Before the window elapses, no end signal.
+  t = 700; svc._tick('g1');
+  expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
+
+  // After the window, exactly one end signal (idempotent until new speech).
+  t = 900; svc._tick('g1');
+  t = 1300; svc._tick('g1');
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+
+  // New real speech re-arms it; another silence window sends a second signal.
+  t = 1400; await svc._handleUserPcm('g1', 'u1', loudPcm());
+  t = 2300; svc._tick('g1');
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(2);
 });

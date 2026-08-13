@@ -112,6 +112,13 @@ class VoiceClient {
         },
       });
     session.sendAudio = (buf) => call.write({ audio: { pcm: buf } });
+    session.sendAudioStreamEnd = () => {
+      try {
+        call.write({ audio_stream_end: {} });
+      } catch (e) {
+        logger.debug(`VoiceClient sendAudioStreamEnd write threw: ${e.message}`);
+      }
+    };
     session.end = () => {
       try {
         call.write({ session_end: {} });

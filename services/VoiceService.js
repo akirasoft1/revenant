@@ -20,10 +20,14 @@ const { Readable, PassThrough } = require('stream');
 // startup gap.
 const MAX_PREROLL_FRAMES = 150;
 
-// Fallback silence threshold (mean |sample|, int16 scale) when config doesn't
-// provide one. Frames below this are ambient/near-silence and are not streamed
-// to the Live model (see the active-branch gate in _handleUserPcm).
-const DEFAULT_STREAM_SILENCE_MEANABS = 50;
+// A frame whose mean |sample| (int16 scale) is >= this counts as real speech
+// (vs. ambient ~0-20). Used to time the debounced end-of-speech signal — NOT to
+// drop audio (all frames are streamed so Gemini's VAD sees the trailing silence).
+const REAL_SPEECH_MEANABS = 50;
+
+// Fallback: how long after the last real-speech frame to send audio_stream_end
+// (finalize the turn) when config doesn't provide one.
+const DEFAULT_SPEECH_END_SILENCE_MS = 800;
 
 // Cheap strided mean-|sample| of an s16le PCM buffer.
 function frameMeanAbs(buf) {
@@ -132,7 +136,7 @@ class VoiceService {
     const state = { connection, player, gate: null, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
-      preroll: [], pending: null };
+      preroll: [], pending: null, lastSpeechAt: null, audioEndSent: false };
     this._guilds.set(guildId, state);
 
     state.gate = d.makeWakeGate();
@@ -241,16 +245,16 @@ class VoiceService {
       }
       return;
     }
-    // Energy gate: don't forward near-silent (ambient/breathing) frames to the
-    // Live model. Discord marks faint background noise as "speaking", and
-    // streaming that trickle kept Gemini's VAD from ever seeing a clean pause,
-    // so it held a single turn open for 45s+ (and the session never idled).
-    // Dropping it lets real pauses read as silence so turns finalize normally
-    // and avoids false barge-ins. Real speech is meanAbs ~2000+; ambient ~0-20.
-    const silenceThreshold = (this._config.voice && this._config.voice.streamSilenceMeanAbs) || DEFAULT_STREAM_SILENCE_MEANABS;
-    if (frameMeanAbs(pcm16) < silenceThreshold) return;
-
-    // active/hot: barge-in signal + stream audio to the live session.
+    // active/hot: stream ALL frames (incl. trailing silence) so Gemini's VAD
+    // sees the speech->silence transition — an earlier "gate" that dropped
+    // near-silent frames starved that transition and the model never responded.
+    // Instead, note the last REAL-speech frame so _tick can send a debounced
+    // audio_stream_end after a pause, which finalizes the turn crisply even when
+    // ambient noise keeps streaming (the real cause of turns held open 45s+).
+    if (frameMeanAbs(pcm16) >= REAL_SPEECH_MEANABS) {
+      g.lastSpeechAt = this._deps.now();
+      g.audioEndSent = false;
+    }
     await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
     if (g.session) {
       g.session.sendAudio(pcm16);
@@ -431,6 +435,17 @@ class VoiceService {
       return;
     }
 
+    // Debounced end-of-speech: once the user has been quiet for
+    // speechEndSilenceMs after their last real-speech frame, tell the Live model
+    // the turn is over so it finalizes promptly. This fixes turns that ambient
+    // noise would otherwise hold open (streaming ambient can't stop it, but the
+    // absence of REAL speech does). Sent at most once per speech->silence cycle.
+    const silenceMs = (this._config.voice && this._config.voice.speechEndSilenceMs) || DEFAULT_SPEECH_END_SILENCE_MS;
+    if (g.session && g.lastSpeechAt !== null && !g.audioEndSent && (now - g.lastSpeechAt) >= silenceMs) {
+      try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
+      g.audioEndSent = true;
+    }
+
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
   }
 
@@ -438,9 +453,12 @@ class VoiceService {
     // Tear down any in-progress playback so a half-streamed reply doesn't linger
     // into the next session.
     this._stopPlayback(g);
-    // Reset audio buffers so the next idle/listen period starts clean.
+    // Reset audio buffers + speech-end tracking so the next idle/listen period
+    // starts clean.
     g.pending = null;
     g.preroll = [];
+    g.lastSpeechAt = null;
+    g.audioEndSent = false;
     if (g.session) {
       const session = g.session;
       // Belt-and-suspenders with the identity guards in _startSession:

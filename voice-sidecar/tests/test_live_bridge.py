@@ -15,12 +15,16 @@ class FakeSession:
         self._script = script            # list of server msgs to yield on first receive()
         self.sent_audio = []
         self.seeded = []
+        self.stream_ends = 0
 
     async def send_client_content(self, *, turns, turn_complete):
         self.seeded.append((turns, turn_complete))
 
-    async def send_realtime_input(self, *, audio):
-        self.sent_audio.append(audio)
+    async def send_realtime_input(self, *, audio=None, audio_stream_end=None):
+        if audio is not None:
+            self.sent_audio.append(audio)
+        if audio_stream_end:
+            self.stream_ends += 1
 
     async def receive(self):
         for m in self._script:
@@ -124,6 +128,17 @@ def test_live_config_enables_google_search():
     assert cfg.tools, "expected at least one tool configured"
     assert any(getattr(t, "google_search", None) is not None for t in cfg.tools), \
         "expected the google_search grounding tool"
+
+
+async def test_audio_stream_end_signals_the_session():
+    # The bot's debounced end-of-speech must reach the Live session as
+    # send_realtime_input(audio_stream_end=True) so the turn finalizes.
+    session = FakeSession([_msg(turn_complete=True)])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+    end = voice_pb2.VoiceClientEvent(audio_stream_end=voice_pb2.AudioStreamEnd())
+    await _drive(bridge, [start, end], session)
+    assert session.stream_ends >= 1
 
 
 async def test_maps_interrupted():
