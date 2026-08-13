@@ -59,6 +59,14 @@ module.exports = {
     // forgiving. NOTE: sub-threshold frames are dropped by the energy gate (they
     // are NOT streamed); this timer is currently the sole endpointer as a result.
     speechEndSilenceMs: parseInt(process.env.VOICE_SPEECH_END_SILENCE_MS || '800', 10),
+    // Silero VAD (per-stream neural speech detection; replaces the fixed energy
+    // gate). Frames <threshold are non-speech. min*Frames are 32ms windows.
+    vad: {
+      threshold: parseFloat(process.env.VOICE_VAD_THRESHOLD || '0.5'),
+      minSpeechFrames: parseInt(process.env.VOICE_VAD_MIN_SPEECH_FRAMES || '2', 10),   // ~64ms
+      minSilenceFrames: parseInt(process.env.VOICE_VAD_MIN_SILENCE_FRAMES || '24', 10), // ~768ms
+      modelPath: process.env.VOICE_VAD_MODEL || require('path').join(__dirname, '..', 'models', 'silero', 'silero_vad.onnx'),
+    },
     // Allow barge-in (interrupting the bot mid-reply). Default false = half-duplex
     // (mic muted while the bot talks). true = full-duplex: real speech interrupts
     // the reply; the energy gate still blocks ambient from false-triggering it.
