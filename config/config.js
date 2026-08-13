@@ -56,12 +56,17 @@ module.exports = {
     // How long (ms) after the user's last real-speech frame to signal
     // audio_stream_end so the Live model finalizes the turn. Lower = snappier
     // replies but risks cutting off long thinking pauses; higher = more
-    // forgiving. All audio is still streamed (this only times the end signal).
+    // forgiving. NOTE: sub-threshold frames are dropped by the energy gate (they
+    // are NOT streamed); this timer is currently the sole endpointer as a result.
     speechEndSilenceMs: parseInt(process.env.VOICE_SPEECH_END_SILENCE_MS || '800', 10),
     // Allow barge-in (interrupting the bot mid-reply). Default false = half-duplex
-    // (mic muted while the bot talks) which is echo-safe on speakers. Set true
-    // ONLY on headphones — real speech then interrupts the reply; the energy gate
-    // still blocks ambient noise from false-triggering it.
+    // (mic muted while the bot talks). true = full-duplex: real speech interrupts
+    // the reply; the energy gate still blocks ambient from false-triggering it.
+    // Safe for most users — Discord's client runs WebRTC AEC + Krisp on by
+    // default, so the bot's own voice is cancelled from a user's mic before it
+    // reaches us. Residual risk is narrow: users who disabled Discord's echo
+    // cancellation, or a separate speaker path Discord can't see. Headphones are
+    // belt-and-suspenders, not a requirement.
     allowBargeIn: process.env.VOICE_ALLOW_BARGE_IN === 'true',
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
   },

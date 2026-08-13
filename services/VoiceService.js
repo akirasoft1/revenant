@@ -21,8 +21,13 @@ const { Readable, PassThrough } = require('stream');
 const MAX_PREROLL_FRAMES = 150;
 
 // A frame whose mean |sample| (int16 scale) is >= this counts as real speech
-// (vs. ambient ~0-20). Used to time the debounced end-of-speech signal — NOT to
-// drop audio (all frames are streamed so Gemini's VAD sees the trailing silence).
+// (vs. ambient ~0-20). In the active/hot path (_handleUserPcm) sub-threshold
+// frames ARE dropped — not streamed — to block false barge-ins and stop ambient
+// from holding a turn open; the same signal also times the debounced
+// audio_stream_end. NOTE: this fixed-threshold energy gate is a crude client-side
+// VAD slated for rework — the SOTA path is to stop dropping frames and let
+// Gemini's server VAD endpoint (or run Silero client-side). See the voice VAD
+// brainstorm/spec before extending this constant.
 const REAL_SPEECH_MEANABS = 50;
 
 // Fallback: how long after the last real-speech frame to send audio_stream_end
