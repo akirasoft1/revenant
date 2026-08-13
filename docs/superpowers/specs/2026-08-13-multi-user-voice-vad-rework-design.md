@@ -46,6 +46,8 @@ This design fixes the VAD incoherence and builds a **speaker-attributed shared r
 | Echo | Keep half-duplex default; barge-in toggle relaxed (Discord client AEC covers most users) |
 | Keep unchanged | wake-gating, ~3 s pre-roll, 60 s follow-up window, open-on-wake/idle-teardown lifecycle |
 
+**Guiding principle — favor quality over resource frugality.** The cluster has ample CPU/memory headroom. When a better approach costs more compute (per-speaker Silero instances, finer chunking with more/smaller sends, a larger/heavier model, extra buffering for smoothing), prefer it over a resource-minimizing shortcut. Do not optimize for frugality at the expense of correctness or conversational quality.
+
 ## 4. Architecture Overview
 
 ```
@@ -113,9 +115,19 @@ Each unit is small, single-purpose, and independently testable. New pure-logic u
 - **Change:** add `context_window_compression` (sliding window) so the room isn't capped at ~15 min, and `session_resumption` (store `SessionResumptionUpdate.new_handle`, reconnect with it; 2 h validity) so transient drops don't end the room. Watch `GoAway` for pre-disconnect warning. Exact shapes in §9.
 
 ### 5.7 Correctness cleanups
-- Shrink forwarded chunk from 80 ms toward **20–40 ms** (Gemini best practice).
 - On `response.server_content.interrupted == True`, **flush playback immediately** (verify the sidecar surfaces it to the bot and `_stopPlayback` fires).
 - Per-speaker **wake** while idle (any participant can wake the room), not one shared gate.
+
+### 5.8 Frame-size reconciliation (three sizes in play — do NOT force one everywhere)
+There are **three** consumers wanting three different frame sizes, and today's single 80 ms pipeline frame is coarser than two of them. The active path must decouple from the 80 ms frame:
+
+| Consumer | Wants | Why |
+|---|---|---|
+| openWakeWord (idle path) | **1280 samples / 80 ms** @16k | Hard requirement of the vendored model; unchanged. |
+| Silero VAD (active path) | **512 samples / 32 ms** @16k | Silero's native chunk; stateful across chunks. |
+| Gemini forward (active path) | **20–40 ms** (~320–640 samples) @16k | Google best practice; our current 80 ms is too coarse (adds latency, degrades server-VAD fallback). |
+
+**Reconciliation:** feed the continuous 16 k PCM stream into a small re-chunker that fans out per-consumer — the **idle** path keeps assembling 1280-sample frames for openWakeWord; the **active** path feeds Silero at 512-sample windows (carrying VAD state) and the Gemini forwarder at 20–40 ms chunks. Per the guiding principle, we accept the extra, smaller sends for the latency/quality gain rather than coarsening to one convenient size.
 
 ## 6. Data Flow (turn lifecycle, multi-user)
 
