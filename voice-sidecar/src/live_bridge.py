@@ -63,13 +63,30 @@ class _SessionStats:
         self.out_tx_chars = 0
 
 
+class _ResumeState:
+    """Session-resumption bookkeeping shared across reconnects: the newest
+    handle the server gave us, whether it warned of an imminent disconnect
+    (GoAway), and how many times we've reconnected."""
+    __slots__ = ("handle", "going_away", "reconnects")
+
+    def __init__(self):
+        self.handle = None
+        self.going_away = False
+        self.reconnects = 0
+
+
 class LiveBridge:
-    def __init__(self, session_factory, *, model, default_voice):
+    def __init__(self, session_factory, *, model, default_voice,
+                 compression_trigger_tokens=25000, resumption_enabled=True,
+                 max_reconnects=5):
         self._session_factory = session_factory
         self._model = model
         self._default_voice = default_voice
+        self._compression_trigger_tokens = compression_trigger_tokens
+        self._resumption_enabled = resumption_enabled
+        self._max_reconnects = max_reconnects
 
-    def _live_config(self, start) -> types.LiveConnectConfig:
+    def _live_config(self, start, resumption_handle=None) -> types.LiveConnectConfig:
         voice = start.voice_name or self._default_voice
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
@@ -89,6 +106,16 @@ class LiveBridge:
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+            ),
+            # Sliding-window compression -> session is no longer capped at ~15 min.
+            context_window_compression=types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow(),
+                trigger_tokens=self._compression_trigger_tokens,
+            ),
+            # None on first connect; the stored handle on a resume.
+            session_resumption=(
+                types.SessionResumptionConfig(handle=resumption_handle)
+                if self._resumption_enabled else None
             ),
         )
 
@@ -143,8 +170,9 @@ class LiveBridge:
                     )
                     seeded += 1
                 logger.info("voice: seeded %d context turn(s); Live session open", seeded)
+                resume = _ResumeState()
                 pump_in = asyncio.create_task(self._pump_client(request_iter, session, stats))
-                pump_out = asyncio.create_task(self._pump_server(session, emit, stats))
+                pump_out = asyncio.create_task(self._pump_server(session, emit, stats, resume))
                 try:
                     done, pending = await asyncio.wait(
                         {pump_in, pump_out}, return_when=asyncio.FIRST_COMPLETED)
@@ -214,7 +242,7 @@ class LiveBridge:
                             stats.audio_in_chunks)
                 return
 
-    async def _pump_server(self, session, emit, stats) -> None:
+    async def _pump_server(self, session, emit, stats, resume) -> None:
         # receive() ends per-turn on turn_complete; loop to span the whole session.
         # When the session is closed, receive() yields nothing immediately —
         # that's the signal to stop, otherwise this would busy-spin forever.
@@ -227,6 +255,15 @@ class LiveBridge:
                     stats.audio_out_bytes += len(msg.data)
                     await emit(voice_pb2.VoiceServerEvent(
                         audio=voice_pb2.AudioChunk(pcm=msg.data)))
+                sru = getattr(msg, "session_resumption_update", None)
+                if sru is not None and getattr(sru, "resumable", False) and getattr(sru, "new_handle", None):
+                    resume.handle = sru.new_handle
+                    logger.debug("voice: session resumption handle updated")
+                ga = getattr(msg, "go_away", None)
+                if ga is not None:
+                    resume.going_away = True
+                    logger.info("voice: server sent GoAway (time_left=%s); will resume with handle=%s",
+                                getattr(ga, "time_left", "?"), bool(resume.handle))
                 sc = getattr(msg, "server_content", None)
                 if sc is None:
                     continue

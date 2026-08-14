@@ -4,10 +4,12 @@ import logging
 from types import SimpleNamespace
 
 from google.genai import errors as genai_errors
+from google.genai import types
 from websockets.exceptions import ConnectionClosedOK
 
 from src import voice_pb2
-from src.live_bridge import LiveBridge
+from src.live_bridge import LiveBridge, _ResumeState
+from src.live_bridge import _SessionStats as _SessionStatsForTest
 
 
 class FakeSession:
@@ -310,3 +312,73 @@ async def test_pump_server_stops_promptly_when_session_closes_cleanly():
     await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=1)
 
     assert any(e.WhichOneof("event") == "turn_complete" for e in out)
+
+
+def test_live_config_enables_compression_and_resumption():
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck")
+    start = SimpleNamespace(voice_name="", system_prompt="", history=[], recall_context="")
+    cfg = bridge._live_config(start)
+    # sliding-window compression keeps audio-only sessions past the ~15 min cap
+    assert cfg.context_window_compression is not None
+    assert cfg.context_window_compression.sliding_window is not None
+    assert cfg.context_window_compression.trigger_tokens == 25000
+    # resumption requested with no handle on a first connect
+    assert cfg.session_resumption is not None
+    assert cfg.session_resumption.handle is None
+
+
+def test_live_config_passes_resumption_handle_on_reconnect():
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck")
+    start = SimpleNamespace(voice_name="", system_prompt="", history=[], recall_context="")
+    cfg = bridge._live_config(start, resumption_handle="abc123")
+    assert cfg.session_resumption.handle == "abc123"
+
+
+def test_live_config_omits_resumption_when_disabled():
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck",
+                        resumption_enabled=False)
+    start = SimpleNamespace(voice_name="", system_prompt="", history=[], recall_context="")
+    assert bridge._live_config(start).session_resumption is None
+
+
+def _resume_msg(handle, resumable=True):
+    return SimpleNamespace(data=None, server_content=None,
+                           session_resumption_update=SimpleNamespace(
+                               new_handle=handle, resumable=resumable),
+                           go_away=None)
+
+
+def _go_away_msg(time_left="10s"):
+    return SimpleNamespace(data=None, server_content=None,
+                           session_resumption_update=None,
+                           go_away=SimpleNamespace(time_left=time_left))
+
+
+async def test_pump_server_captures_resumption_handle_and_go_away():
+    session = FakeSession([_resume_msg("h-1"), _go_away_msg("5s")])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    resume = _ResumeState()
+    out = []
+    async def emit(ev): out.append(ev)
+    task = asyncio.create_task(bridge._pump_server(session, emit, _SessionStatsForTest(), resume))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert resume.handle == "h-1"
+    assert resume.going_away is True
+    # neither is surfaced to the bot
+    assert out == []
+
+
+async def test_pump_server_ignores_non_resumable_update():
+    session = FakeSession([_resume_msg("h-x", resumable=False)])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    resume = _ResumeState()
+    async def emit(ev): pass
+    task = asyncio.create_task(bridge._pump_server(session, emit, _SessionStatsForTest(), resume))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert resume.handle is None

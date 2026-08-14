@@ -16,3 +16,18 @@ def test_load_reads_env(monkeypatch):
     c = cfg.load()
     assert c.voice_live_model == "gemini-live-x"
     assert c.otlp_endpoint == "http://collector:4318"
+
+
+def test_session_longevity_defaults(monkeypatch):
+    for k in ("VOICE_CONTEXT_COMPRESSION_TRIGGER_TOKENS", "VOICE_SESSION_RESUMPTION_ENABLED",
+              "VOICE_MAX_SESSION_RECONNECTS"):
+        monkeypatch.delenv(k, raising=False)
+    c = cfg.load()
+    assert c.context_compression_trigger_tokens == 25000
+    assert c.session_resumption_enabled is True
+    assert c.max_session_reconnects == 5
+
+
+def test_session_resumption_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("VOICE_SESSION_RESUMPTION_ENABLED", "false")
+    assert cfg.load().session_resumption_enabled is False
