@@ -202,10 +202,22 @@ class LiveBridge:
         resume = _ResumeState()
         try:
             session_ref = _SessionRef()
-            # Created ONCE, outside the reconnect loop: this owns the bot's
-            # gRPC request stream and must survive every reconnect below --
-            # only the server-side pump is per-session.
-            pump_in = asyncio.create_task(self._pump_client(request_iter, session_ref, stats))
+            # Created ONCE -- it owns the bot's gRPC request stream and must
+            # survive every reconnect below (only the server-side pump is
+            # per-session) -- but NOT until the first session is actually open
+            # (see where it is started, after seeding).
+            #
+            # It must not start earlier: `_pump_client` drops any frame that
+            # arrives while `session_ref.session` is None, and the bot flushes
+            # its whole pre-roll (the wake phrase AND the question spoken with
+            # it) immediately after session_start. Draining the stream during
+            # the ~1-3s open+seed would silently throw that question away and
+            # leave the model with nothing to answer -- a real outage
+            # (2026-08-14). Until we start reading, gRPC flow control buffers
+            # those frames for us, which is exactly what we want on the FIRST
+            # open. Dropping stays correct for a RECONNECT gap, where stale
+            # audio replayed after a resume would read as current speech.
+            pump_in = None
             client_done = False
             # Tracks whether we've ACTUALLY seeded history/recall_context into
             # a session yet -- deliberately separate from resume.reconnects,
@@ -270,6 +282,13 @@ class LiveBridge:
                                     "voice: resumed Live session (reconnect #%d); context carried by handle",
                                     resume.reconnects)
 
+                            # Start consuming the bot's stream only now that a
+                            # session exists to receive it (first iteration
+                            # only; it then survives reconnects). Before this
+                            # point gRPC buffers the pre-roll for us.
+                            if pump_in is None:
+                                pump_in = asyncio.create_task(
+                                    self._pump_client(request_iter, session_ref, stats))
                             pump_out = asyncio.create_task(self._pump_server(session, emit, stats, resume))
                             try:
                                 done, _pending = await asyncio.wait(
@@ -355,9 +374,12 @@ class LiveBridge:
                 # CancelledError into the loop above without touching pump_in --
                 # it would otherwise leak as an orphaned task blocked forever on
                 # the bot's request stream. Always reap it, on every exit path.
-                if not pump_in.done():
-                    pump_in.cancel()
-                await asyncio.gather(pump_in, return_exceptions=True)
+                # pump_in is None if we never got a session open at all (every
+                # attempt failed), in which case there is nothing to reap.
+                if pump_in is not None:
+                    if not pump_in.done():
+                        pump_in.cancel()
+                    await asyncio.gather(pump_in, return_exceptions=True)
         except asyncio.CancelledError:
             outcome = "cancelled"
             raise
