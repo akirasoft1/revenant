@@ -129,6 +129,8 @@ There are **three** consumers wanting three different frame sizes, and today's s
 
 **Reconciliation:** feed the continuous 16 k PCM stream into a small re-chunker that fans out per-consumer — the **idle** path keeps assembling 1280-sample frames for openWakeWord; the **active** path feeds Silero at 512-sample windows (carrying VAD state) and the Gemini forwarder at 20–40 ms chunks. Per the guiding principle, we accept the extra, smaller sends for the latency/quality gain rather than coarsening to one convenient size.
 
+**Phase 1 frame-size note (accuracy correction):** the pipeline already forwards ~20 ms per-Opus-packet chunks to Gemini (the 1280 / 80 ms figure in the table is openWakeWord's **internal** frame size, rebuffered inside `WakeWordGate`), so Phase 1's only frame-size work is the Silero 512-sample rebuffer; no change to the Gemini forward chunk size was needed. Layer-2 harness validation confirmed real Silero fires at 960 ms (confidence 0.98/0.99) on both clean-16k and 48k→downsample paths against `Recording.m4a`.
+
 ## 6. Data Flow (turn lifecycle, multi-user)
 
 1. Room idle. Each speaking `userId` feeds its own `WakeWordGate`. Speaker A says the wake word → `onWake` → session opens, `FloorControl` grants A the floor, `VoiceSessionMachine` → active.
