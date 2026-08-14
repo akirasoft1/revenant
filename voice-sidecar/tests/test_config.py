@@ -31,3 +31,17 @@ def test_session_longevity_defaults(monkeypatch):
 def test_session_resumption_can_be_disabled(monkeypatch):
     monkeypatch.setenv("VOICE_SESSION_RESUMPTION_ENABLED", "false")
     assert cfg.load().session_resumption_enabled is False
+
+
+def test_session_resumption_disabled_accepts_common_falsey_spellings(monkeypatch):
+    # FIX M8: don't require the literal "false" -- accept the usual falsey
+    # spellings config tooling commonly uses, case-insensitively.
+    for value in ("0", "No", "OFF", "false", "False"):
+        monkeypatch.setenv("VOICE_SESSION_RESUMPTION_ENABLED", value)
+        assert cfg.load().session_resumption_enabled is False, value
+
+
+def test_session_resumption_enabled_for_other_truthy_values(monkeypatch):
+    for value in ("true", "1", "yes", "on", "anything-else"):
+        monkeypatch.setenv("VOICE_SESSION_RESUMPTION_ENABLED", value)
+        assert cfg.load().session_resumption_enabled is True, value

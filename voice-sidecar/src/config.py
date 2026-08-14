@@ -33,7 +33,11 @@ def load() -> Config:
             os.environ.get("VOICE_CONTEXT_COMPRESSION_TRIGGER_TOKENS", "25000")),
         # Session resumption: the server hands us a handle; on a dropped/GoAway
         # connection we reconnect with it and keep the conversation's context.
+        # Accept the usual falsey spellings (case-insensitive), not just the
+        # literal "false" -- config toggles set via k8s/env tooling commonly
+        # use "0"/"no"/"off" too.
         session_resumption_enabled=os.environ.get(
-            "VOICE_SESSION_RESUMPTION_ENABLED", "true").lower() != "false",
+            "VOICE_SESSION_RESUMPTION_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "off"),
         max_session_reconnects=int(os.environ.get("VOICE_MAX_SESSION_RECONNECTS", "5")),
     )
