@@ -611,6 +611,56 @@ git commit -m "docs(voice): document speaker identity, name resolution and the s
 
 ---
 
+### Task 7: Real-model smoke test for speaker identity (no humans, no Discord)
+
+**Files:**
+- Create: `scripts/smoke-voice-identity.js`
+- Modify: `CLAUDE.md` (mention the script under the voice section)
+
+**Why:** the three things Phase 3 can actually get wrong are only observable against the REAL model: (1) does it read the `[SPEAKER: …]` marker aloud, (2) does the marker bind to the right speaker's audio, (3) does it use the names naturally. None of these need a second human — they need the real Live session and two distinct voices, both of which we can synthesize. This is the "Layer 4" smoke test the design specced and deferred.
+
+**Interfaces:**
+- Consumes: the running sidecar's `Converse` gRPC stream (same proto as the bot), `scripts/gen-test-voices.js` fixtures (or the user's own `.m4a` recordings), `ffmpeg` for decode.
+- Produces: a CLI that opens ONE real Live session and drives a scripted two-speaker conversation, printing every transcript and a PASS/FAIL verdict per check.
+
+- [ ] **Step 1: Write the script**
+
+It must, in order:
+1. Resolve two audio inputs (default: two `voice-fixtures/*.wav` from `gen-test-voices.js`; accept two file paths as argv). Decode each to **16 kHz mono s16le** via ffmpeg and chunk to 20 ms (640-byte) frames, matching what the bot sends.
+2. Connect to the sidecar over gRPC using `proto/voice.proto` (reuse `services/VoiceClient.js` if it can be pointed at an address, otherwise load the proto directly with `@grpc/proto-loader`, same options as `VoiceClient`).
+3. `sendStart` with a `system_prompt` that includes the SAME roster + never-read-aloud rule the bot builds (import `_appendVoicePersona` output shape or inline the identical text), so the test exercises the real prompt.
+4. Speaker A: `sendSpeaker({userId:'A', displayName:'Mike'})`, stream A's frames, pause ~1s for the reply.
+5. Speaker B: `sendSpeaker({userId:'B', displayName:'Sarah'})`, stream B's frames, pause for the reply.
+6. Collect `input_transcript` / `output_transcript` / `audio` / `turn_complete` events throughout; `sendSessionEnd` and close.
+
+Then assert and print a verdict for each:
+- **MARKER SILENT (critical):** no output transcript contains `SPEAKER`, `[`, `]`, or the literal marker text. Fail loudly if it does — that is the one defect that would be embarrassing live.
+- **NAMES USED:** at least one output transcript mentions `Mike` or `Sarah`.
+- **NO DOUBLE-ANSWER:** count `turn_complete` events and total output-audio bytes; flag if a single question produced more than one full reply (this is the regression class fixed in the dual-endpointing work).
+- **ATTRIBUTION SANITY:** print each input transcript next to the speaker that was current when it arrived, so a human can eyeball that A's words were not attributed to B.
+
+Print a final summary line with each check as PASS/FAIL and exit non-zero on any critical failure. Never truncate transcripts.
+
+- [ ] **Step 2: Run it against the deployed sidecar**
+
+The sidecar is reachable in-cluster, so run it from the bot pod or via a port-forward:
+
+```bash
+kubectl port-forward svc/discord-article-bot-voice 50051:50051 -n discord-article-bot &
+node scripts/smoke-voice-identity.js
+```
+
+(If `gen-test-voices.js` has not been run, generate fixtures first — it needs `GEMINI_API_KEY`.) Paste the full output into the report.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add scripts/smoke-voice-identity.js CLAUDE.md
+git commit -m "test(voice): real-model smoke test for speaker identity (two synthetic speakers)"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:** §5.4 mechanism → Tasks 2-4 (proto `SetSpeaker`, sidecar marker, bot send + roster). §5.4.1 name resolution → Task 1 (+ Task 5 for the chat scope it mandates). §9 plumbing (`send_client_content` with `turn_complete=False`) → Task 3, used verbatim. Version lock → Global Constraints + Task 6. ✓
