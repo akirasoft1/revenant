@@ -111,13 +111,13 @@ async function feed(engine, n) {
 
 test('createOpenWakeWordEngine reports frameLength 1280 and never loads native binding here', () => {
   const { backend } = makeFakeBackend();
-  const engine = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
   expect(engine.frameLength).toBe(1280);
 });
 
 test('feeds a [1,1280] mel input tensor per frame', async () => {
   const { backend, calls } = makeFakeBackend();
-  const engine = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
   await engine.ready();
   await feed(engine, 1);
   const mel = calls.find((c) => c.model === 'mel');
@@ -127,7 +127,7 @@ test('feeds a [1,1280] mel input tensor per frame', async () => {
 
 test('buffers mel frames across frames; embedding runs only once >= 76 mel frames accumulate', async () => {
   const { backend, calls } = makeFakeBackend();
-  const engine = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
   await engine.ready();
   // 5 mel frames per input frame -> 15 frames = 75 mels (< 76): no embedding yet
   await feed(engine, 15);
@@ -140,7 +140,7 @@ test('buffers mel frames across frames; embedding runs only once >= 76 mel frame
 
 test('runs the chain in mel -> embedding -> wake order with correct tensor shapes', async () => {
   const { backend, calls } = makeFakeBackend();
-  const engine = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
   await engine.ready();
   await feed(engine, 16);
   const embIdx = calls.findIndex((c) => c.model === 'emb');
@@ -154,7 +154,7 @@ test('runs the chain in mel -> embedding -> wake order with correct tensor shape
 
 test('score >= threshold -> detection (process returns 0)', async () => {
   const { backend } = makeFakeBackend({ score: 0.9 });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   await feed(engine, 16);
   expect(engine.process(frame1280())).toBe(0); // flag set by the completed chain
@@ -162,7 +162,7 @@ test('score >= threshold -> detection (process returns 0)', async () => {
 
 test('score < threshold -> no detection (process returns -1)', async () => {
   const { backend } = makeFakeBackend({ score: 0.1 });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   await feed(engine, 16);
   expect(engine.process(frame1280())).toBe(-1);
@@ -172,7 +172,7 @@ test('score < threshold -> no detection (process returns -1)', async () => {
 
 test('real wake IS detected when frames flow with natural event-loop spacing (no whenIdle serialization)', async () => {
   const { backend } = makeFakeBackend({ score: 0.9 });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   let fired = false;
   // Mirror VoiceService._handleUserPcm: one frame per decoder-event tick, never
@@ -192,7 +192,7 @@ test('a synchronous burst of process() queues and processes ALL frames in order 
   // score ~0 on audio that scores ~0.99 when fed contiguously). The queue must
   // now process every frame.
   const { backend, calls } = makeFakeBackend({ score: 0.9 });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   for (let i = 0; i < 50; i++) engine.process(frame1280()); // no yield between calls
   await engine.whenIdle();
@@ -210,7 +210,7 @@ test('queue overflow drops the OLDEST frame and counts it (bounded memory)', asy
     }),
     tensor: (t, d, dims) => ({ t, d, dims }),
   };
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   for (let i = 0; i < 300; i++) engine.process(frame1280()); // 300 > MAX_QUEUE (256)
   const fs = engine.frameStats();
@@ -222,7 +222,7 @@ test('REGRESSION: an inference that resolves high AFTER reset() does NOT surface
   let resolveScore;
   const scoreP = new Promise((r) => { resolveScore = r; });
   const { backend, calls } = makeFakeBackend({ score: scoreP });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
 
   await feed(engine, 15);              // 75 mels buffered, all drained, no wake eval yet
@@ -239,7 +239,7 @@ test('REGRESSION: an inference that resolves high AFTER reset() does NOT surface
 
 test('reset() clears a already-set detection flag', async () => {
   const { backend } = makeFakeBackend({ score: 0.9 });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   await feed(engine, 16);        // detection flag now set by the resolved chain
   engine.reset();               // must clear it
@@ -256,7 +256,7 @@ test('WakeWordGate.reset() propagates to the engine', () => {
 
 test('WakeWordGate drives the openWakeWord engine end-to-end (fake sessions)', async () => {
   const { backend } = makeFakeBackend({ score: 0.9 });
-  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   const gate = new WakeWordGate(engine);
   // One frame per push with the inference draining between (single in-flight),
@@ -295,8 +295,8 @@ test('module-level cache: two engines with the same paths + same sessionFactory 
     tensor: (type, data, dims) => ({ type, data, dims }),
   };
 
-  const engine1 = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
-  const engine2 = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine1 = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
+  const engine2 = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
   await Promise.all([engine1.ready(), engine2.ready()]);
 
   expect(calls.length).toBe(3); // NOT 6 -- engine2 reused engine1's cached sessions
@@ -327,7 +327,7 @@ test('preloadOpenWakeWord resolves and warms the cache for a later createOpenWak
   // A subsequent engine creation with the SAME backend + paths must not
   // trigger any additional createSession calls -- the preload already warmed
   // the cache off the request path.
-  const engine = createOpenWakeWordEngine({ ...paths, sessionFactory: backend });
+  const engine = createOpenWakeWordEngine({ warmupMs: 0, ...paths, sessionFactory: backend });
   await engine.ready();
   expect(calls.length).toBe(3);
 });
