@@ -52,6 +52,33 @@ function fakeVadGate(sequence) {
   return { push: jest.fn(() => sequence[Math.min(i++, sequence.length - 1)]), reset: jest.fn(() => { i = 0; }) };
 }
 
+// Fake wake-word gate. `mode`:
+//  - true/false: push() always/never wakes.
+//  - a number N: push() wakes on the Nth call (1-indexed), false before/after.
+//  - 'nextPushWakes': wakes on the very next push (same as N=1).
+function fakeWakeGate(mode) {
+  let n = 0;
+  const wakeAt = mode === 'nextPushWakes' ? 1 : (typeof mode === 'number' ? mode : null);
+  return {
+    push: jest.fn(() => {
+      n += 1;
+      if (wakeAt !== null) return n === wakeAt;
+      return !!mode;
+    }),
+    reset: jest.fn(() => { n = 0; }),
+  };
+}
+
+// 16-bit mono PCM frames for feeding the (content-agnostic) fake gates above --
+// silence() is all-zero, speech() is a nonzero tone, purely for readability at
+// call sites (the fakes ignore the actual sample content).
+function silence(nSamples = 320) { return Buffer.alloc(nSamples * 2); }
+function speech(nSamples = 320) {
+  const buf = Buffer.alloc(nSamples * 2);
+  for (let i = 0; i < nSamples; i++) buf.writeInt16LE(3000, i * 2);
+  return buf;
+}
+
 // 16 kHz mono s16le -> 48 kHz stereo s16le. _handleUserPcm always downsamples
 // its input back to 16k mono before anything (wake gate / VAD gate) sees it,
 // and the fake gates above ignore their input entirely -- this just needs to
@@ -67,33 +94,51 @@ function to48kStereo(buf16Mono) {
   return out;
 }
 
+// Build a joined-but-idle VoiceService -- a live voice connection exists but
+// no one has woken the room yet. Returns a spy on `_startSession` so tests can
+// assert a session did/didn't open without depending on gRPC internals.
+async function buildJoinedVoiceService(deps, configOverrides = {}, contextBuilder) {
+  const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, contextBuilder);
+  const guildId = 'g1';
+  await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
+  const startSession = jest.spyOn(svc, '_startSession');
+  return { svc, guildId, voiceClient, mongoService, startSession };
+}
+
 // Build a VoiceService already past the wake word -- a live gRPC session is
 // open and the machine is 'active' -- ready to exercise the VAD-driven active
-// branch of _handleUserPcm directly. The priming call goes through the wake
-// gate (always fires), never the VAD gate, so a caller-supplied VAD sequence
-// is untouched by it.
+// branch of _handleUserPcm directly. `overrides.holder` (default 'u1') is the
+// userId that holds the floor; setup grants the floor and drives the machine's
+// real onWake()/_startSession() path directly (bypassing the wake gate) so a
+// caller-supplied wake-gate/VAD-gate sequence is untouched by priming.
 async function buildActiveVoiceService(overrides = {}) {
-  const wakeGate = { push: jest.fn(() => true), reset: jest.fn() };
+  const holderId = overrides.holder || 'u1';
   const deps = makeDeps({
-    makeWakeGate: () => wakeGate,
+    makeWakeGate: overrides.makeWakeGate || (() => ({ push: jest.fn(() => false), reset: jest.fn() })),
     ...(overrides.makeVadGate ? { makeVadGate: overrides.makeVadGate } : {}),
     ...(overrides.now ? { now: overrides.now } : {}),
   });
   const configOverrides = {};
   if (overrides.allowBargeIn !== undefined) configOverrides.allowBargeIn = overrides.allowBargeIn;
   if (overrides.speechEndSilenceMs !== undefined) configOverrides.speechEndSilenceMs = overrides.speechEndSilenceMs;
-  const { svc, voiceClient } = makeService(deps, configOverrides, overrides.contextBuilder);
+  const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, overrides.contextBuilder);
   const guildId = 'g1';
   await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
-  await svc._handleUserPcm(guildId, 'primer', Buffer.alloc(48 * 4)); // wake -> active, session opens
+  const g = svc._guilds.get(guildId);
+  g.floor.grant(holderId);      // seed the floor directly -- no wake-gate push needed
+  svc._perUser(g, holderId);    // materialize the holder's gate context up front
+  await svc._apply(guildId, g.machine.onWake(), { userId: holderId }); // real startSession path
   const session = voiceClient.converse.mock.results[0].value;
   const player = deps.createAudioPlayer.mock.results[0].value;
-  // The primer frame itself gets captured into the pre-roll and flushed via
-  // sendAudio when the session opens (see the "pre-roll" test above) -- clear
-  // that so callers see clean counts for the frames THEY send.
-  session.sendAudio.mockClear();
   if (overrides.playing) player.state = { status: 'playing' };
-  return { svc, guildId, session, player, playerStop: player.stop, deps, voiceClient };
+  return { svc, guildId, session, player, playerStop: player.stop, deps, voiceClient, mongoService, holderId };
+}
+
+// Factory helper: returns the next fake gate from a fixed list, by call order
+// (call N gets items[N-1], clamped to the last item once exhausted).
+function queuedFactory(items) {
+  let i = 0;
+  return () => items[Math.min(i++, items.length - 1)];
 }
 
 test('active turn streams ALL frames continuously once speech starts (incl. trailing silence)', async () => {
@@ -138,7 +183,7 @@ test('join creates a voice connection and a wake gate', async () => {
 // that saturates the CPU limit. `_guilds.set()` must happen as soon as the
 // connection exists, BEFORE `deps.makeWakeGate()` runs, so a `/voice leave`
 // racing that slow setup still finds the connection.
-test('join records _guilds state (with connection) before invoking the wake-gate factory', async () => {
+test('join records _guilds state (with connection) before the (lazy, per-speaker) wake-gate factory ever runs', async () => {
   const deps = makeDeps();
   let sawStateWhenGateFactoryRan = null;
   deps.makeWakeGate = jest.fn(() => {
@@ -148,6 +193,11 @@ test('join records _guilds state (with connection) before invoking the wake-gate
   });
   const { svc } = makeService(deps);
   await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  // The wake-gate factory is now lazy (per-speaker, via `_perUser`) -- it only
+  // runs once someone actually speaks, not eagerly during join(). Drive that
+  // first contact and confirm the same guarantee still holds: `_guilds` state
+  // (with the live connection) was already in place before the factory ran.
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(48 * 4));
   expect(sawStateWhenGateFactoryRan).toBe(true);
 });
 
@@ -207,7 +257,7 @@ test('output transcript is persisted to the message store on turnComplete', asyn
   await new Promise((r) => setImmediate(r));
 
   expect(mongoService.recordChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
-    content: 'what is a hornet', authorId: 'voice-user', isBot: false, channelId: 'c1', guildId: 'g1',
+    content: 'what is a hornet', authorId: 'user1', isBot: false, channelId: 'c1', guildId: 'g1',
   }));
   expect(mongoService.recordChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
     content: 'a light fighter', authorId: 'bot', isBot: true, channelId: 'c1', guildId: 'g1',
@@ -223,7 +273,7 @@ test('output transcript is persisted to the message store on turnComplete', asyn
   await new Promise((r) => setImmediate(r));
 
   expect(mongoService.recordChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
-    content: 'and the raptor', authorId: 'voice-user', isBot: false,
+    content: 'and the raptor', authorId: 'user1', isBot: false,
   }));
   expect(mongoService.recordChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
     content: 'a heavier one', authorId: 'bot', isBot: true,
@@ -698,4 +748,160 @@ test('interrupted server event flushes playback (stopPlayback)', async () => {
   session.emit('interrupted');
   await new Promise((r) => setImmediate(r));
   expect(playerStop).toHaveBeenCalled(); // _stopPlayback -> player.stop()
+});
+
+// --- Task 2: per-speaker gate context ---
+
+test('per-user gates are created lazily, one set per distinct speaker', async () => {
+  let wakeCalls = 0;
+  const deps = makeDeps({
+    makeWakeGate: () => { wakeCalls++; return fakeWakeGate(false); },
+    makeVadGate: () => fakeVadGate([{ speaking: false, justStarted: false, justEnded: false }]),
+  });
+  const { svc, guildId } = await buildJoinedVoiceService(deps);
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
+  await svc._handleUserPcm(guildId, 'bob', to48kStereo(silence()));
+  expect(wakeCalls).toBe(2); // one for alice, one for bob (not per frame)
+  const g = svc._guilds.get(guildId);
+  expect(g.perUser.size).toBe(2);
+});
+
+// --- Task 3: idle-wake path -- per-user wake gate grants the floor ---
+
+test('first speaker to wake takes the floor and opens the session', async () => {
+  const deps = makeDeps({
+    makeWakeGate: () => fakeWakeGate('nextPushWakes'),
+    makeVadGate: () => fakeVadGate([{ speaking: false, justStarted: false, justEnded: false }]),
+  });
+  const { svc, guildId, startSession } = await buildJoinedVoiceService(deps);
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+  const g = svc._guilds.get(guildId);
+  expect(g.floor.holder()).toBe('alice');
+  expect(startSession).toHaveBeenCalledTimes(1);
+});
+
+// --- Task 4: active path -- floor arbitration ---
+
+test('only the floor-holder audio is forwarded; a second speaker is withheld and noted waiting', async () => {
+  const holderVad = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+  const otherVad = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+  const { svc, guildId, session } = await buildActiveVoiceService({
+    holder: 'alice',
+    makeVadGate: queuedFactory([holderVad, otherVad]), // 1st call (alice's setup) -> holderVad, 2nd (bob) -> otherVad
+  });
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech())); // holder -> forwarded
+  await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));   // non-holder -> withheld
+  expect(session.sendAudio).toHaveBeenCalledTimes(1); // only alice
+  const g = svc._guilds.get(guildId);
+  expect(g.floor.waiting()).toContain('bob');
+  expect(g.floor.holder()).toBe('alice');
+});
+
+// --- Task 5: transcript attribution to the floor-holder's userId ---
+
+test('voice user transcript is authored with the floor-holder userId', async () => {
+  const { svc, guildId, mongoService } = await buildActiveVoiceService({ holder: 'alice' });
+  const g = svc._guilds.get(guildId);
+  g.buffers.in = ['what is the weather'];
+  g.buffers.out = ['sunny and warm'];
+  await svc._persistTurn(guildId);
+  const userDoc = mongoService.recordChannelMessage.mock.calls.map((c) => c[0]).find((m) => m.isBot === false);
+  expect(userDoc.authorId).toBe('alice'); // not 'voice-user'
+  expect(userDoc.source).toBe('voice');
+});
+
+// --- Task 6: multi-user regression coverage ---
+
+test('single-speaker flow is unchanged (wake -> forward -> early end -> attribution)', async () => {
+  const deps = makeDeps({
+    makeWakeGate: () => fakeWakeGate('nextPushWakes'),
+    makeVadGate: () => fakeVadGate([
+      { speaking: true, justStarted: true, justEnded: false },
+      { speaking: false, justStarted: false, justEnded: true },
+    ]),
+  });
+  const { svc, guildId, voiceClient, mongoService } = await buildJoinedVoiceService(deps);
+
+  // Wake -> alice takes the floor, session opens.
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+  const g = svc._guilds.get(guildId);
+  expect(g.floor.holder()).toBe('alice');
+  const session = voiceClient.converse.mock.results[0].value;
+
+  // Speech onset -> forwarded.
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+  expect(session.sendAudio).toHaveBeenCalled();
+
+  // Silero end-of-speech -> early audio_stream_end, turn closes.
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  expect(g.turnActive).toBe(false);
+
+  // Turn completes -> transcript persisted under alice's real userId.
+  session.emit('inputTranscript', 'what time is it');
+  session.emit('outputTranscript', 'three pm');
+  session.emit('turnComplete');
+  await new Promise((r) => setImmediate(r));
+  const userDoc = mongoService.recordChannelMessage.mock.calls.map((c) => c[0]).find((m) => m.isBot === false);
+  expect(userDoc.authorId).toBe('alice');
+});
+
+test('two speakers: alice holds through her turn; bob only takes the floor after the room goes idle and he wakes', async () => {
+  let t = 0;
+  const now = () => t;
+  const deps = makeDeps({
+    now,
+    makeWakeGate: () => fakeWakeGate('nextPushWakes'),
+    makeVadGate: () => fakeVadGate([
+      { speaking: true, justStarted: true, justEnded: false },
+      { speaking: false, justStarted: false, justEnded: true },
+    ]),
+  });
+  const { svc, guildId, voiceClient } = await buildJoinedVoiceService(deps);
+
+  // Alice wakes -> holds the floor, session opens.
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+  const g = svc._guilds.get(guildId);
+  expect(g.floor.holder()).toBe('alice');
+  const session1 = voiceClient.converse.mock.results[0].value;
+  session1.sendAudio.mockClear(); // drop the wake-phrase pre-roll flush from setup
+
+  // Alice speaks -> forwarded (turn opens on onset).
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+  expect(session1.sendAudio).toHaveBeenCalledTimes(1);
+
+  // Bob speaks while alice holds the floor -> withheld + noted waiting, never forwarded.
+  await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+  expect(session1.sendAudio).toHaveBeenCalledTimes(1); // still just alice's frame
+  expect(g.floor.waiting()).toContain('bob');
+  expect(g.floor.holder()).toBe('alice');
+
+  // Alice's turn ends (Silero justEnded) -> audio_stream_end.
+  await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
+  expect(session1.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+
+  // Server finishes the turn -> machine goes 'hot' (follow-up window armed).
+  session1.emit('turnComplete');
+  await new Promise((r) => setImmediate(r));
+  expect(g.machine.state).toBe('hot');
+
+  // Follow-up window elapses -> session ends, room returns to idle, floor released.
+  t = 5000;
+  svc._tick(guildId);
+  await new Promise((r) => setImmediate(r));
+  expect(g.machine.state).toBe('idle');
+  expect(g.floor.holder()).toBeNull();
+
+  // Bob now wakes -> HE takes the floor; a fresh session opens for him (his
+  // wake-phrase pre-roll frame flushes into it on open).
+  await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+  expect(g.floor.holder()).toBe('bob');
+  expect(voiceClient.converse).toHaveBeenCalledTimes(2);
+  const session2 = voiceClient.converse.mock.results[1].value;
+  session2.sendAudio.mockClear();
+
+  // Bob's audio now forwards since he holds the floor.
+  await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+  expect(session2.sendAudio).toHaveBeenCalledTimes(1);
 });
