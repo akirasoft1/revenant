@@ -495,8 +495,14 @@ class LiveBridge:
                     current_speaker = name
                     pending_speaker = name
             if pending_ack and session is not None:
-                # Flushed as soon as a session exists -- unlike the speaker
-                # marker, this does not wait for the next audio chunk.
+                # Flushed in the SAME iteration it was latched -- unlike the
+                # speaker marker, this does not wait for the next audio chunk.
+                # It is never flushed in a LATER iteration: an ack latched
+                # while session was None (mid-reconnect) is cleared by the
+                # swap block above before this check is reached on the next
+                # event. That drop is deliberate (see pending_ack in the
+                # block comment); this note exists so nobody reads "as soon
+                # as a session exists" as a promise the gap case is covered.
                 try:
                     await session.send_client_content(
                         turns=types.Content(role="user", parts=[types.Part(
