@@ -46,6 +46,7 @@ class WakeWordGate {
   // at all. Guarded so fake engines in tests without these methods return null.
   lastError() { return typeof this._engine.lastError === 'function' ? this._engine.lastError() : null; }
   lastScore() { return typeof this._engine.lastScore === 'function' ? this._engine.lastScore() : null; }
+  warmup(ms) { return typeof this._engine.warmup === 'function' ? this._engine.warmup(ms) : Promise.resolve(); }
   frameStats() { return typeof this._engine.frameStats === 'function' ? this._engine.frameStats() : null; }
 }
 
@@ -101,6 +102,12 @@ class WakeWordGate {
 // of the gate contract.
 
 const FRAME_LENGTH = 1280;   // audio samples per step (80 ms @ 16 kHz)
+const SAMPLE_RATE = 16000;
+// Silence fed through the chain on start/reset to populate the embedding
+// window. The window is `wakeWindow` embeddings deep and each embedding
+// needs 76 mel frames at stride 8, so ~3s covers a full window with room
+// to spare.
+const WARMUP_MS = 3000;
 const MELS_PER_FRAME = 5;    // mel frames the mel model emits per 1280 samples
 const MEL_BINS = 32;         // mel bins per frame
 const MEL_WINDOW = 76;       // mel frames per embedding-model window
@@ -191,6 +198,9 @@ function createOpenWakeWordEngine({
   embeddingModelPath,
   threshold = 0.5,
   sessionFactory,
+  // Silence primed through the chain on ready + after every reset (see
+  // warmSilence). Tests that count model invocations pass 0 to opt out.
+  warmupMs = WARMUP_MS,
 } = {}) {
   const backend = sessionFactory || defaultSessionFactory();
 
@@ -224,6 +234,11 @@ function createOpenWakeWordEngine({
   })();
 
   readyPromise.catch((e) => { lastError = e; });
+  // Warm the window as soon as the models are loaded, so the very first
+  // real utterance is scored against silence embeddings rather than zeros
+  // (see warmup() below -- this is the fix for the first-wake-after-join
+  // miss). Fire-and-forget: it rides the same async queue as real frames.
+  readyPromise.then(() => { warmSilence(); }).catch(() => { /* lastError recorded */ });
 
   // Runs the mel -> embedding -> wake chain for one frame. `gen` is the
   // generation captured at schedule time; buffer mutations and the detection
@@ -305,6 +320,21 @@ function createOpenWakeWordEngine({
     drain();
   }
 
+  // Enqueue WARMUP_MS of silence through the mel/embedding chain.
+  function warmSilence(ms = warmupMs) {
+    if (!ms || ms <= 0) return drainDone;
+    const frames = Math.ceil((ms / 1000) * SAMPLE_RATE / FRAME_LENGTH);
+    const silence = new Int16Array(FRAME_LENGTH);
+    // `inferScheduled` is a diagnostic for how much REAL user audio reached the
+    // engine (it is printed at utterance end to tell "no audio" apart from
+    // "audio scored low"). Warm-up silence is neither, so don't let it inflate
+    // the count -- schedule() bumps it synchronously, so restore it after.
+    const before = inferScheduled;
+    for (let i = 0; i < frames; i++) schedule(silence);
+    inferScheduled = before;
+    return drainDone;
+  }
+
   return {
     frameLength: FRAME_LENGTH,
 
@@ -330,7 +360,25 @@ function createOpenWakeWordEngine({
       melBuffer = [];
       embHistory = [];
       for (let i = 0; i < wakeWindow; i++) embHistory.push(new Float32Array(EMBEDDING_DIM));
+      // Re-warm: reset() re-zeroes the window, so without this every session end
+      // would leave the engine cold and the NEXT wake would miss -- exactly the
+      // "first wake after joining fails" symptom.
+      warmSilence();
     },
+
+    // Prime the mel/embedding pipeline with real SILENCE so `embHistory` holds
+    // genuine silence embeddings instead of the zero vectors it is initialised
+    // with. Without this the model scores the wake phrase against an essentially
+    // empty window and misses it: measured on a real "hey jarvis" recording fed
+    // from its exact speech onset (which is what Discord delivers -- `speaking
+    // start` fires when the user begins talking, so there is NO lead-in audio),
+    // a cold engine scored 0.008 (miss) where a warmed one scored 0.998.
+    //
+    // This is why the FIRST wake after joining a channel failed so reliably --
+    // and why it recurred after every session, since reset() re-zeroes the
+    // window. Warming is idempotent and cheap (silence through the same chain),
+    // and runs on the async queue so it never blocks the caller.
+    warmup(ms) { return warmSilence(ms); },
 
     // --- non-contract helpers (testing / lifecycle) ---
     ready() { return readyPromise; },
