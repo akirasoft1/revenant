@@ -726,3 +726,46 @@ async def test_reopen_failure_budget_exhausted_surfaces_as_error():
     await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=3)
     assert factory.attempts.count == 2
     assert any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+# --- Regression: audio must not be dropped while the FIRST session opens -------
+#
+# Root cause of a production outage (2026-08-14): `pump_in` was created before
+# the Live session existed, so `_pump_client` drained the bot's gRPC stream and
+# silently dropped every frame while `session_ref.session` was still None. The
+# bot flushes its whole pre-roll (the wake phrase AND the question spoken with
+# it) immediately after session_start, and a real Live open + seeding takes
+# ~1-2s -- so the user's entire question was thrown away and the model had
+# nothing to answer. Dropping is only correct for a RECONNECT gap (stale audio
+# after a resume reads as current speech); the initial open must not lose audio.
+
+def _slow_open_factory(session, open_delay=0.05):
+    @contextlib.asynccontextmanager
+    async def make(model, config):
+        await asyncio.sleep(open_delay)   # a real Live open is ~1-3s
+        yield session
+    return make
+
+
+async def test_audio_sent_before_the_first_session_opens_is_not_dropped():
+    session = FakeSession([])
+    bridge = LiveBridge(_slow_open_factory(session), model="m", default_voice="Puck")
+    out = []
+    async def emit(ev): out.append(ev)
+
+    async def req_iter():
+        # Exactly what the bot does: session_start, then an immediate pre-roll
+        # flush of the buffered wake-phrase/question audio, then live frames.
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        for i in range(3):
+            yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=bytes([i])))
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert [a.data for a in session.sent_audio] == [b"\x00", b"\x01", b"\x02"], (
+        f"pre-roll audio was dropped while the session opened; got {session.sent_audio}")
