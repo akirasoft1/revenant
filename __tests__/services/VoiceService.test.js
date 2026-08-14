@@ -40,7 +40,13 @@ function makeService(deps, configOverrides = {}, contextBuilder, speakerNames) {
       const s = new EventEmitter();
       s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.sendAudioStreamEnd = jest.fn(); s.end = jest.fn();
       s.sendSpeaker = jest.fn();
-      s.sendAcknowledgeWaiting = jest.fn();
+      // Mirrors the real VoiceClient contract: sendAcknowledgeWaiting reports its
+      // outcome as a boolean (false = the write provably did not go out). A fake
+      // that returned undefined is what let the "only release if the ack actually
+      // went out" guarantee pass its tests while being false in production -- the
+      // failure tests below drive `false`, the signal the real client emits, not a
+      // synchronous throw the real client never produces.
+      s.sendAcknowledgeWaiting = jest.fn(() => true);
       return s;
     }),
     isHealthy: jest.fn(() => true),
@@ -1418,7 +1424,13 @@ describe('deferral: announce and release', () => {
   // FIX 2: a failed send must change nothing. Releasing the floor after the
   // model never got the nudge deafens the session for an invitation that was
   // never issued.
-  test('does not latch or release the floor when the acknowledgment fails to send', async () => {
+  //
+  // FINAL WAVE / FIX 1: the failure signal is the CLIENT'S RETURN VALUE, not an
+  // exception. VoiceClient.sendAcknowledgeWaiting catches its own write error and
+  // reports `false`; it never rethrows, so the original version of this test
+  // (which installed a synchronous throw) exercised a signal the real client
+  // cannot produce, and `sent` was unconditionally true in production.
+  test('does not latch or release the floor when the acknowledgment reports it did not send', async () => {
     let t = 0;
     const { svc, guildId, session, player } = await buildActiveVoiceService({
       deferralEnabled: true, now: () => t,
@@ -1426,7 +1438,7 @@ describe('deferral: announce and release', () => {
     const g = qualifiedWaiter(svc, guildId, 'bob');
     g.machine._state = 'hot';
     player.state = { status: 'idle' };
-    session.sendAcknowledgeWaiting.mockImplementationOnce(() => { throw new Error('stream closed'); });
+    session.sendAcknowledgeWaiting.mockReturnValueOnce(false);
 
     svc._tick(guildId);
     expect(g.floor.holder()).toBe('u1');          // floor untouched
@@ -1439,6 +1451,27 @@ describe('deferral: announce and release', () => {
     svc._tick(guildId);
     expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(2);
     expect(g.floor.holder()).toBeNull();
+  });
+
+  // Belt-and-braces half of the same fix: the real client cannot throw, but some
+  // other session implementation might, and an escaped exception must still count
+  // as "did not send" rather than propagating out of the 250ms tick.
+  test('a thrown acknowledgment is also treated as a failure, with the full message logged', async () => {
+    let t = 0;
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, now: () => t,
+    });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    session.sendAcknowledgeWaiting.mockImplementationOnce(() => { throw new Error('stream closed'); });
+    logger.warn.mockClear();
+
+    expect(() => svc._tick(guildId)).not.toThrow();
+    expect(g.floor.holder()).toBe('u1');
+    expect(g.ackedThisTurn).toBe(false);
+    const warn = logger.warn.mock.calls.find((c) => /sendAcknowledgeWaiting failed/.test(c[0]));
+    expect(warn[0]).toContain('stream closed');   // the thrown message, untruncated
   });
 
   // FIX 5: the acknowledgment is a fresh bot turn, so it must re-arm the
@@ -1715,6 +1748,152 @@ describe('deferral: qualification is per-utterance, not cumulative', () => {
   }
 });
 
+// FINAL WAVE / FIX 2: qualification belongs to the turn it was earned against.
+// Nothing used to clear it at a turn boundary -- only a successful ack or
+// _endSession -- so a waiter who qualified against turn N and then went silent
+// could be named at the drain of turn N+1, minutes later.
+describe('deferral: qualification does not survive a turn boundary', () => {
+  // 40 frames of speech (20ms each = 800ms, over the 700ms bar) then an end.
+  function longUtteranceGate() {
+    const seq = [];
+    for (let f = 0; f < 40; f++) seq.push({ speaking: true, justStarted: f === 0, justEnded: false });
+    seq.push({ speaking: false, justStarted: false, justEnded: true });
+    seq.push({ speaking: false, justStarted: false, justEnded: false });
+    return fakeVadGate(seq);
+  }
+
+  test('a waiter who qualified against the PREVIOUS turn is not announced after the next one drains', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true, deferralEnabled: true, deferralMinSpeechMs: 700,
+      speakerNames: { resolve: () => 'Bob' },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = longUtteranceGate();
+    svc._perUser(g, 'alice').vadGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+
+    // Turn N: the bot is replying and Bob talks over it for 800ms -- he qualifies.
+    player.state = { status: 'playing' };
+    for (let i = 0; i < 41; i++) await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+    expect(svc._perUser(g, 'bob').waitingPeakMs).toBeGreaterThanOrEqual(700);
+
+    // The model finishes generating, but the audio has NOT drained yet...
+    g.machine._state = 'hot';
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();   // still playing
+
+    // ...and before it drains, Alice (the holder) says something: turn N+1 opens,
+    // the machine goes hot -> active, and turn N's drain-time ack never fires.
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+    expect(g.machine.state).toBe('active');
+    expect(svc._perUser(g, 'bob').waitingPeakMs).toBe(0); // Bob's claim died with turn N
+    expect(svc._perUser(g, 'bob').waitingMs).toBe(0);
+
+    // Turn N+1 completes and drains. Bob has been silent throughout it.
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).toBe('alice');                 // nothing released
+    // Proof this is the counter and not some other missing precondition: he is
+    // still a known, named waiter -- he simply has no qualifying speech any more.
+    expect(g.floor.waiting()).toContain('bob');
+    expect(svc._perUser(g, 'bob').name).toBe('Bob');
+  });
+
+  test('the same waiter IS announced when they re-qualify against the new turn', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true, deferralEnabled: true, deferralMinSpeechMs: 700,
+      speakerNames: { resolve: () => 'Bob' },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = longUtteranceGate();
+    svc._perUser(g, 'alice').vadGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+
+    player.state = { status: 'playing' };
+    for (let i = 0; i < 41; i++) await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));   // turn N+1 opens, Bob is cleared
+    expect(svc._perUser(g, 'bob').waitingPeakMs).toBe(0);
+
+    // Bob talks over turn N+1's reply too -- a fresh 800ms utterance.
+    svc._perUser(g, 'bob').vadGate = longUtteranceGate();
+    for (let i = 0; i < 41; i++) await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Bob' });
+  });
+});
+
+// FINAL WAVE / FIX 5: the ack clears QUALIFICATION state. `withheldMs` is the
+// session-scoped measurement counter (_endSession owns it) and is the source of
+// the "Nms withheld in total" figure -- zeroing it on every ack silently reset
+// the measurement mid-session, corrupting the data it exists to gather.
+describe('deferral: the acknowledgment preserves the session measurement counter', () => {
+  test('clears waitingMs/waitingPeakMs but leaves withheldMs accumulating', async () => {
+    const seq = [];
+    for (let f = 0; f < 40; f++) seq.push({ speaking: true, justStarted: f === 0, justEnded: false });
+    seq.push({ speaking: false, justStarted: false, justEnded: true });
+    seq.push({ speaking: false, justStarted: false, justEnded: false });
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true, deferralEnabled: true, deferralMinSpeechMs: 700,
+      speakerNames: { resolve: () => 'Bob' },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = fakeVadGate(seq);
+    player.state = { status: 'playing' };
+    for (let i = 0; i < 41; i++) await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+    const withheldBefore = svc._perUser(g, 'bob').withheldMs;
+    expect(withheldBefore).toBeGreaterThanOrEqual(700);
+
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Bob' });
+
+    expect(svc._perUser(g, 'bob').withheldMs).toBe(withheldBefore);   // measurement survives
+    expect(svc._perUser(g, 'bob').waitingMs).toBe(0);                 // qualification does not
+    expect(svc._perUser(g, 'bob').waitingPeakMs).toBe(0);
+  });
+});
+
+// FINAL WAVE / FIX 4: a config object with no usable threshold must fall back to
+// the documented 700ms default, never to 0 -- `>= 0` is true for every named
+// waiter on their very first speech frame.
+describe('deferral: an unusable configured threshold falls back, not to zero', () => {
+  test('a NaN threshold does not announce a 100ms waiter', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, deferralMinSpeechMs: NaN,
+    });
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, 'bob'); u.name = 'Sarah'; u.waitingMs = 100;   // far below 700
+    g.floor.noteWaiting('bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+
+    svc._tick(guildId);
+
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).toBe('u1');
+  });
+
+  test('...but still announces a waiter who clears the fallback default', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, deferralMinSpeechMs: NaN,
+    });
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, 'bob'); u.name = 'Sarah'; u.waitingMs = 900;   // over 700
+    g.floor.noteWaiting('bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+
+    svc._tick(guildId);
+
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Sarah' });
+  });
+});
+
 // FIX D: retrying a failed acknowledgment is correct; retrying it on every 250ms
 // tick forever is not (~240 attempts and 240 warn lines per 60s follow-up window,
 // unbounded in /voice listen).
@@ -1729,7 +1908,7 @@ describe('deferral: failed-acknowledgment backoff', () => {
     g.floor.noteWaiting('bob');
     g.machine._state = 'hot';
     player.state = { status: 'idle' };
-    session.sendAcknowledgeWaiting.mockImplementation(() => { throw new Error('stream closed'); });
+    session.sendAcknowledgeWaiting.mockReturnValue(false);   // the real client's failure signal
     logger.warn.mockClear();
 
     // 40 ticks at the real 250ms cadence = 10s of wall clock.
@@ -1742,7 +1921,7 @@ describe('deferral: failed-acknowledgment backoff', () => {
     expect(warns.length).toBe(session.sendAcknowledgeWaiting.mock.calls.length);
     // Full message, never truncated -- what changed is frequency, plus per-attempt
     // detail so no two lines are verbatim identical.
-    expect(warns[0][0]).toContain('stream closed');
+    expect(warns[0][0]).toContain('the write did not go out');
     expect(warns[0][0]).toMatch(/attempt 1, retrying in \d+ms/);
     expect(warns[1][0]).toMatch(/attempt 2, retrying in \d+ms/);
     expect(warns[0][0]).not.toBe(warns[1][0]);
@@ -1758,7 +1937,7 @@ describe('deferral: failed-acknowledgment backoff', () => {
     g.floor.noteWaiting('bob');
     g.machine._state = 'hot';
     player.state = { status: 'idle' };
-    session.sendAcknowledgeWaiting.mockImplementationOnce(() => { throw new Error('stream closed'); });
+    session.sendAcknowledgeWaiting.mockReturnValueOnce(false);
 
     svc._tick(guildId);
     expect(g.ackNextAttemptAt).toBeGreaterThan(0);

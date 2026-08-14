@@ -7,6 +7,20 @@
 // FloorControl arbitration with two streams -- faithful to production,
 // where Discord hands the bot one per-speaker audio stream per user.
 //
+// WHAT THIS CAN AND CANNOT TELL YOU ABOUT VOICE_DEFERRAL_MIN_SPEECH_MS:
+// production qualifies a waiter on `Math.max(waitingPeakMs, waitingMs)` -- the
+// longest SINGLE utterance, counted only while the BOT ITSELF was producing
+// audio. This harness mirrors the per-utterance half exactly (see accrueWaiting
+// below), but it is a two-WAV offline tool with no bot playback in it at all, so
+// it structurally CANNOT model the overlap condition: every withheld frame is
+// counted here as though it overlapped a reply. The numbers it prints are
+// therefore an UPPER BOUND on the production figure, useful for sanity-checking
+// the per-utterance rule and the rough magnitude of a threshold -- not for
+// deriving a production-ready value on their own. For that, read the
+// "longest single utterance of this turn" figure out of the real withheld-speech
+// debug log (VoiceService's non-holder branch), which is measured under the real
+// overlap condition.
+//
 // Usage:
 //   node scripts/test-floor.js [fileA] [fileB] [threshold]
 //
@@ -132,19 +146,42 @@ async function run(threshold) {
 
   const stateStr = () => `(holder=${floor.holder() || 'none'}, waiting=[${floor.waiting().join(',')}])`;
 
-  // Mirrors VoiceService.js's non-holder branch (services/VoiceService.js ~L314-318):
-  // withheld speech only accrues while the per-user VAD reports `speaking`, at
-  // Math.round((pcm16.length / 2) / 16) ms per chunk (16 kHz mono s16le).
-  const waitingMs = { A: 0, B: 0 };
+  // Mirrors the non-holder branch of VoiceService's `_handleUserPcm` (the
+  // `if (!isHolder)` block): withheld speech accrues only while the per-user VAD
+  // reports `speaking`, at Math.round((pcm16.length / 2) / 16) ms per chunk
+  // (16 kHz mono s16le).
+  //
+  // Qualification is PER UTTERANCE, exactly as in production: the running
+  // `waitingMs` is folded into `waitingPeakMs` on speech end and zeroed, and the
+  // threshold is tested against max(peak, in-progress). Summing cumulatively
+  // across utterances -- what this harness did in round 1 -- declares QUALIFIED
+  // for three separate 300ms bursts, precisely the cough/backchannel/echo case
+  // the threshold exists to reject, and would hand back a threshold that is too
+  // low. `withheldMs` is the separate cumulative total, kept for contrast.
+  //
+  // Caveat, restated because it decides how much you can trust the number: there
+  // is no bot playback in this harness, so unlike production every withheld frame
+  // counts toward qualification. See the header.
+  const withheldMs = { A: 0, B: 0 };
+  const waitingMs = { A: 0, B: 0 };      // current, still-open utterance
+  const waitingPeakMs = { A: 0, B: 0 };  // longest utterance that has ENDED
   const qualified = { A: false, B: false };
 
   function accrueWaiting(speaker, r, chunk, ms) {
     if (floor.isHolder(speaker)) return; // holder's own speech isn't "withheld"
-    if (!r.speaking) return;
-    waitingMs[speaker] = (waitingMs[speaker] || 0) + Math.round((chunk.length / 2) / 16);
-    if (!qualified[speaker] && waitingMs[speaker] >= DEFERRAL_MIN_SPEECH_MS) {
+    if (r.speaking) {
+      const chunkMs = Math.round((chunk.length / 2) / 16);
+      withheldMs[speaker] += chunkMs;
+      waitingMs[speaker] += chunkMs;
+    }
+    if (r.justEnded) {
+      waitingPeakMs[speaker] = Math.max(waitingPeakMs[speaker], waitingMs[speaker]);
+      waitingMs[speaker] = 0;
+    }
+    const best = Math.max(waitingPeakMs[speaker], waitingMs[speaker]);
+    if (!qualified[speaker] && best >= DEFERRAL_MIN_SPEECH_MS) {
       qualified[speaker] = true;
-      console.log(`${ms}ms   SPEAKER ${speaker} QUALIFIED after ${waitingMs[speaker]}ms of withheld speech (threshold=${DEFERRAL_MIN_SPEECH_MS}ms)`);
+      console.log(`${ms}ms   SPEAKER ${speaker} QUALIFIED after a single ${best}ms utterance of withheld speech (threshold=${DEFERRAL_MIN_SPEECH_MS}ms, ${withheldMs[speaker]}ms withheld cumulatively)`);
     }
   }
 
@@ -193,7 +230,9 @@ async function run(threshold) {
   }
 
   console.log(`\nfinal state: ${stateStr()}`);
-  console.log(`final withheld-speech accrual: A=${waitingMs.A}ms (qualified=${qualified.A}), B=${waitingMs.B}ms (qualified=${qualified.B})`);
+  const summarize = (s) => `${s}: longest single withheld utterance ${Math.max(waitingPeakMs[s], waitingMs[s])}ms (qualified=${qualified[s]}), ${withheldMs[s]}ms withheld cumulatively`;
+  console.log(`final withheld-speech accrual -- ${summarize('A')}; ${summarize('B')}`);
+  console.log('(no bot playback exists in this harness, so these are an upper bound on the production figure -- see the header)');
 }
 
 run(0.5).catch((e) => { console.error(e); process.exit(1); });

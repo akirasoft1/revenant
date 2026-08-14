@@ -126,11 +126,35 @@ class VoiceClient {
         logger.debug(`VoiceClient sendSpeaker write threw: ${e.message}`);
       }
     };
+    // Returns TRUE when the event was handed to the stream, FALSE when it
+    // provably was not. Unlike its sibling senders this one reports its outcome,
+    // because its caller (VoiceService's Phase 4 deferral) latches
+    // `ackedThisTurn`, releases the floor and clears every qualification counter
+    // on the strength of it -- doing that for a nudge that never left the
+    // process means nobody is acknowledged and no retry ever fires.
+    //
+    // HONEST LIMIT: this is NOT a delivery receipt. grpc-js surfaces a write to a
+    // duplex the server has already torn down as an asynchronous 'error' event on
+    // the call, not a synchronous throw, so a `true` here means only "as far as
+    // this process can tell, it went out" -- not "the sidecar received it". A
+    // half-dead stream can still swallow the nudge silently. The real fix is a
+    // sidecar->bot confirmation for AcknowledgeWaiting, which is a protocol change
+    // and is deliberately parked as a follow-up.
     session.sendAcknowledgeWaiting = ({ displayName }) => {
+      // A stream we have already ended or destroyed cannot carry this at all.
+      // Node reports that asynchronously, long after the caller has decided the
+      // ack "went out"; checking it here turns one real failure mode into an
+      // honest synchronous false instead of a lie.
+      if (call.writableEnded || call.destroyed) {
+        logger.debug(`VoiceClient sendAcknowledgeWaiting skipped: the Converse stream is already closed (writableEnded=${!!call.writableEnded}, destroyed=${!!call.destroyed})`);
+        return false;
+      }
       try {
         call.write({ acknowledge_waiting: { display_name: displayName || '' } });
+        return true;
       } catch (e) {
         logger.debug(`VoiceClient sendAcknowledgeWaiting write threw: ${e.message}`);
+        return false;
       }
     };
     session.end = () => {
