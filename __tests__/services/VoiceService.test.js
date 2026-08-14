@@ -31,6 +31,7 @@ function makeService(deps, configOverrides = {}, contextBuilder, speakerNames) {
       const s = new EventEmitter();
       s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.sendAudioStreamEnd = jest.fn(); s.end = jest.fn();
       s.sendSpeaker = jest.fn();
+      s.sendAcknowledgeWaiting = jest.fn();
       return s;
     }),
     isHealthy: jest.fn(() => true),
@@ -38,6 +39,7 @@ function makeService(deps, configOverrides = {}, contextBuilder, speakerNames) {
   const mongoService = { recordChannelMessage: jest.fn().mockResolvedValue({}) };
   const config = { voice: { enabled: true, wakeWord: 'hey jarvis', liveVoice: 'Puck',
     followupWindowMs: 1000, idleTimeoutMs: 60000, maxSessions: 2, maxSessionSeconds: 600,
+    deferralEnabled: false, deferralMinSpeechMs: 700,
     ...configOverrides } };
   const builder = contextBuilder || jest.fn().mockResolvedValue({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
   return { svc: new VoiceService({ voiceClient, mongoService, config, deps, contextBuilder: builder, speakerNames }),
@@ -123,6 +125,8 @@ async function buildActiveVoiceService(overrides = {}) {
   if (overrides.allowBargeIn !== undefined) configOverrides.allowBargeIn = overrides.allowBargeIn;
   if (overrides.speechEndSilenceMs !== undefined) configOverrides.speechEndSilenceMs = overrides.speechEndSilenceMs;
   if (overrides.clientEndpointing !== undefined) configOverrides.clientEndpointing = overrides.clientEndpointing;
+  if (overrides.deferralEnabled !== undefined) configOverrides.deferralEnabled = overrides.deferralEnabled;
+  if (overrides.deferralMinSpeechMs !== undefined) configOverrides.deferralMinSpeechMs = overrides.deferralMinSpeechMs;
   const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, overrides.contextBuilder, overrides.speakerNames);
   const guildId = 'g1';
   await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
@@ -1220,5 +1224,79 @@ describe('waiting-speaker measurement', () => {
     svc._endSession(g);
 
     expect(svc._perUser(g, 'bob').waitingMs).toBe(0);
+  });
+});
+
+describe('deferral: announce and release', () => {
+  function qualifiedWaiter(svc, guildId, userId, name = 'Sarah') {
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, userId);
+    u.name = name;
+    u.waitingMs = 5000;              // comfortably over the threshold
+    g.floor.noteWaiting(userId);
+    return g;
+  }
+
+  test('does NOT announce while the bot is still playing (drain, not turnComplete)', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'playing' };   // model finished generating; audio still draining
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+  });
+
+  test('announces once the playback has drained, then releases the floor and clears the speaker', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Sarah' });
+    expect(g.floor.holder()).toBeNull();                       // released, not handed over
+    expect(session.sendSpeaker).toHaveBeenCalledWith(          // identity cleared
+      expect.objectContaining({ displayName: '' }));
+  });
+
+  test('does not announce an unqualified (too-short) waiter', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, 'bob'); u.name = 'Sarah'; u.waitingMs = 100;  // below 700ms
+    g.floor.noteWaiting('bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+  });
+
+  test('does not announce a waiter with no resolvable name', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, 'bob'); u.name = null; u.waitingMs = 5000;
+    g.floor.noteWaiting('bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+  });
+
+  test('announces at most once per turn', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(1);
+  });
+
+  test('with the flag OFF, behaviour is unchanged', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({});  // default: disabled
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).not.toBeNull();
   });
 });

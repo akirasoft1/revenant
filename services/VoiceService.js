@@ -73,6 +73,7 @@ class VoiceService {
       `Write for the ear, not the page. Never wrap titles or names in quotation marks — a trailing straight quote gets voiced as the inches symbol, so "Toy Story 3" is read aloud as "Toy Story 3 inches". Just say the title plainly. Avoid other punctuation that gets spoken rather than heard, like parentheses, asterisks, slashes and emoji.`,
       `Say digit strings the way a person would read them out: zip codes, phone numbers, addresses, flight numbers, years and version numbers go digit by digit or in natural pairs — 60067 is "six oh oh six seven", not "sixty thousand sixty-seven". Use ordinary words for ordinary quantities ("72 degrees" is fine).`,
       `You are in a shared voice room. Before someone's turn you may receive a line like "[SPEAKER: Mike]". That is out-of-band metadata telling you who is talking now — NEVER read it aloud, never repeat the brackets or the word SPEAKER, and never mention that you receive it. Use it only to know who you are talking to, and address people by name when it is natural.`,
+      `Lines beginning "[SYSTEM:" are out-of-band notes to you, exactly like the "[SPEAKER:" markers — NEVER read them aloud or mention them. If one tells you someone tried to speak while you were talking, just briefly let that person know you noticed, in your own voice, and then stop and wait for them — don't answer whatever you think they were going to ask.`,
     ].join('\n\n');
     return prompt ? `${prompt}\n\n${note}` : note;
   }
@@ -144,7 +145,8 @@ class VoiceService {
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
       pending: null, lastSpeechAt: null, audioEndSent: false, turnActive: false,
-      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null };
+      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null,
+      ackedThisTurn: false };
     this._guilds.set(guildId, state);
 
     connection.receiver.speaking.on('start', (userId) => {
@@ -347,6 +349,7 @@ class VoiceService {
     if (v.justStarted || (v.speaking && !g.turnActive)) {
       g.turnActive = true;
       g.audioEndSent = false;
+      g.ackedThisTurn = false; // a new turn opened -- allow a fresh deferral announcement
       await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
     }
     if (v.speaking) g.lastSpeechAt = this._deps.now();
@@ -621,6 +624,46 @@ class VoiceService {
       if (holder && holder.vadGate && typeof holder.vadGate.reset === 'function') holder.vadGate.reset();
     }
 
+    // --- Phase 4: announce a waiting speaker, then release the floor.
+    //
+    // The trigger is PLAYBACK DRAIN, not turnComplete. turnComplete only means
+    // the MODEL stopped generating -- _endPlayback then ends the stream so the
+    // buffered audio drains afterwards, and Live streams faster than real-time,
+    // so the bot is typically still talking for seconds after turnComplete.
+    // Announcing then would cut it off mid-word.
+    if (this._config.voice && this._config.voice.deferralEnabled
+        && g.session && !g.ackedThisTurn && g.machine.state === 'hot') {
+      const playing = g.player && g.player.state && g.player.state.status;
+      const drained = playing !== 'playing' && playing !== 'buffering';
+      if (drained) {
+        const minMs = this._config.voice.deferralMinSpeechMs || 0;
+        const waiterId = g.floor.waiting().find((id) => {
+          const wu = g.perUser.get(id);
+          // Qualified = spoke long enough to be a real interjection AND we know
+          // what to call them. Never invent a name (Phase 3 rule).
+          return wu && wu.name && (wu.waitingMs || 0) >= minMs;
+        });
+        if (waiterId) {
+          const wu = g.perUser.get(waiterId);
+          logger.info(`voice: acknowledging waiting speaker ${wu.name} in guild ${guildId} (${wu.waitingMs}ms of withheld speech)`);
+          try { g.session.sendAcknowledgeWaiting({ displayName: wu.name }); }
+          catch (e) { logger.warn(`voice: sendAcknowledgeWaiting failed: ${e.message}`); }
+          g.ackedThisTurn = true;
+          // Release rather than hand over: if the invitation lands on nobody,
+          // the next real speaker simply takes the floor and the room
+          // self-corrects. Handing the floor to someone we have not heard is
+          // how you get a deaf bot.
+          g.floor.release();
+          for (const pu of g.perUser.values()) pu.waitingMs = 0;
+          g.lastSpeakerSent = null;
+          // Clear the model's idea of who is talking, or the next speaker
+          // inherits this identity (the hazard Phase 3's review deferred here).
+          try { if (typeof g.session.sendSpeaker === 'function') g.session.sendSpeaker({ userId: '', displayName: '' }); }
+          catch (e) { logger.warn(`voice: speaker clear failed: ${e.message}`); }
+        }
+      }
+    }
+
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
   }
 
@@ -647,6 +690,7 @@ class VoiceService {
     g.lastSpeechAt = null;
     g.audioEndSent = false;
     g.lastSpeakerSent = null; // a new session re-announces the speaker
+    g.ackedThisTurn = false;
     if (g.floor) g.floor.release();
     if (g.perUser) {
       for (const u of g.perUser.values()) {
