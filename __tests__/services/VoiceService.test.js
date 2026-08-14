@@ -3,8 +3,17 @@ const { EventEmitter } = require('events');
 const logger = require('../../logger');
 const VoiceService = require('../../services/VoiceService');
 
+// Mirrors ACK_RETRY_BASE_MS in services/VoiceService.js: the delay before the
+// FIRST retry of a failed deferral acknowledgment.
+const ACK_BACKOFF_FIRST_MS = 1000;
+
 function makeDeps(overrides = {}) {
   const player = new EventEmitter(); player.play = jest.fn(); player.stop = jest.fn();
+  // A real @discordjs/voice AudioPlayer ALWAYS carries a state (it starts Idle);
+  // the fake used to have none, which is the one shape where the half-duplex gate
+  // and the drain check used to disagree. Default it faithfully so "no state at
+  // all" is an explicit, deliberate setup in the one test that wants it.
+  player.state = { status: 'idle' };
   const connection = new EventEmitter();
   connection.subscribe = jest.fn();
   connection.receiver = { subscribe: jest.fn(() => new EventEmitter()), speaking: new EventEmitter() };
@@ -714,6 +723,20 @@ test('half-duplex: no user audio is streamed while the bot is playing its reply 
   expect(gate.push).toHaveBeenCalledTimes(1);
 });
 
+// FIX F: the half-duplex gate and the drain check must share ONE definition of
+// "the bot is producing audio". They used to disagree on a player with no
+// `.state`: the inlined gate read it as silent (mic flows, echo loop possible)
+// while _botIsSpeaking read it as speaking. Unreachable with a real AudioPlayer,
+// but the two fail-safes must at least point the same way.
+test('half-duplex: a player reporting no state at all reads as STILL SPEAKING (fail-safe)', async () => {
+  const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+  const { svc, guildId, session, player } = await buildActiveVoiceService({ makeVadGate: () => gate });
+  delete player.state;
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+  expect(session.sendAudio).not.toHaveBeenCalled();
+  expect(gate.push).not.toHaveBeenCalled();   // the early-return happens before the VAD gate
+});
+
 test('barge-in enabled (allowBargeIn): speech IS streamed while the bot is playing', async () => {
   const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
   const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate, allowBargeIn: true, playing: true });
@@ -1158,11 +1181,15 @@ describe('waiting-speaker measurement', () => {
     const holderGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
     const otherGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
     const gates = { alice: holderGate, bob: otherGate };
-    const { svc, guildId } = await buildActiveVoiceService({
-      holder: 'alice',
+    // waitingMs only accrues while the bot is actually producing audio, so the
+    // bot has to be talking (and barge-in on, or the half-duplex gate returns
+    // before the non-holder branch is ever reached).
+    const { svc, guildId, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true,
       makeVadGate: () => gates.__next || holderGate,
     });
     const g = svc._guilds.get(guildId);
+    player.state = { status: 'playing' };
     // seed bob's context with his own gate so the non-holder branch uses it
     svc._perUser(g, 'bob').vadGate = otherGate;
 
@@ -1261,8 +1288,9 @@ describe('waiting-speaker measurement', () => {
   // gather would be cumulative-since-join instead of per-episode.
   test('_endSession resets waitingMs so the measurement is scoped per session', async () => {
     const otherGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
-    const { svc, guildId } = await buildActiveVoiceService({ holder: 'alice' });
+    const { svc, guildId, player } = await buildActiveVoiceService({ holder: 'alice', allowBargeIn: true });
     const g = svc._guilds.get(guildId);
+    player.state = { status: 'playing' };   // so the overlap counter actually accrues
     svc._perUser(g, 'bob').vadGate = otherGate;
 
     await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
@@ -1271,6 +1299,7 @@ describe('waiting-speaker measurement', () => {
     svc._endSession(g);
 
     expect(svc._perUser(g, 'bob').waitingMs).toBe(0);
+    expect(svc._perUser(g, 'bob').waitingPeakMs).toBe(0);   // FIX C: the peak is session-scoped too
     expect(svc._perUser(g, 'bob').withheldMs).toBe(0);
   });
 });
@@ -1365,6 +1394,7 @@ describe('deferral: announce and release', () => {
     const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
     const g = qualifiedWaiter(svc, guildId, 'bob');
     g.machine._state = 'hot';
+    delete player.state;                   // a real AudioPlayer always has one; this is the fail-safe shape
     expect(player.state).toBeUndefined();
     svc._tick(guildId);
     expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
@@ -1389,7 +1419,10 @@ describe('deferral: announce and release', () => {
   // model never got the nudge deafens the session for an invitation that was
   // never issued.
   test('does not latch or release the floor when the acknowledgment fails to send', async () => {
-    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    let t = 0;
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, now: () => t,
+    });
     const g = qualifiedWaiter(svc, guildId, 'bob');
     g.machine._state = 'hot';
     player.state = { status: 'idle' };
@@ -1400,7 +1433,9 @@ describe('deferral: announce and release', () => {
     expect(g.ackedThisTurn).toBe(false);          // not latched
     expect(session.sendSpeaker).not.toHaveBeenCalledWith(expect.objectContaining({ displayName: '' }));
 
-    // ...and a later tick retries, because nothing was latched.
+    // ...and a later tick retries, because nothing was latched. (FIX D: "later"
+    // is now once the backoff has elapsed, not on the very next 250ms tick.)
+    t += ACK_BACKOFF_FIRST_MS;
     svc._tick(guildId);
     expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(2);
     expect(g.floor.holder()).toBeNull();
@@ -1458,16 +1493,17 @@ describe('deferral: announce and release', () => {
     expect(session.sendSpeaker).toHaveBeenCalledWith({ userId: 'bob', displayName: 'Sarah' });
   });
 
-  test('an open floor is claimed on VAD speech ONSET, not on mere packet delivery', async () => {
-    // No onset: the gate reports ongoing sub-threshold room noise, never a rising edge.
+  test('an open floor is claimed on VAD-reported SPEECH, not on mere packet delivery', async () => {
+    // The gate reports ongoing sub-threshold room noise: never speech, never an edge.
     const noiseGate = fakeVadGate([{ speaking: false, justStarted: false, justEnded: false }]);
-    const { svc, guildId, session } = await buildActiveVoiceService({
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
       holder: 'alice', deferralEnabled: true, allowBargeIn: true,
     });
     const g = svc._guilds.get(guildId);
     svc._perUser(g, 'carol').vadGate = noiseGate;
     g.floor.release();                     // post-acknowledgment: floor held by nobody
     g.machine._state = 'hot';
+    player.state = { status: 'idle' };      // the bot is silent, so ONLY the VAD can block this
 
     session.sendAudio.mockClear();
     await svc._handleUserPcm(guildId, 'carol', to48kStereo(silence()));
@@ -1476,20 +1512,261 @@ describe('deferral: announce and release', () => {
     expect(session.sendAudio).not.toHaveBeenCalled();
   });
 
+  // FIX G: this test used to stay green with the `holder() === null` clause
+  // deleted, because FloorControl.grant() already returns false when someone
+  // else holds. Every OTHER re-take condition is satisfied here (flag on, bot
+  // silent, VAD reporting speech), so spying on grant is what actually proves
+  // the service never even asks.
   test('while someone still holds the floor, a second speaker cannot take it', async () => {
     const bobGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
-    const { svc, guildId, session } = await buildActiveVoiceService({
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
       holder: 'alice', deferralEnabled: true, allowBargeIn: true,
     });
     const g = svc._guilds.get(guildId);
     svc._perUser(g, 'bob').vadGate = bobGate;
+    player.state = { status: 'idle' };
+    const grant = jest.spyOn(g.floor, 'grant');
 
     session.sendAudio.mockClear();
     await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
 
+    expect(grant).not.toHaveBeenCalled();   // the held floor is never even offered
     expect(g.floor.holder()).toBe('alice');
     expect(g.floor.waiting()).toContain('bob');
     expect(session.sendAudio).not.toHaveBeenCalled();
+  });
+
+  // FIX A: while the bot speaks its OWN acknowledgment the floor is held by
+  // NOBODY, and production runs VOICE_ALLOW_BARGE_IN=true so the half-duplex
+  // early-return never fires. That audio re-entering a laptop-speaker mic is one
+  // ~32ms rising edge away from seizing the floor -- which both feeds the bot's
+  // own voice back to the model as user input and locks out the person it just
+  // invited, who needs 700ms of real speech to qualify as a waiter again.
+  test('echo during the acknowledgment playback does NOT seize the unheld floor', async () => {
+    const echoGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'carol').vadGate = echoGate;
+    g.floor.release();                        // post-acknowledgment: nobody holds it
+    g.machine._state = 'hot';
+    player.state = { status: 'playing' };     // ...and the acknowledgment is still being spoken
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'carol', to48kStereo(speech()));
+
+    expect(g.floor.holder()).toBeNull();
+    expect(session.sendAudio).not.toHaveBeenCalled();
+
+    // Once the acknowledgment has drained, the same speaker takes the floor.
+    player.state = { status: 'idle' };
+    await svc._handleUserPcm(guildId, 'carol', to48kStereo(speech()));
+    expect(g.floor.holder()).toBe('carol');
+  });
+
+  // FIX B: the re-take must be LEVEL-triggered. VOICE_VAD_MIN_SILENCE_FRAMES is
+  // ~768ms, so a speaker who is already mid-utterance emits no new rising edge
+  // until they pause -- an edge-only re-take strands exactly the person the bot
+  // just invited to talk.
+  test('a speaker already mid-utterance (no rising edge) still takes the open floor', async () => {
+    const midUtterance = fakeVadGate([{ speaking: true, justStarted: false, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = midUtterance;
+    svc._perUser(g, 'bob').name = 'Sarah';
+    g.floor.release();
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+
+    expect(g.floor.holder()).toBe('bob');
+    expect(g.turnActive).toBe(true);
+    expect(session.sendAudio).toHaveBeenCalledTimes(1);
+  });
+
+  // FIX B(b): the worst shape of the same defect. Gemini's server VAD endpoints
+  // alice's turn early, the reply drains while she is STILL talking, and the
+  // acknowledgment releases the floor out from under her. Her very next frame is
+  // `speaking:true, justStarted:false` -- edge-only, she is cut off mid-word with
+  // no way back until she stops talking.
+  test('a holder whose floor was released mid-utterance recovers on the next frame', async () => {
+    const aliceGate = fakeVadGate([{ speaking: true, justStarted: false, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    svc._perUser(g, 'alice').vadGate = aliceGate;
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+
+    svc._tick(guildId);                                // ack fires, floor released
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalled();
+    expect(g.floor.holder()).toBeNull();
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));   // she never stopped talking
+
+    expect(g.floor.holder()).toBe('alice');
+    expect(session.sendAudio).toHaveBeenCalledTimes(1);
+  });
+
+  // FIX E: with the flag off the re-take must be structurally dead, not merely
+  // unreachable-by-invariant. A future fifth release() site would otherwise turn
+  // "machine non-idle => floor held" into a live code path under a flag that
+  // promises today's exact behaviour.
+  test('with the flag OFF, an unheld floor is never re-taken', async () => {
+    const bobGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: false, allowBargeIn: true,
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = bobGate;
+    g.floor.release();                     // the shape a fifth release() site would create
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    const grant = jest.spyOn(g.floor, 'grant');
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+
+    expect(grant).not.toHaveBeenCalled();
+    expect(g.floor.holder()).toBeNull();
+    expect(session.sendAudio).not.toHaveBeenCalled();
+  });
+});
+
+// FIX C: qualification describes ONE utterance. A session-cumulative counter let
+// three separate sub-threshold bursts add up to clear a bar none of them reached,
+// which is precisely what spec §5's threshold exists to reject ("coughs, one-word
+// backchannels, and echo bursts do not earn an announcement").
+describe('deferral: qualification is per-utterance, not cumulative', () => {
+  // Drive `frames` speech frames then a justEnded, repeated `bursts` times.
+  function burstGate(bursts, framesPerBurst) {
+    const seq = [];
+    for (let b = 0; b < bursts; b++) {
+      for (let f = 0; f < framesPerBurst; f++) seq.push({ speaking: true, justStarted: f === 0, justEnded: false });
+      seq.push({ speaking: false, justStarted: false, justEnded: true });
+    }
+    seq.push({ speaking: false, justStarted: false, justEnded: false });
+    return fakeVadGate(seq);
+  }
+
+  async function runBursts({ bursts, framesPerBurst }) {
+    const gate = burstGate(bursts, framesPerBurst);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true, deferralEnabled: true, deferralMinSpeechMs: 700,
+      speakerNames: { resolve: () => 'Bob' },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = gate;
+    player.state = { status: 'playing' };   // the bot is talking throughout, so every frame is overlap
+    // (frames + the closing justEnded frame) per burst; 20ms of speech each.
+    for (let i = 0; i < bursts * (framesPerBurst + 1); i++) {
+      await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+    }
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };      // drained -> the acknowledgment is evaluated now
+    svc._tick(guildId);
+    return { svc, g, session, guildId };
+  }
+
+  test('three sub-threshold bursts (300ms each, 900ms total) do NOT qualify', async () => {
+    const { g, session } = await runBursts({ bursts: 3, framesPerBurst: 15 }); // 15 * 20ms = 300ms
+    expect(svcWithheld(g)).toBeGreaterThanOrEqual(900);   // the cumulative sum WOULD have cleared 700
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).toBe('alice');              // ...and nothing was released
+  });
+
+  test('one continuous over-threshold utterance DOES qualify', async () => {
+    const { session } = await runBursts({ bursts: 1, framesPerBurst: 40 }); // 40 * 20ms = 800ms
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Bob' });
+  });
+
+  // The naive per-utterance RESET (zero on justEnded, no peak) makes the feature
+  // never fire at all: _tick evaluates AFTER the utterance ended, so the value is
+  // always 0 by then. The test above is what catches that -- this one pins the
+  // in-progress half, so a "peak only, drop the accumulator" variant is caught too.
+  test('an over-threshold utterance still IN PROGRESS qualifies', async () => {
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true, deferralEnabled: true, deferralMinSpeechMs: 700,
+      speakerNames: { resolve: () => 'Bob' },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = gate;
+    player.state = { status: 'playing' };
+    for (let i = 0; i < 40; i++) await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech())); // 800ms, no justEnded
+
+    expect(svc._perUser(g, 'bob').waitingPeakMs || 0).toBe(0);   // nothing folded yet
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Bob' });
+  });
+
+  function svcWithheld(g) {
+    const u = g.perUser.get('bob');
+    return u.withheldMs || 0;
+  }
+});
+
+// FIX D: retrying a failed acknowledgment is correct; retrying it on every 250ms
+// tick forever is not (~240 attempts and 240 warn lines per 60s follow-up window,
+// unbounded in /voice listen).
+describe('deferral: failed-acknowledgment backoff', () => {
+  test('backs off exponentially instead of retrying every 250ms tick', async () => {
+    let t = 0;
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, now: () => t,
+    });
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, 'bob'); u.name = 'Sarah'; u.waitingMs = 5000;
+    g.floor.noteWaiting('bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    session.sendAcknowledgeWaiting.mockImplementation(() => { throw new Error('stream closed'); });
+    logger.warn.mockClear();
+
+    // 40 ticks at the real 250ms cadence = 10s of wall clock.
+    for (let i = 0; i < 40; i++) { svc._tick(guildId); t += 250; }
+
+    // Without backoff this is 40. With 1s/2s/4s/8s/16s backoff it is ~5.
+    expect(session.sendAcknowledgeWaiting.mock.calls.length).toBeLessThanOrEqual(6);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalled();          // it does still retry
+    const warns = logger.warn.mock.calls.filter((c) => /sendAcknowledgeWaiting failed/.test(c[0]));
+    expect(warns.length).toBe(session.sendAcknowledgeWaiting.mock.calls.length);
+    // Full message, never truncated -- what changed is frequency, plus per-attempt
+    // detail so no two lines are verbatim identical.
+    expect(warns[0][0]).toContain('stream closed');
+    expect(warns[0][0]).toMatch(/attempt 1, retrying in \d+ms/);
+    expect(warns[1][0]).toMatch(/attempt 2, retrying in \d+ms/);
+    expect(warns[0][0]).not.toBe(warns[1][0]);
+  });
+
+  test('a successful acknowledgment clears the backoff state', async () => {
+    let t = 0;
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, now: () => t,
+    });
+    const g = svc._guilds.get(guildId);
+    const u = svc._perUser(g, 'bob'); u.name = 'Sarah'; u.waitingMs = 5000;
+    g.floor.noteWaiting('bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    session.sendAcknowledgeWaiting.mockImplementationOnce(() => { throw new Error('stream closed'); });
+
+    svc._tick(guildId);
+    expect(g.ackNextAttemptAt).toBeGreaterThan(0);
+    t += ACK_BACKOFF_FIRST_MS;             // wait out the first backoff
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(2);
+    expect(g.ackFailures).toBe(0);
+    expect(g.ackNextAttemptAt).toBe(0);
   });
 });
 
