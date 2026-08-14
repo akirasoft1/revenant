@@ -80,6 +80,21 @@ module.exports = {
     // cancellation, or a separate speaker path Discord can't see. Headphones are
     // belt-and-suspenders, not a requirement.
     allowBargeIn: process.env.VOICE_ALLOW_BARGE_IN === 'true',
+    // Client-side endpointing (Gemini "Hybrid VAD"): send an explicit
+    // audio_stream_end when our Silero VAD declares end-of-speech, instead of
+    // waiting on Gemini's server-side silence detection.
+    //
+    // DEFAULT OFF: endpointing is handled ENTIRELY by Gemini's automatic VAD,
+    // which matches Google's own Live API examples -- they stream audio with
+    // send_realtime_input and NEVER send audio_stream_end, tuning the server
+    // VAD instead. Set VOICE_CLIENT_ENDPOINTING=true to re-enable ours. Since
+    // Phase 1 we stream trailing silence continuously, so the server VAD can
+    // now finalize on its own -- and doing BOTH makes it finalize the same
+    // utterance twice, which surfaces as the model transcribing and answering
+    // one question two or three times (observed live: 31.9s of reply audio for
+    // a ~10s answer, and in_tx_chars counting the phrase twice).
+    clientEndpointing: process.env.VOICE_CLIENT_ENDPOINTING === 'true',
+
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
   },
   discord: {
