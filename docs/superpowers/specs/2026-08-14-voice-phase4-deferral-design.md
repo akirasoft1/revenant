@@ -91,7 +91,7 @@ Phase 3's final review flagged: there is no way to **clear** the speaker, so a s
 - **`services/VoiceService.js`** — waiting-duration accrual in the non-holder branch; the `_tick` trigger; the release + speaker-clear; `g.ackedThisTurn` lifecycle; the enriched measurement log.
 - **`voice-sidecar/src/live_bridge.py`** — handle `acknowledge_waiting` (inject the nudge, `turn_complete=True`); treat empty `SetSpeaker.display_name` as clear.
 - **`config/config.js`** — `deferralEnabled` (`VOICE_DEFERRAL_ENABLED`, default false), `deferralMinSpeechMs` (`VOICE_DEFERRAL_MIN_SPEECH_MS`, default 700).
-- **Prompt** — `_appendVoicePersona` gains one clause explaining that a `[SYSTEM: …]` acknowledgment instruction means "say one short line, then stop."
+- **Prompt** — `_appendVoicePersona` gains one clause explaining that a `[SYSTEM: …]` line is an out-of-band instruction (never read aloud, like the `[SPEAKER: …]` marker) and that an acknowledgment instruction means "react in your own voice, then stop and wait." Deliberately does NOT dictate a sentence shape — see §4.
 - **`FloorControl` — unchanged.**
 
 ## 8. Testing
