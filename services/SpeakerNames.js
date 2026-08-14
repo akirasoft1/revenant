@@ -12,9 +12,15 @@
 // sanitised. See spec 5.4.1.
 const MAX_LEN = 24;
 
+// Defensive clamp applied BEFORE the bracket-stripping regex, which is O(n^2)
+// on pathological input (many unclosed `[`/`(`/`{`). Not reachable via Discord
+// (names are capped at 32 chars) -- only via admin-authored VOICE_SPEAKER_NAMES
+// config -- but clamp anyway so a malformed override can never hang the process.
+const MAX_RAW_LEN = 500;
+
 function sanitize(raw) {
   if (typeof raw !== 'string') return '';
-  let s = raw;
+  let s = raw.length > MAX_RAW_LEN ? raw.slice(0, MAX_RAW_LEN) : raw;
   s = s.replace(/[​-‍﻿]/g, '');            // zero-width
   s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' '); // emoji/pictographs
   s = s.replace(/™/g, ' ');                           // ™
@@ -38,14 +44,21 @@ function createSpeakerNames({ overrides = {} } = {}) {
 
   function resolve(user, member) {
     if (!user) return null;
-    const candidates = [
-      table[user.id],
+
+    // The override table is AUTHORITATIVE: it exists specifically to override
+    // Discord names we don't trust, so it is never discarded for being
+    // "weird" (letterless, all-digits, etc.) -- only for sanitising to empty.
+    // It is still sanitised, because it is still spoken.
+    const overridden = sanitize(table[user.id]);
+    if (overridden !== '') return overridden;
+
+    const autoCandidates = [
       user.globalName || user.global_name,
       member && (member.nickname || member.nick),
       // `inc1067` -> `inc`; a digits-only username yields '' and falls through.
       typeof user.username === 'string' ? user.username.replace(/\d+$/, '') : null,
     ];
-    for (const c of candidates) {
+    for (const c of autoCandidates) {
       const s = sanitize(c);
       if (usable(s)) return s;
     }

@@ -42,3 +42,24 @@ test('caps absurdly long names', () => {
   const long = 'A'.repeat(80);
   expect(sanitize(long).length).toBeLessThanOrEqual(24);
 });
+
+test('a letterless-but-non-empty override is authoritative and is NOT discarded for being weird', () => {
+  const r1 = createSpeakerNames({ overrides: { u1: '12345' } });
+  expect(r1.resolve({ id: 'u1', username: 'fallback99', globalName: null }, null)).toBe('12345');
+
+  const r2 = createSpeakerNames({ overrides: { u1: '007' } });
+  expect(r2.resolve({ id: 'u1', username: 'fallback99', globalName: null }, null)).toBe('007');
+});
+
+test('an override that sanitises to empty still falls through to the next candidate', () => {
+  const r1 = createSpeakerNames({ overrides: { u1: '   ' } });
+  expect(r1.resolve(U({ globalName: 'inc' }), null)).toBe('inc');
+
+  const r2 = createSpeakerNames({ overrides: { u1: '🔥' } });
+  expect(r2.resolve(U({ globalName: 'inc' }), null)).toBe('inc');
+});
+
+test('auto-resolved behaviour is unchanged: a digits-only username (no override) still yields null', () => {
+  const r = createSpeakerNames({});
+  expect(r.resolve({ id: 'u1', username: '12345', globalName: null })).toBeNull();
+});
