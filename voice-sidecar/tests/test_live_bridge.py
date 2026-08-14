@@ -877,6 +877,63 @@ async def test_speaker_marker_is_reannounced_after_a_session_swap():
     assert not any(ev.WhichOneof("event") == "error" for ev in out)
 
 
+async def test_acknowledge_waiting_injects_a_completing_turn():
+    session = FakeSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    async def emit(ev): pass
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        yield voice_pb2.VoiceClientEvent(acknowledge_waiting=voice_pb2.AcknowledgeWaiting(display_name="Sarah"))
+        await asyncio.Event().wait()
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    nudges = [(t, c) for (t, c) in session.seeded if "[SYSTEM:" in str(t)]
+    assert len(nudges) == 1, f"expected one nudge, got {nudges}"
+    assert "Sarah" in str(nudges[0][0])
+    assert nudges[0][1] is True, "the nudge MUST complete the turn so the model replies"
+
+
+async def test_empty_acknowledge_waiting_sends_nothing():
+    session = FakeSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    async def emit(ev): pass
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        yield voice_pb2.VoiceClientEvent(acknowledge_waiting=voice_pb2.AcknowledgeWaiting(display_name="   "))
+        await asyncio.Event().wait()
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert not any("[SYSTEM:" in str(t) for (t, _c) in session.seeded)
+
+
+async def test_empty_set_speaker_clears_so_the_next_speaker_re_announces():
+    session = FakeSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    async def emit(ev): pass
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="u1", display_name="Mike"))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x01"))
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="", display_name=""))  # CLEAR
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="u1", display_name="Mike"))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x02"))
+        await asyncio.Event().wait()
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
+    # Without the clear, the second "Mike" would dedupe away and produce ONE marker.
+    assert len(markers) == 2, f"clear did not re-arm; markers={markers}"
+
+
 async def test_audio_sent_before_the_first_session_opens_is_not_dropped():
     session = FakeSession([])
     bridge = LiveBridge(_slow_open_factory(session), model="m", default_voice="Puck")

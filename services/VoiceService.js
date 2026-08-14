@@ -25,6 +25,18 @@ const MAX_PREROLL_FRAMES = 150;
 // (finalize the turn) when config doesn't provide one.
 const DEFAULT_SPEECH_END_SILENCE_MS = 800;
 
+// Backoff for a FAILED deferral acknowledgment. _tick runs at 250ms, so a bare
+// retry-every-tick loop is ~240 attempts (and 240 warn lines) per 60s follow-up
+// window, and unbounded in /voice listen. Retrying is still correct -- the send
+// can fail transiently -- so back off exponentially instead of hammering.
+const ACK_RETRY_BASE_MS = 1000;
+const ACK_RETRY_MAX_MS = 30000;
+
+// Qualification bar for announcing a waiting speaker, used when the injected
+// config carries no usable value. Must match config/config.js's documented
+// VOICE_DEFERRAL_MIN_SPEECH_MS default -- a 0 here announces everyone.
+const DEFAULT_DEFERRAL_MIN_SPEECH_MS = 700;
+
 class VoiceService {
   constructor({ voiceClient, mongoService, config, deps, contextBuilder, speakerNames }) {
     this._client = voiceClient;
@@ -73,8 +85,32 @@ class VoiceService {
       `Write for the ear, not the page. Never wrap titles or names in quotation marks — a trailing straight quote gets voiced as the inches symbol, so "Toy Story 3" is read aloud as "Toy Story 3 inches". Just say the title plainly. Avoid other punctuation that gets spoken rather than heard, like parentheses, asterisks, slashes and emoji.`,
       `Say digit strings the way a person would read them out: zip codes, phone numbers, addresses, flight numbers, years and version numbers go digit by digit or in natural pairs — 60067 is "six oh oh six seven", not "sixty thousand sixty-seven". Use ordinary words for ordinary quantities ("72 degrees" is fine).`,
       `You are in a shared voice room. Before someone's turn you may receive a line like "[SPEAKER: Mike]". That is out-of-band metadata telling you who is talking now — NEVER read it aloud, never repeat the brackets or the word SPEAKER, and never mention that you receive it. Use it only to know who you are talking to, and address people by name when it is natural.`,
-    ].join('\n\n');
-    return prompt ? `${prompt}\n\n${note}` : note;
+    ];
+    // Kill-switch fidelity: the [SYSTEM: ...] nudge can only ever be injected by
+    // the deferral path, so with VOICE_DEFERRAL_ENABLED off this clause would
+    // describe a mechanism that can never fire -- a prompt change shipped under a
+    // flag that promises "today's exact behaviour". Gate it with the feature.
+    if (this._config.voice && this._config.voice.deferralEnabled) {
+      note.push(`Lines beginning "[SYSTEM:" are out-of-band notes to you, exactly like the "[SPEAKER:" markers — NEVER read them aloud or mention them. If one tells you someone tried to speak while you were talking, just briefly let that person know you noticed, in your own voice, and then stop and wait for them — don't answer whatever you think they were going to ask.`);
+    }
+    const text = note.join('\n\n');
+    return prompt ? `${prompt}\n\n${text}` : text;
+  }
+
+  // Is the bot itself producing audio right now? `player.state.status` stays
+  // 'playing'/'buffering' for the whole reply INCLUDING the post-turnComplete
+  // drain (Live streams faster than real-time, so the model finishes generating
+  // seconds before the speaker stops moving).
+  //
+  // Fail-safe when there is no player/state/status: assume the bot MAY still be
+  // talking. That is the safe default for "has it stopped?" (the deferral
+  // announcement then never fires) and it is self-consistent for the waiting
+  // accrual too -- a player that never reports a status can never drain, so
+  // whatever accrues can never be spent. Unreachable with a real AudioPlayer.
+  _botIsSpeaking(g) {
+    const status = g && g.player && g.player.state ? g.player.state.status : undefined;
+    if (status === undefined || status === null) return true;
+    return status === 'playing' || status === 'buffering';
   }
 
   async join({ channel, guildId }) {
@@ -144,7 +180,8 @@ class VoiceService {
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
       pending: null, lastSpeechAt: null, audioEndSent: false, turnActive: false,
-      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null };
+      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null,
+      ackedThisTurn: false, ackFailures: 0, ackNextAttemptAt: 0 };
     this._guilds.set(guildId, state);
 
     connection.receiver.speaking.on('start', (userId) => {
@@ -297,21 +334,128 @@ class VoiceService {
     // reply; the VAD gate below still blocks ambient from false-triggering it.
     // player.state.status stays 'playing'/'buffering' through the reply incl.
     // drain, so this covers the tail too.
+    //
+    // Routed through _botIsSpeaking so there is exactly ONE definition of "the
+    // bot is producing audio" in this file. This inlined copy used to treat a
+    // player with no `.state` as NOT speaking while _botIsSpeaking treated it as
+    // speaking -- unreachable with a real AudioPlayer (which always carries a
+    // state), but two opposed fail-safes are a trap for the next reader.
     if (!(this._config.voice && this._config.voice.allowBargeIn)) {
-      const playing = g.player && g.player.state && g.player.state.status;
-      if (playing === 'playing' || playing === 'buffering') return;
+      if (this._botIsSpeaking(g)) return;
     }
 
     const u = this._perUser(g, userId);
-    const isHolder = g.floor.isHolder(userId);
+
+    // ONE VAD push per frame per speaker. The gate is stateful (Silero carries a
+    // context tensor from chunk to chunk), so pushing the same frame twice --
+    // once to decide whether an unheld floor can be claimed and once to drive the
+    // turn -- would advance its internal state twice per 32ms window and skew
+    // every speech/silence boundary it reports. Push here; reuse `vad` below.
+    const vad = u.vadGate ? u.vadGate.push(pcm16) : null;
+
+    let isHolder = g.floor.isHolder(userId);
+
+    // Floor re-take on an UNHELD floor.
+    //
+    // The Phase 4 acknowledgment RELEASES the floor (spec §3: nobody gets it, the
+    // next person to speak takes it) rather than handing it to someone we have not
+    // heard. But the only other grant() sites are the wake branch above -- gated on
+    // `machine.state === 'idle'`, which we are past -- and `listen()`. So without
+    // this, "the next person simply takes the floor" is fiction: after an
+    // acknowledgment the bot invites Bob and then withholds EVERY speaker's audio,
+    // including Bob's, until the follow-up window expires (and in `/voice listen`,
+    // where `_followupAt` is null, until the max-session cap). One 700ms
+    // interjection would deafen the session.
+    //
+    // We are necessarily past the `state === 'idle'` early-return above, so this
+    // only ever runs inside a live session, and only while the floor is genuinely
+    // unheld -- while someone holds it, arbitration is exactly as before.
+    //
+    // Three conditions, and shipping any two of them without the third is unsafe:
+    //
+    //  1. `deferralEnabled`. The only code path that can leave a live session with
+    //     an unheld floor is the Phase 4 acknowledgment, so with the flag off this
+    //     branch is already dead -- but it is dead by an INVARIANT ("machine
+    //     non-idle => floor held") that nothing pins, and a future fifth
+    //     release() site would silently turn that into a live code path under a
+    //     flag that promises today's exact behaviour. Gate it structurally.
+    //
+    //  2. The bot is not itself producing audio (`_botIsSpeaking` -- the same one
+    //     definition the half-duplex gate and the drain check use). Production
+    //     runs VOICE_ALLOW_BARGE_IN=true, so the half-duplex early-return above
+    //     never fires, and the acknowledgment's own audio plays while the floor is
+    //     held by NOBODY. Without this guard, that audio re-entering a laptop-
+    //     speaker participant's mic is one ~32ms rising edge away from seizing the
+    //     floor -- streaming the bot's own voice back to the model as user input
+    //     (the self-answering loop the half-duplex comment above exists to
+    //     prevent) and locking out the very person the bot just invited, who needs
+    //     700ms of speech to qualify as a waiter again.
+    //
+    //  3. The VAD reports speech -- on LEVEL, not just the rising edge. This is
+    //     the same edge-vs-level failure documented at the holder branch below as
+    //     the 2026-08-14 outage: VOICE_VAD_MIN_SILENCE_FRAMES is ~768ms, so once
+    //     a segment is open no new `justStarted` arrives until it closes. Edge-only
+    //     stranded (a) the invited speaker who simply keeps talking through the
+    //     acknowledgment, and (b) worse, a holder whose turn Gemini's server VAD
+    //     endpointed early: the ack releases the floor out from under them mid-
+    //     word and every subsequent frame is `speaking:true, justStarted:false`,
+    //     so they are cut off with no way back until they stop talking.
+    //     Condition 2 is what makes accepting a level safe.
+    if (!isHolder
+        && this._config.voice && this._config.voice.deferralEnabled
+        && g.floor.holder() === null
+        && !this._botIsSpeaking(g)
+        && vad && vad.speaking) {
+      if (g.floor.grant(userId)) {
+        isHolder = true;
+        logger.info(`voice: open floor claimed by ${u.name || userId} in guild ${guildId} on VAD speech (machine ${g.machine.state}, onset ${!!vad.justStarted})`);
+      }
+    }
 
     // Non-holder: detect that they spoke (for attribution/logging + the future
     // "someone else wants in" signal), but DO NOT forward their audio.
     if (!isHolder) {
-      const nv = u.vadGate ? u.vadGate.push(pcm16) : { speaking: false, justStarted: false, justEnded: false };
+      const nv = vad || { speaking: false, justStarted: false, justEnded: false };
+      if (nv.speaking) {
+        // 16 kHz mono s16le -> 2 bytes/sample. Accrue only REAL speech, so a
+        // waiter is measured on how long they actually talked, not on how long
+        // Discord happened to deliver packets.
+        const ms = Math.round((pcm16.length / 2) / 16);
+        // TOTAL withheld speech -- the measurement that sets the threshold. Accrues
+        // unconditionally so the debug line below still reports interjections that
+        // did NOT overlap the bot's reply; that contrast is the reason it exists.
+        u.withheldMs = (u.withheldMs || 0) + ms;
+        // QUALIFYING time is only speech that overlapped the bot's own audio. The
+        // nudge the sidecar injects asserts "<Name> tried to speak while you were
+        // replying" -- and `hot` lasts the whole follow-up window (60s in the
+        // deployed configmap) with VOICE_ALLOW_BARGE_IN=true in production, so the
+        // half-duplex early-return above never fires either. Without this
+        // condition the COMMON qualifying path is someone talking into a silence,
+        // and the bot apologises for talking over a reply that never happened.
+        if (this._botIsSpeaking(g)) u.waitingMs = (u.waitingMs || 0) + ms;
+      }
       if (nv.justStarted) {
         g.floor.noteWaiting(userId);
-        logger.debug(`voice: ${userId} spoke while ${g.floor.holder()} holds the floor (guild ${guildId}) — withheld`);
+      }
+      if (nv.justEnded) {
+        // Qualification is a per-UTTERANCE question ("did this person talk over
+        // the bot long enough to be a real interjection?"), so fold the finished
+        // utterance into a PEAK and zero the accumulator. Summing across
+        // utterances instead let three separate 300ms bursts -- coughs,
+        // one-word backchannels, echo -- clear a 700ms bar no single one of them
+        // ever reached, which is exactly what the threshold exists to reject.
+        //
+        // A peak rather than a plain per-utterance reset because the
+        // acknowledgment is evaluated in _tick AFTER the utterance ended: a naive
+        // reset leaves 0 at every evaluation and the feature never fires at all.
+        const utteranceWaitingMs = u.waitingMs || 0;
+        u.waitingPeakMs = Math.max(u.waitingPeakMs || 0, utteranceWaitingMs);
+        u.waitingMs = 0;
+        // Measurement (ships even with the feature off): is this a real
+        // interjection, or the bot's own voice re-entering someone's mic? The
+        // threshold VOICE_DEFERRAL_MIN_SPEECH_MS is meant to be set from this.
+        const playing = g.player && g.player.state && g.player.state.status;
+        logger.debug(`voice: withheld speech from ${u.name || userId} in guild ${guildId}: ${u.withheldMs || 0}ms (${utteranceWaitingMs}ms of this utterance overlapping bot playback, longest single utterance of this turn ${u.waitingPeakMs}ms) while ${g.floor.holder()} holds the floor, bot playback=${playing || 'idle'}`);
       }
       return;
     }
@@ -322,7 +466,7 @@ class VoiceService {
     // silence) so Gemini's server VAD sees real end-of-speech as a fallback --
     // the fix for the old energy-gate starvation. The turn stops forwarding
     // when _tick fires audio_stream_end (which clears g.turnActive).
-    const v = u.vadGate ? u.vadGate.push(pcm16) : { speaking: true, justStarted: !g.turnActive, justEnded: false };
+    const v = vad || { speaking: true, justStarted: !g.turnActive, justEnded: false };
     // Open the turn on LEVEL, not just the rising edge. `justStarted` alone is
     // edge-triggered, and a missed closing edge wedges the session forever:
     // Discord stops delivering packets the moment a speaker goes quiet, so the
@@ -335,6 +479,10 @@ class VoiceService {
     if (v.justStarted || (v.speaking && !g.turnActive)) {
       g.turnActive = true;
       g.audioEndSent = false;
+      g.ackedThisTurn = false; // a new turn opened -- allow a fresh deferral announcement
+      // ...and the PREVIOUS turn's qualification counters die with it, so a
+      // waiter must re-qualify against the reply they actually talked over.
+      this._clearTurnQualification(g);
       await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
     }
     if (v.speaking) g.lastSpeechAt = this._deps.now();
@@ -381,6 +529,39 @@ class VoiceService {
       g.audioEndSent = true;
       g.turnActive = false; // stop forwarding until the next speech onset
     }
+  }
+
+  // Drop every speaker's per-TURN qualification counters.
+  //
+  // `waitingMs` / `waitingPeakMs` answer one question: "did this person talk over
+  // THIS reply long enough to be a real interjection?" Nothing used to end that
+  // question at a turn boundary -- only a successful acknowledgment or
+  // _endSession cleared them. So (easy with VOICE_ALLOW_BARGE_IN on, which is
+  // what production runs) Bob talks over turn N's reply and qualifies; before
+  // playback drains, the holder makes any sound at all, which re-opens the turn
+  // and takes the machine hot->active, so turn N's drain-time acknowledgment
+  // never fires. Turn N+1 completes and drains, and Bob -- silent since turn N,
+  // possibly gone from the channel -- is named then: the bot says "you tried to
+  // speak while I was replying" about a reply two turns ago.
+  //
+  // Spec §9 rejected TTLs, but it rejected them for a waiting QUEUE; it never
+  // considered a missed drain, so bounding qualification to its own turn is not a
+  // spec violation. FloorControl is untouched (off-limits, and it stores no
+  // timing anyway): a stale waiter stays in `waiting()` but can no longer clear
+  // the threshold, which is exactly the intended effect.
+  //
+  // `withheldMs` is deliberately NOT cleared -- that is the session-scoped
+  // measurement total (_endSession owns its lifetime).
+  //
+  // Deliberately NOT gated on `deferralEnabled`: `waitingPeakMs` is also what the
+  // withheld-speech measurement log reports and what VOICE_DEFERRAL_MIN_SPEECH_MS
+  // is meant to be derived from, so the measurement must measure the same
+  // per-turn quantity production thresholds on. A measuring tool that quietly
+  // reports something other than the production rule is the exact defect the
+  // scripts/test-floor.js fix in this same wave closes.
+  _clearTurnQualification(g) {
+    if (!g || !g.perUser) return;
+    for (const u of g.perUser.values()) { u.waitingMs = 0; u.waitingPeakMs = 0; }
   }
 
   async _apply(guildId, actions, ctx = {}) {
@@ -570,6 +751,28 @@ class VoiceService {
     if (botText) await this._mongo.recordChannelMessage({ ...base, authorId: 'bot', content: botText, isBot: true });
   }
 
+  // Re-arm the follow-up deadline to a full window from now, WITHOUT reaching
+  // into VoiceSessionMachine's internals (it owns `_followupAt`; the service's
+  // 'armFollowup' action is deliberately a no-op). The machine already exposes
+  // exactly this effect as a pair of public transitions -- the ones a real bot
+  // turn goes through -- so drive it through them: onUserSpeechStart() takes
+  // 'hot' -> 'active' and drops the stale deadline, onServerEvent('turnComplete')
+  // takes 'active' -> 'hot' and arms followupWindowMs from now.
+  //
+  // Both machine calls are synchronous, so the new deadline is visible to the
+  // onTick() at the bottom of the same _tick. Doing it here rather than waiting
+  // for the acknowledgment's own real turnComplete is deliberate: if the model
+  // never completes that turn, waiting would leave the machine wedged in
+  // 'active' with no deadline at all. In continuous (/voice listen) mode the
+  // machine's own `_continuous` branch keeps `_followupAt` null, as it should.
+  _rearmFollowup(guildId, g) {
+    const actions = [
+      ...g.machine.onUserSpeechStart(),
+      ...g.machine.onServerEvent({ type: 'turnComplete' }),
+    ];
+    this._apply(guildId, actions).catch((e) => logger.warn(`voice: follow-up re-arm apply failed: ${e.message}`));
+  }
+
   _tick(guildId) {
     const g = this._guilds.get(guildId);
     if (!g) return;
@@ -609,6 +812,124 @@ class VoiceService {
       if (holder && holder.vadGate && typeof holder.vadGate.reset === 'function') holder.vadGate.reset();
     }
 
+    // --- Phase 4: announce a waiting speaker, then release the floor.
+    //
+    // The trigger is PLAYBACK DRAIN, not turnComplete. turnComplete only means
+    // the MODEL stopped generating -- _endPlayback then ends the stream so the
+    // buffered audio drains afterwards, and Live streams faster than real-time,
+    // so the bot is typically still talking for seconds after turnComplete.
+    // Announcing then would cut it off mid-word.
+    if (this._config.voice && this._config.voice.deferralEnabled
+        && g.session && !g.ackedThisTurn && g.machine.state === 'hot') {
+      // Fail-safe drain check: "neither playing nor buffering", with a missing
+      // player/state reading as NOT drained (see _botIsSpeaking).
+      const drained = !this._botIsSpeaking(g);
+      if (drained) {
+        // `|| 0` here used to be the second half of a one-typo footgun: a config
+        // that omits the key (or carries a NaN from a bad env value) made the bar
+        // 0ms, and `>= 0` is true for EVERY named waiter on their first speech
+        // frame -- the design's top-listed risk (false-positive announcement).
+        // config/config.js now refuses to produce a non-positive value; this
+        // mirrors that so an injected config object can't reintroduce it.
+        const configuredMinMs = this._config.voice.deferralMinSpeechMs;
+        const minMs = Number.isFinite(configuredMinMs) && configuredMinMs > 0
+          ? configuredMinMs : DEFAULT_DEFERRAL_MIN_SPEECH_MS;
+        const waiterId = g.floor.waiting().find((id) => {
+          const wu = g.perUser.get(id);
+          // Qualified = ONE utterance that talked OVER the bot long enough to be
+          // a real interjection (waitingMs only accrues while the bot was
+          // actually producing audio -- see _handleUserPcm) AND we know what to
+          // call them. Never invent a name (Phase 3 rule).
+          //
+          // max(peak, accumulator) so both shapes work: a FINISHED utterance
+          // lives in waitingPeakMs (folded on justEnded), an IN-PROGRESS one is
+          // still accruing in waitingMs. Deliberately NOT their sum -- that is
+          // the cross-utterance accumulation this split exists to reject.
+          return wu && wu.name && Math.max(wu.waitingPeakMs || 0, wu.waitingMs || 0) >= minMs;
+        });
+        if (waiterId && now < (g.ackNextAttemptAt || 0)) {
+          // Backing off from a previous failed send -- see the catch below.
+          // Deliberately silent: this path runs every 250ms tick.
+        } else if (waiterId) {
+          const wu = g.perUser.get(waiterId);
+          // Latch, release and clear ONLY if the nudge actually went out.
+          // Swallowing the send error and releasing anyway is the worst of both
+          // worlds: the model never gets the instruction, nobody is invited, and
+          // the floor is dropped for nothing. On failure change nothing and let a
+          // later 250ms tick retry.
+          let sent = false;
+          let failure = null;
+          try {
+            // The RETURN VALUE is the failure signal, not an exception:
+            // VoiceClient's sender catches its own write error and reports it as
+            // `false` (it also returns false for a stream that is already ended
+            // or destroyed). Relying on a throw meant `sent` was unconditionally
+            // true in production and every line below ran for nudges that never
+            // left the process. The try/catch stays purely as belt-and-braces for
+            // an unexpected throw from some other session implementation.
+            //
+            // HONEST LIMIT (mirrors the comment on VoiceClient.sendAcknowledgeWaiting):
+            // `true` is not a delivery receipt. grpc-js reports a write to a
+            // half-dead duplex as an async 'error' event rather than a synchronous
+            // throw, so a nudge can still be lost with `sent === true`. Closing
+            // that gap needs a sidecar->bot confirmation for AcknowledgeWaiting --
+            // a protocol change, parked as a follow-up.
+            //
+            // `!== false` rather than `=== true`: only an explicit false is a
+            // reported failure, so a session object that returns nothing behaves
+            // exactly as it did before this contract existed.
+            sent = g.session.sendAcknowledgeWaiting({ displayName: wu.name }) !== false;
+          } catch (e) {
+            sent = false;
+            failure = e;
+          }
+          if (!sent) {
+            // Exponential backoff on the retry. _tick is a 250ms timer, so
+            // retrying on every tick means ~240 attempts (and 240 identical warn
+            // lines) per 60s follow-up window and unbounded in /voice listen.
+            // The message stays FULL -- what changes is how often it is emitted,
+            // and each line now carries its own attempt/backoff numbers so it is
+            // never a verbatim repeat.
+            const reason = failure ? failure.message
+              : 'the client reported the write did not go out (the Converse stream is closed or the write threw; see the VoiceClient debug line for which)';
+            g.ackFailures = (g.ackFailures || 0) + 1;
+            const backoffMs = Math.min(ACK_RETRY_MAX_MS, ACK_RETRY_BASE_MS * Math.pow(2, g.ackFailures - 1));
+            g.ackNextAttemptAt = now + backoffMs;
+            logger.warn(`voice: sendAcknowledgeWaiting failed in guild ${guildId} (attempt ${g.ackFailures}, retrying in ${backoffMs}ms): ${reason}`);
+          }
+          if (sent) {
+            logger.info(`voice: acknowledged waiting speaker ${wu.name} in guild ${guildId} (${Math.max(wu.waitingPeakMs || 0, wu.waitingMs || 0)}ms longest single withheld utterance overlapping playback, ${wu.withheldMs || 0}ms withheld in total)`);
+            g.ackedThisTurn = true;
+            g.ackFailures = 0;
+            g.ackNextAttemptAt = 0;
+            // Release rather than hand over: if the invitation lands on nobody,
+            // the next real speaker simply takes the floor and the room
+            // self-corrects (see the re-take branch in _handleUserPcm, which is
+            // what makes that promise true). Handing the floor to someone we have
+            // not heard is how you get a deaf bot.
+            g.floor.release();
+            // Qualification state ONLY. `withheldMs` is the session-scoped
+            // measurement counter (see _endSession): zeroing it here silently
+            // reset the "Nms withheld in total" figure mid-session, corrupting
+            // the very data the measurement exists to gather -- and this log line
+            // above is one of its readers.
+            this._clearTurnQualification(g);
+            g.lastSpeakerSent = null;
+            // Clear the model's idea of who is talking, or the next speaker
+            // inherits this identity (the hazard Phase 3's review deferred here).
+            try { if (typeof g.session.sendSpeaker === 'function') g.session.sendSpeaker({ userId: '', displayName: '' }); }
+            catch (e) { logger.warn(`voice: speaker clear failed: ${e.message}`); }
+            // The acknowledgment is a fresh bot turn, so give the person we just
+            // invited a FULL follow-up window instead of whatever remained of the
+            // original speaker's. Without this the deadline stays where the
+            // previous turn left it and a late interjection gets the session torn
+            // down mid-acknowledgment -- a billed turn that nobody hears.
+            this._rearmFollowup(guildId, g);
+          }
+        }
+      }
+    }
+
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
   }
 
@@ -635,12 +956,28 @@ class VoiceService {
     g.lastSpeechAt = null;
     g.audioEndSent = false;
     g.lastSpeakerSent = null; // a new session re-announces the speaker
+    g.ackedThisTurn = false;
+    // The acknowledgment-retry backoff is per-session state: a fresh session is
+    // a fresh gRPC stream, so it must not inherit the old one's failure count.
+    g.ackFailures = 0;
+    g.ackNextAttemptAt = 0;
     if (g.floor) g.floor.release();
     if (g.perUser) {
       for (const u of g.perUser.values()) {
         if (u.wakeGate && typeof u.wakeGate.reset === 'function') u.wakeGate.reset();
         if (u.vadGate && typeof u.vadGate.reset === 'function') u.vadGate.reset();
         u.preroll = [];
+        // Scope the withheld-speech measurement (see the justEnded debug log
+        // above) to a single session, not to the whole join. Without this,
+        // waitingMs keeps accruing across every wake/talk/idle cycle for as
+        // long as the bot stays in the channel (idle auto-leave doesn't
+        // exist yet), so a threshold chosen from these numbers would be
+        // reading cumulative totals as if they were per-episode durations.
+        // Flag-independent on purpose: the measurement ships with
+        // deferralEnabled OFF, so this can't ride on that flag.
+        u.waitingMs = 0;
+        u.waitingPeakMs = 0;
+        u.withheldMs = 0;
       }
     }
   }

@@ -184,4 +184,65 @@ describe('VoiceClient', () => {
     expect(() => session.sendSpeaker({ userId: 'u1', displayName: 'Mike' })).not.toThrow();
     c.close();
   });
+
+  test('sendAcknowledgeWaiting writes an acknowledge_waiting event with snake_case fields and defaults', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.sendAcknowledgeWaiting({ displayName: 'Sarah' });
+    expect(fakeCall.write).toHaveBeenCalledWith({
+      acknowledge_waiting: { display_name: 'Sarah' },
+    });
+
+    session.sendAcknowledgeWaiting({});
+    expect(fakeCall.write).toHaveBeenCalledWith({
+      acknowledge_waiting: { display_name: '' },
+    });
+    c.close();
+  });
+
+  // The deferral path latches `ackedThisTurn`, releases the floor and clears the
+  // qualification counters on the strength of this call, so it has to report its
+  // outcome instead of swallowing the failure and looking successful.
+  test('sendAcknowledgeWaiting returns true when the write goes out', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    expect(session.sendAcknowledgeWaiting({ displayName: 'Sarah' })).toBe(true);
+    c.close();
+  });
+
+  test('sendAcknowledgeWaiting swallows a write error on a closing stream but reports false', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    fakeCall.write = jest.fn(() => { throw new Error('write after end'); });
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    let result;
+    expect(() => { result = session.sendAcknowledgeWaiting({ displayName: 'Sarah' }); }).not.toThrow();
+    expect(result).toBe(false);
+    c.close();
+  });
+
+  test('sendAcknowledgeWaiting reports false without writing when the stream is already closed', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    fakeCall.writableEnded = true;               // what session.end() / a server teardown leaves behind
+    expect(session.sendAcknowledgeWaiting({ displayName: 'Sarah' })).toBe(false);
+    expect(fakeCall.write).not.toHaveBeenCalled();
+
+    fakeCall.writableEnded = false;
+    fakeCall.destroyed = true;
+    expect(session.sendAcknowledgeWaiting({ displayName: 'Sarah' })).toBe(false);
+    expect(fakeCall.write).not.toHaveBeenCalled();
+    c.close();
+  });
 });

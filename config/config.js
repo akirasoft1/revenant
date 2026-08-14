@@ -111,6 +111,34 @@ module.exports = {
         return {};
       }
     })(),
+
+    // Phase 4 deferral: acknowledge a speaker who interjected while someone
+    // else held the floor. Default OFF -- the qualification threshold below is
+    // meant to be set from the measurement logging before this is flipped on.
+    deferralEnabled: process.env.VOICE_DEFERRAL_ENABLED === 'true',
+    // How much VAD-detected speech a withheld speaker must produce before they
+    // are worth announcing. Filters coughs, one-word backchannels and any echo
+    // that survives Discord's client-side AEC.
+    //
+    // A typo must never turn this into 0. `parseInt` is far too forgiving here:
+    // parseInt('0.7s') is 0 and parseInt('seven hundred') is NaN, and the
+    // consumer's `x || 0` then made the bar 0ms -- which `>= 0` clears for EVERY
+    // named waiter on their first speech frame, i.e. the design's top-listed risk
+    // (a false-positive announcement) from one bad character. Fall back to the
+    // documented default instead, and SAY SO (same fail-loud posture as
+    // VOICE_SPEAKER_NAMES above; the logger may not exist yet at config-load
+    // time, hence console.warn).
+    deferralMinSpeechMs: (() => {
+      const DEFAULT_MS = 700;
+      const raw = process.env.VOICE_DEFERRAL_MIN_SPEECH_MS;
+      if (raw === undefined || raw === null || String(raw).trim() === '') return DEFAULT_MS;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) {
+        console.warn(`VOICE_DEFERRAL_MIN_SPEECH_MS="${raw}" is not a positive number of milliseconds; falling back to the default ${DEFAULT_MS}ms. A 0 or NaN threshold would announce every named waiting speaker on their first speech frame.`);
+        return DEFAULT_MS;
+      }
+      return n;
+    })(),
   },
   discord: {
     token: process.env.DISCORD_TOKEN,
