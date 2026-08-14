@@ -1206,6 +1206,53 @@ describe('waiting-speaker measurement', () => {
     expect(call[0]).toContain('bot playback=playing'); // playback state
   });
 
+  // FIX 3: qualification time and measurement time are now different numbers.
+  // `waitingMs` (what qualifies a waiter for an acknowledgment) accrues ONLY
+  // while the bot is actually producing audio, because the nudge asserts
+  // "tried to speak while you were replying"; `withheldMs` accrues regardless
+  // so the measurement log still sees non-overlapping interjections.
+  test('waitingMs accrues only while the bot is playing; withheldMs accrues regardless', async () => {
+    const otherGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true,
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = otherGate;
+
+    // Bot is silent: this is two people talking to each other, not an interjection.
+    player.state = { status: 'idle' };
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
+    expect(svc._perUser(g, 'bob').withheldMs).toBeGreaterThan(0);
+    expect(svc._perUser(g, 'bob').waitingMs || 0).toBe(0);
+
+    // Bot is talking: now the same speech is a genuine talk-over.
+    player.state = { status: 'playing' };
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
+    expect(svc._perUser(g, 'bob').waitingMs).toBeGreaterThan(0);
+  });
+
+  // FIX 3 consequence: a waiter whose speech never overlapped the bot's reply
+  // must NOT earn an acknowledgment, or the bot apologises for talking over a
+  // reply that was not happening -- the common path in production, where
+  // VOICE_ALLOW_BARGE_IN=true and `hot` lasts the whole 60s follow-up window.
+  test('speech that never overlapped playback does not qualify for an acknowledgment', async () => {
+    const otherGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', allowBargeIn: true, deferralEnabled: true, deferralMinSpeechMs: 20,
+      speakerNames: { resolve: () => 'Bob' },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = otherGate;
+    player.state = { status: 'idle' }; // bot silent throughout
+
+    for (let i = 0; i < 20; i++) await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
+    expect(svc._perUser(g, 'bob').withheldMs).toBeGreaterThan(100); // plenty of speech...
+
+    g.machine._state = 'hot';
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled(); // ...none of it over the bot
+  });
+
   // FIX 1: waitingMs must be scoped to a session, not to the whole join --
   // g.perUser persists across many wake/talk/idle cycles (idle auto-leave
   // doesn't exist yet), and the only other reset lives behind the
@@ -1224,6 +1271,7 @@ describe('waiting-speaker measurement', () => {
     svc._endSession(g);
 
     expect(svc._perUser(g, 'bob').waitingMs).toBe(0);
+    expect(svc._perUser(g, 'bob').withheldMs).toBe(0);
   });
 });
 
@@ -1298,5 +1346,167 @@ describe('deferral: announce and release', () => {
     svc._tick(guildId);
     expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
     expect(g.floor.holder()).not.toBeNull();
+  });
+
+  // FIX 7: 'buffering' is the OTHER not-drained status. An implementation that
+  // only checked `!== 'playing'` passed every one of the original six tests.
+  test('does NOT announce while the player is buffering', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'buffering' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+  });
+
+  // FIX 6: a player with no `.state` must read as NOT drained. The safe default
+  // for "has the bot stopped talking?" is "assume it has not."
+  test('does NOT announce when the player reports no state at all', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    expect(player.state).toBeUndefined();
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).not.toBeNull();
+  });
+
+  // FIX 7: every original test poked `machine._state = 'hot'` directly, so the
+  // real transition into 'hot' was never exercised alongside the trigger.
+  test('announces after a REAL turnComplete transition into hot (no _state poking)', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    expect(g.machine.state).toBe('active');
+    session.emit('turnComplete');          // the real active -> hot transition
+    await new Promise((r) => setImmediate(r));
+    expect(g.machine.state).toBe('hot');
+    player.state = { status: 'idle' };     // ...and the audio has since drained
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Sarah' });
+  });
+
+  // FIX 2: a failed send must change nothing. Releasing the floor after the
+  // model never got the nudge deafens the session for an invitation that was
+  // never issued.
+  test('does not latch or release the floor when the acknowledgment fails to send', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    session.sendAcknowledgeWaiting.mockImplementationOnce(() => { throw new Error('stream closed'); });
+
+    svc._tick(guildId);
+    expect(g.floor.holder()).toBe('u1');          // floor untouched
+    expect(g.ackedThisTurn).toBe(false);          // not latched
+    expect(session.sendSpeaker).not.toHaveBeenCalledWith(expect.objectContaining({ displayName: '' }));
+
+    // ...and a later tick retries, because nothing was latched.
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(2);
+    expect(g.floor.holder()).toBeNull();
+  });
+
+  // FIX 5: the acknowledgment is a fresh bot turn, so it must re-arm the
+  // follow-up window. Without this the deadline stays where the ORIGINAL turn
+  // left it and _endSession can cut the acknowledgment off mid-word.
+  test('re-arms the follow-up window so the invited speaker gets a full one', async () => {
+    let t = 0;
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      deferralEnabled: true, now: () => t,
+    });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    // Real turnComplete at t=0 arms the window (followupWindowMs = 1000 in the harness).
+    session.emit('turnComplete');
+    await new Promise((r) => setImmediate(r));
+    expect(g.machine._followupAt).toBe(1000);
+
+    t = 900;                               // interjection lands late in the window
+    player.state = { status: 'idle' };
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalled();
+    expect(g.machine._followupAt).toBe(1900);   // a FULL window from the ack
+
+    t = 1500;                              // past the ORIGINAL deadline
+    svc._tick(guildId);
+    expect(g.session).not.toBeNull();      // session survived; ack was not cut off
+  });
+
+  // FIX 1 (Critical) — the mirror of the review's repro. The whole feature is a
+  // lie without this: `release()` sets _holder = null, isHolder() is then false
+  // for EVERYONE, and the only other grant() sites are unreachable outside the
+  // idle/wake path. Before this fix the forwarded-frame count below was 0.
+  test('after the acknowledgment releases the floor, the invited speaker is HEARD', async () => {
+    const bobGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    svc._perUser(g, 'bob').vadGate = bobGate;
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Sarah' });
+    expect(g.floor.holder()).toBeNull();   // released, held by nobody
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+
+    expect(g.floor.holder()).toBe('bob');            // he took the open floor
+    expect(g.turnActive).toBe(true);                 // ...his turn opened
+    expect(session.sendAudio).toHaveBeenCalledTimes(1);   // ...and the model heard him
+    expect(session.sendSpeaker).toHaveBeenCalledWith({ userId: 'bob', displayName: 'Sarah' });
+  });
+
+  test('an open floor is claimed on VAD speech ONSET, not on mere packet delivery', async () => {
+    // No onset: the gate reports ongoing sub-threshold room noise, never a rising edge.
+    const noiseGate = fakeVadGate([{ speaking: false, justStarted: false, justEnded: false }]);
+    const { svc, guildId, session } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'carol').vadGate = noiseGate;
+    g.floor.release();                     // post-acknowledgment: floor held by nobody
+    g.machine._state = 'hot';
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'carol', to48kStereo(silence()));
+
+    expect(g.floor.holder()).toBeNull();
+    expect(session.sendAudio).not.toHaveBeenCalled();
+  });
+
+  test('while someone still holds the floor, a second speaker cannot take it', async () => {
+    const bobGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = bobGate;
+
+    session.sendAudio.mockClear();
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+
+    expect(g.floor.holder()).toBe('alice');
+    expect(g.floor.waiting()).toContain('bob');
+    expect(session.sendAudio).not.toHaveBeenCalled();
+  });
+});
+
+describe('deferral: persona clause kill switch', () => {
+  // FIX 4: with the flag off, the system prompt must be byte-identical to
+  // today's -- a clause describing a mechanism that can never fire is still a
+  // prompt change, and the flag promises "today's exact behaviour".
+  test('omits the [SYSTEM: ...] clause when deferral is disabled', async () => {
+    const { svc } = makeService(makeDeps(), { deferralEnabled: false });
+    const text = svc._appendVoicePersona('BASE');
+    expect(text).not.toContain('[SYSTEM:');
+    expect(text).toContain('[SPEAKER:');   // the Phase 3 clause is unconditional
+  });
+
+  test('includes the [SYSTEM: ...] clause when deferral is enabled', async () => {
+    const { svc } = makeService(makeDeps(), { deferralEnabled: true });
+    const text = svc._appendVoicePersona('BASE');
+    expect(text).toContain('[SYSTEM:');
   });
 });
