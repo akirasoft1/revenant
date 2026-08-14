@@ -27,6 +27,12 @@ const modelPath = path.join(__dirname, '..', 'models', 'silero', 'silero_vad.onn
 const BYTES_PER_WINDOW = WINDOW * 2;
 const SAMPLE_RATE = 16000;
 
+// Mirrors config.js's `config.voice.deferralMinSpeechMs` (VOICE_DEFERRAL_MIN_SPEECH_MS,
+// default 700) without pulling in config/config.js -- that module requires
+// DISCORD_TOKEN/OPENAI_API_KEY/MONGO_URI and exits if they're missing, which
+// this offline-by-design harness must not depend on.
+const DEFERRAL_MIN_SPEECH_MS = parseInt(process.env.VOICE_DEFERRAL_MIN_SPEECH_MS || '700', 10);
+
 function decode16kMono(file) {
   return execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-ac', '1',
     '-ar', String(SAMPLE_RATE), '-f', 's16le', '-acodec', 'pcm_s16le', 'pipe:1'], { maxBuffer: 1 << 28 });
@@ -121,9 +127,26 @@ async function run(threshold) {
   const gateB = new VoiceActivityGate(engineB, { threshold: thresholdArg, minSpeechFrames: 2, minSilenceFrames: 24 });
   const floor = new FloorControl();
 
-  console.log(`\n[floor timeline] source: ${sourceLabel}\n`);
+  console.log(`\n[floor timeline] source: ${sourceLabel}`);
+  console.log(`[floor timeline] deferral qualification threshold: ${DEFERRAL_MIN_SPEECH_MS}ms (VOICE_DEFERRAL_MIN_SPEECH_MS)\n`);
 
   const stateStr = () => `(holder=${floor.holder() || 'none'}, waiting=[${floor.waiting().join(',')}])`;
+
+  // Mirrors VoiceService.js's non-holder branch (services/VoiceService.js ~L314-318):
+  // withheld speech only accrues while the per-user VAD reports `speaking`, at
+  // Math.round((pcm16.length / 2) / 16) ms per chunk (16 kHz mono s16le).
+  const waitingMs = { A: 0, B: 0 };
+  const qualified = { A: false, B: false };
+
+  function accrueWaiting(speaker, r, chunk, ms) {
+    if (floor.isHolder(speaker)) return; // holder's own speech isn't "withheld"
+    if (!r.speaking) return;
+    waitingMs[speaker] = (waitingMs[speaker] || 0) + Math.round((chunk.length / 2) / 16);
+    if (!qualified[speaker] && waitingMs[speaker] >= DEFERRAL_MIN_SPEECH_MS) {
+      qualified[speaker] = true;
+      console.log(`${ms}ms   SPEAKER ${speaker} QUALIFIED after ${waitingMs[speaker]}ms of withheld speech (threshold=${DEFERRAL_MIN_SPEECH_MS}ms)`);
+    }
+  }
 
   function handleEvent(speaker, r) {
     if (r.justStarted) {
@@ -154,18 +177,23 @@ async function run(threshold) {
     ms += 32; // WINDOW=512 samples @ 16kHz = 32ms per window
 
     if (off + BYTES_PER_WINDOW <= pcmA.length) {
-      const rA = gateA.push(pcmA.subarray(off, off + BYTES_PER_WINDOW));
+      const chunkA = pcmA.subarray(off, off + BYTES_PER_WINDOW);
+      const rA = gateA.push(chunkA);
       await engineA.whenIdle();
       if (rA.justStarted || rA.justEnded) { process.stdout.write(`${ms}ms `); handleEvent('A', rA); }
+      accrueWaiting('A', rA, chunkA, ms);
     }
     if (off + BYTES_PER_WINDOW <= pcmB.length) {
-      const rB = gateB.push(pcmB.subarray(off, off + BYTES_PER_WINDOW));
+      const chunkB = pcmB.subarray(off, off + BYTES_PER_WINDOW);
+      const rB = gateB.push(chunkB);
       await engineB.whenIdle();
       if (rB.justStarted || rB.justEnded) { process.stdout.write(`${ms}ms `); handleEvent('B', rB); }
+      accrueWaiting('B', rB, chunkB, ms);
     }
   }
 
   console.log(`\nfinal state: ${stateStr()}`);
+  console.log(`final withheld-speech accrual: A=${waitingMs.A}ms (qualified=${qualified.A}), B=${waitingMs.B}ms (qualified=${qualified.B})`);
 }
 
 run(0.5).catch((e) => { console.error(e); process.exit(1); });
