@@ -155,4 +155,33 @@ describe('VoiceClient', () => {
     expect(fakeCall.end).toHaveBeenCalled();
     c.close();
   });
+
+  test('sendSpeaker writes a set_speaker event with snake_case fields and defaults', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.sendSpeaker({ userId: 'u1', displayName: 'Mike' });
+    expect(fakeCall.write).toHaveBeenCalledWith({
+      set_speaker: { user_id: 'u1', display_name: 'Mike' },
+    });
+
+    session.sendSpeaker({});
+    expect(fakeCall.write).toHaveBeenCalledWith({
+      set_speaker: { user_id: '', display_name: '' },
+    });
+    c.close();
+  });
+
+  test('sendSpeaker swallows a write error on a closing stream', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    fakeCall.write = jest.fn(() => { throw new Error('write after end'); });
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    expect(() => session.sendSpeaker({ userId: 'u1', displayName: 'Mike' })).not.toThrow();
+    c.close();
+  });
 });

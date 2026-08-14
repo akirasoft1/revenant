@@ -32,6 +32,13 @@ message TurnComplete {}
 message Interrupted {}
 message ErrorEvent { string message = 1; }
 
+// Identity of the speaker whose audio follows. Sent only when the speaker
+// CHANGES, so it is decoupled from the audio cadence.
+message SetSpeaker {
+  string user_id = 1;
+  string display_name = 2;
+}
+
 message VoiceClientEvent {
   oneof event {
     SessionStart   session_start    = 1;
@@ -41,6 +48,7 @@ message VoiceClientEvent {
     // the Live model finalizes the turn promptly (instead of ambient noise
     // holding it open).
     AudioStreamEnd audio_stream_end = 4;
+    SetSpeaker     set_speaker      = 5;
   }
 }
 message VoiceServerEvent {
