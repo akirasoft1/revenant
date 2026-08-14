@@ -47,8 +47,16 @@ Designs built on "interrupt at `turnComplete`" were rejected for this reason.
 **Action**, in order:
 1. Send a new `AcknowledgeWaiting { display_name }` control event for the first qualified waiter (resolved through `SpeakerNames`; an unresolvable name means **no announcement** — never invent one).
 2. The sidecar injects, via `send_client_content(turn_complete=True)`:
-   `[SYSTEM: <Name> tried to say something while you were replying. Acknowledge them by name in one short sentence and invite them to go ahead. Do not answer anything else.]`
-   `turn_complete=True` here (unlike the Phase 3 speaker marker, which uses `False`) because we *want* a generated reply — one short line in the bot's own voice.
+   `[SYSTEM: <Name> tried to speak while you were replying. Briefly let them know you noticed, in your own voice. Do not answer anything else yet.]`
+   `turn_complete=True` here (unlike the Phase 3 speaker marker, which uses `False`) because we *want* a generated reply.
+
+   **Wording rationale (owner-chosen):** the instruction states the *fact* and delegates the
+   phrasing to the learned channel-voice persona, rather than dictating a sentence shape.
+   The bot's personality is the product here, so a scripted "X, you had something?" every
+   time would read as canned. The trade-off is less predictable length — mitigated by the
+   trailing "not yet" clause (which keeps it from answering the interjector's question
+   before they have repeated it) and by asserting brevity in the real-model smoke test
+   rather than in the prompt.
 3. On that reply's completion: `g.floor.release()`, and send `SetSpeaker` with an **empty** `display_name` so the sidecar clears `current_speaker` (§6).
 4. Set `g.ackedThisTurn = true`; reset it when a new turn opens.
 
@@ -91,7 +99,7 @@ Phase 3's final review flagged: there is no way to **clear** the speaker, so a s
 - **Unit (`VoiceService`)**: acknowledgment fires on **drain**, not on `turnComplete` (assert it does *not* fire while `player.state.status === 'playing'`); does not fire for an unqualified (too-short) waiter; fires at most once per turn; releases the floor and sends the empty `SetSpeaker`; with the flag off, behaviour is byte-identical to today.
 - **Sidecar**: `acknowledge_waiting` injects with `turn_complete=True`; empty `SetSpeaker` clears the speaker so the next one re-announces.
 - **Offline**: extend `scripts/test-floor.js` — two streams where B interjects mid-A — asserting B is withheld, qualifies, and is announced after drain.
-- **Real-model**: extend `scripts/smoke-voice-identity.js` with a deferral case, checking the acknowledgment names B, is one short line, and does not answer B's question.
+- **Real-model**: extend `scripts/smoke-voice-identity.js` with a deferral case, checking the acknowledgment references B, stays brief (assert a sentence/character bound), and does NOT answer B's question — brevity is enforced by the test, not the prompt.
 
 ## 9. Explicitly NOT building (YAGNI)
 
@@ -110,7 +118,7 @@ Phase 3's final review flagged: there is no way to **clear** the speaker, so a s
 | Announcement fires while two humans are talking *to each other*, not to the bot | Med | Minimum-duration threshold; one line, never chained; it invites rather than answers |
 | Extra billed model turn per acknowledgment | Low | One short turn; gated behind the qualification threshold |
 | Empty-`SetSpeaker`-as-clear changes existing sidecar semantics | Low | Currently empty names are ignored, so nothing depends on the old behaviour; covered by a test |
-| Depends on the model obeying "one short line" | Low-Med | Prompt clause; observable in the smoke test; worst case is a chattier acknowledgment |
+| Persona-delegated phrasing is less predictable in length/tone than a scripted line | Low-Med | Deliberate (owner-chosen for in-character output); the "not yet" clause stops it pre-answering; the smoke test asserts it is brief and does NOT answer the interjector's question. If it proves chatty in practice, tighten the instruction — it is one string |
 
 ## 11. Version lock (inherited)
 
