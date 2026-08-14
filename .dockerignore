@@ -18,6 +18,23 @@ k8s/overlays/deployed/
 # Local tooling / agent settings that may contain tokens
 .claude/settings.local.json
 
+# === Other services' build contexts — NOT part of the bot image ===
+# The bot image is built from the repo root, so `COPY . .` swallows both Python
+# sidecars, including their local virtualenvs (~1.4GB of agent-sidecar/ +
+# voice-sidecar/). They are separate images with their own Dockerfiles and are
+# never executed from the bot container. Excluding them is the same COPY-everything
+# hygiene that the secrets block above exists for -- that one leaked credentials,
+# this one leaks build weight into a PUBLIC image.
+agent-sidecar/
+voice-sidecar/
+**/venv/
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# The SDD/audit scratch workspace (git-ignored, but the build context sees it).
+.superpowers/
+
 # === Build hygiene (not secrets, just don't belong in the image) ===
 .git
 .gitignore
