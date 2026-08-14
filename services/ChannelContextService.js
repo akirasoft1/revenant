@@ -46,14 +46,20 @@ class ChannelContextService {
    * @param {Object} openaiClient - OpenAI client for embeddings
    * @param {Object} mongoService - MongoDB service for persistence
    * @param {Object} mem0Service - Optional Mem0 service for channel memories
+   * @param {string} botUserId - Optional bot user id (defaults to config.discord.clientId)
+   * @param {Object} speakerNames - Optional resolver from services/SpeakerNames.js
+   *   ({ resolve(user, member) -> string|null }). When absent, or when resolve()
+   *   returns null, human-facing names fall back to the raw Discord username
+   *   (chat can tolerate an ugly name; voice cannot, so voice omits instead).
    */
-  constructor(config, openaiClient, mongoService, mem0Service = null, botUserId = null) {
+  constructor(config, openaiClient, mongoService, mem0Service = null, botUserId = null, speakerNames = null) {
     this.config = config.channelContext;
     this.qdrantConfig = config.qdrant;
     this.openai = openaiClient;
     this.mongoService = mongoService;
     this.mem0Service = mem0Service;
     this.botUserId = botUserId || config.discord?.clientId || null;
+    this.speakerNames = speakerNames;
 
     // Tier 1: In-memory buffers per channel
     this.channelBuffers = new Map();
@@ -278,11 +284,17 @@ class ChannelContextService {
 
     const buffer = this.channelBuffers.get(channelId);
 
+    // Prefer a resolved human-facing name (see SpeakerNames.js); fall back to
+    // the raw Discord username when no resolver is wired or it can't resolve
+    // one confidently (`authorId` below stays the Discord id regardless).
+    const authorName = (this.speakerNames && this.speakerNames.resolve(message.author, message.member))
+      || message.author.username;
+
     // Create message record
     const record = {
       id: message.id,
       authorId: message.author.id,
-      authorName: message.author.username,
+      authorName,
       content: message.content,
       timestamp: new Date(),
       isBot: message.author.bot,
@@ -295,7 +307,7 @@ class ChannelContextService {
 
     // Track participant activity (for non-bot users)
     if (!message.author.bot) {
-      this.updateParticipant(channelId, message.author.id, message.author.username);
+      this.updateParticipant(channelId, message.author.id, authorName);
     }
 
     // Queue for batch indexing (Tier 2)
