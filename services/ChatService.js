@@ -673,6 +673,18 @@ ${context}`;
           memoryContext: turnCtx.memoryBlock,
           history: turnCtx.historyTurns,
         });
+        // An agent turn can legitimately finish with no text: the sidecar builds
+        // message_text by accumulating streamed ADK events, so a turn whose last
+        // event is a bare tool call, a blocked continuation, or a MAX_TOKENS
+        // cutoff yields "" and RETURNS SUCCESSFULLY. Nothing downstream checked
+        // it, so the empty string reached message.reply(), which discord.js
+        // rejects client-side ("Cannot send an empty message"). Treat it as a
+        // failed agent turn instead, so the existing catch below falls through
+        // to direct OpenAI and the user gets an answer rather than silence.
+        if (!agentResp.messageText || !agentResp.messageText.trim()) {
+          throw new Error('agent returned an empty message (no text part in the final turn)');
+        }
+
         const cvPersonality = personalityManager.get('channel-voice') || {
           id: 'channel-voice',
           name: 'Channel Voice',
