@@ -254,6 +254,8 @@ The sidecar emits markers via `send_client_content(..., turn_complete=False)` im
 
 **Manifests:** `k8s/voice/` (tracked) — see its README for the apply order, the required bot ConfigMap/Secret/NetworkPolicy edits, and the build/push command.
 
+**Layer-4 real-model smoke test (speaker identity):** `scripts/smoke-voice-identity.js` opens ONE real `Converse` gRPC session against a port-forwarded sidecar and drives a scripted two-speaker conversation using two distinct synthesized voices (`scripts/gen-test-voices.js` TTS fixtures, auto-generated into gitignored `voice-fixtures/` if missing), so the three things that are only observable against the real model get checked without Discord or a second human: the model never reads the `[SPEAKER: ...]` marker aloud (critical — non-zero exit if it does), it actually uses the speaker names, one question doesn't produce more than one full reply, and each input transcript is printed next to the speaker that was current when it arrived for a human eyeball on attribution. Run with `kubectl port-forward svc/discord-article-bot-voice 50051:50051 -n discord-article-bot &` then `node scripts/smoke-voice-identity.js`. Against a sidecar build that predates `SetSpeaker` the marker is silently dropped server-side, so NAMES USED legitimately FAILs there — the script says so rather than crashing.
+
 ## Embedding Data Quality Validation
 
 Run the validation script to check health of all Qdrant collections:
