@@ -356,6 +356,7 @@ class VoiceService {
       if (g.perUser) {
         for (const u of g.perUser.values()) {
           if (u.wakeGate && typeof u.wakeGate.reset === 'function') u.wakeGate.reset();
+          if (u.vadGate && typeof u.vadGate.reset === 'function') u.vadGate.reset();
         }
       }
       g.turnActive = false;

@@ -157,7 +157,7 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Barge-in / Interruption**: Configurable barge-in support so the bot's own playback can be interrupted by the user speaking
 - **Memory In, Transcripts Out**: Recall context feeds into voice turns the same way it does text chat; every voice exchange lands in the MongoDB message store as a transcript, feeding `/tldr` and recall just like text messages
 - **Graceful Degradation**: `/voice` reports unavailable if the sidecar is unreachable or `VOICE_ENABLED=false`; no restart needed to flip
-- **Multi-User Voice**: Per-speaker wake-word and VAD gates detect each speaker independently in group channels; active-speaker floor control lets the first waker hold the floor while others queue as "waiting" (without audio being sent to the model, preventing crosstalk); voice transcripts are attributed to each speaker's real Discord `userId` for proper credit in `/tldr` and recall
+- **Multi-User Voice**: Per-speaker wake-word and VAD gates detect each speaker independently in group channels; active-speaker floor control lets the first waker hold the floor while others queue as "waiting" (without audio being sent to the model, preventing crosstalk); voice transcripts are attributed to the floor-holder's real Discord `userId` for proper credit in `/tldr` and recall
 - **Deferred**: idle auto-leave, dynamic (non-static) voice-profile injection into the Live system prompt, model identity-awareness so the bot knows in-context who's speaking (Phase 3), session compression/resumption for longer conversations (Plan 2b), and human-like deferral responses acknowledging waiting speakers (Phase 4)
 
 ### Monitoring & Observability
