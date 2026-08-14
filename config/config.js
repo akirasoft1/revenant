@@ -56,12 +56,29 @@ module.exports = {
     // How long (ms) after the user's last real-speech frame to signal
     // audio_stream_end so the Live model finalizes the turn. Lower = snappier
     // replies but risks cutting off long thinking pauses; higher = more
-    // forgiving. All audio is still streamed (this only times the end signal).
+    // forgiving. NOTE: once a turn opens, frames now stream continuously
+    // (Silero VAD gate; no energy-gate dropping) so Gemini's server VAD always
+    // sees real silence too. The PRIMARY early endpointer is Silero's
+    // `justEnded` firing audio_stream_end as soon as neural speech-end is
+    // detected (see VoiceService._handleUserPcm); this timer is the BACKSTOP
+    // that fires if that early path didn't (e.g. no session yet).
     speechEndSilenceMs: parseInt(process.env.VOICE_SPEECH_END_SILENCE_MS || '800', 10),
+    // Silero VAD (per-stream neural speech detection; replaces the fixed energy
+    // gate). Frames <threshold are non-speech. min*Frames are 32ms windows.
+    vad: {
+      threshold: parseFloat(process.env.VOICE_VAD_THRESHOLD || '0.5'),
+      minSpeechFrames: parseInt(process.env.VOICE_VAD_MIN_SPEECH_FRAMES || '2', 10),   // ~64ms
+      minSilenceFrames: parseInt(process.env.VOICE_VAD_MIN_SILENCE_FRAMES || '24', 10), // ~768ms
+      modelPath: process.env.VOICE_VAD_MODEL || require('path').join(__dirname, '..', 'models', 'silero', 'silero_vad.onnx'),
+    },
     // Allow barge-in (interrupting the bot mid-reply). Default false = half-duplex
-    // (mic muted while the bot talks) which is echo-safe on speakers. Set true
-    // ONLY on headphones — real speech then interrupts the reply; the energy gate
-    // still blocks ambient noise from false-triggering it.
+    // (mic muted while the bot talks). true = full-duplex: real speech interrupts
+    // the reply; the Silero VAD gate still blocks ambient from false-triggering it.
+    // Safe for most users — Discord's client runs WebRTC AEC + Krisp on by
+    // default, so the bot's own voice is cancelled from a user's mic before it
+    // reaches us. Residual risk is narrow: users who disabled Discord's echo
+    // cancellation, or a separate speaker path Discord can't see. Headphones are
+    // belt-and-suspenders, not a requirement.
     allowBargeIn: process.env.VOICE_ALLOW_BARGE_IN === 'true',
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
   },
