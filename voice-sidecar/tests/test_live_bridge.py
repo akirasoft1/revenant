@@ -382,3 +382,114 @@ async def test_pump_server_ignores_non_resumable_update():
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert resume.handle is None
+
+
+class ClosingFakeSession(FakeSession):
+    """A session whose receive() ENDS after producing one turn's worth of
+    messages (rather than blocking), so the bridge observes a server-side
+    session end and can decide to resume. NOTE: receive() only yields the
+    script on the FIRST call; every call after that yields nothing so
+    `_pump_server`'s `if not produced: break` sees a real close instead of
+    re-yielding the same script forever (which would busy-loop the event
+    loop with no genuine await/suspension point and hang the test)."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self._served = False
+
+    async def receive(self):
+        if not self._served:
+            self._served = True
+            for m in self._script:
+                yield m
+
+
+def _multi_factory(sessions):
+    """Yields a different session per `async with` -- records the configs used."""
+    seen = []
+    it = iter(sessions)
+    @contextlib.asynccontextmanager
+    async def make(model, config):
+        seen.append(config)
+        yield next(it)
+    make.configs = seen
+    return make
+
+
+async def _drive_open_ended(bridge, start):
+    """Like `_drive`, but keeps the client stream open (never sends
+    session_end) so a server-side session close is what drives the bridge's
+    reconnect decision, not the client asking to stop."""
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=start)
+        await asyncio.Event().wait()   # keep the client stream open across the reconnect
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    return out
+
+
+async def test_reconnects_with_handle_and_does_not_reseed_history():
+    s1 = ClosingFakeSession([_resume_msg("h-1")])   # gives a handle, then ends
+    s2 = FakeSession([])                             # resumed session: blocks (stays open)
+    factory = _multi_factory([s1, s2])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1", history=[
+        voice_pb2.Turn(role="user", content="earlier question")])
+    out = await _drive_open_ended(bridge, start)
+    # reconnected: two sessions opened, second carried the handle
+    assert len(factory.configs) == 2
+    assert factory.configs[0].session_resumption.handle is None
+    assert factory.configs[1].session_resumption.handle == "h-1"
+    # history seeded ONLY on the first connect
+    assert len(s1.seeded) == 1
+    assert s2.seeded == []
+    # transparent: no error surfaced to the bot
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_no_reconnect_without_a_handle():
+    s1 = ClosingFakeSession([])       # ends with no resumption handle
+    s2 = FakeSession([])
+    factory = _multi_factory([s1, s2])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    assert len(factory.configs) == 1  # gave up rather than blind-reconnecting
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_reconnects_are_capped():
+    # every session ends immediately but hands back a handle
+    sessions = [ClosingFakeSession([_resume_msg(f"h-{i}")]) for i in range(10)]
+    factory = _multi_factory(sessions)
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=2)
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    assert len(factory.configs) == 3   # initial + 2 reconnects, then stop
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_client_session_end_exits_even_with_a_resumption_handle():
+    # Invariant (d): pump_in completing (client asked to end) must exit the
+    # loop, never trigger a reconnect -- even though a resumption handle is
+    # already sitting in `resume` from a server message this same session
+    # already delivered. Client intent to stop always wins.
+    session = FakeSession([_resume_msg("h-1")])  # sets resume.handle, then blocks
+    factory = _multi_factory([session, FakeSession([])])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u1"))
+    end = voice_pb2.VoiceClientEvent(session_end=voice_pb2.SessionEnd())
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield start
+        await asyncio.sleep(0.05)  # let pump_out observe the resume handle first
+        yield end
+    await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=1)
+    assert len(factory.configs) == 1  # no reconnect, despite a handle being available
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)

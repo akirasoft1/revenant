@@ -75,6 +75,16 @@ class _ResumeState:
         self.reconnects = 0
 
 
+class _SessionRef:
+    """Mutable holder for the CURRENT Live session. `_pump_client` lives for the
+    whole gRPC call and reads this each event, so a reconnect can swap the
+    session underneath it without dropping the bot's stream."""
+    __slots__ = ("session",)
+
+    def __init__(self):
+        self.session = None
+
+
 class LiveBridge:
     def __init__(self, session_factory, *, model, default_voice,
                  compression_trigger_tokens=25000, resumption_enabled=True,
@@ -148,47 +158,92 @@ class LiveBridge:
         span.set_attribute("voice.has_recall", bool(start.recall_context))
 
         outcome = "ok"
+        # Hoisted above the try so the `finally` below can always read the
+        # final reconnect count, even if we never got past the first connect.
+        resume = _ResumeState()
         try:
-            async with self._session_factory(self._model, self._live_config(start)) as session:
-                # 2. Seed conversation history, then recall + system context, as
-                # prior (non-final) turns.
-                seeded = 0
-                for turn in start.history:
-                    if turn.content:
-                        await session.send_client_content(
-                            turns=types.Content(
-                                role=("model" if turn.role == "assistant" else "user"),
-                                parts=[types.Part(text=turn.content)]),
-                            turn_complete=False,
-                        )
-                        seeded += 1
-                if start.recall_context:
-                    await session.send_client_content(
-                        turns=types.Content(role="user",
-                                            parts=[types.Part(text=start.recall_context)]),
-                        turn_complete=False,
-                    )
-                    seeded += 1
-                logger.info("voice: seeded %d context turn(s); Live session open", seeded)
-                resume = _ResumeState()
-                pump_in = asyncio.create_task(self._pump_client(request_iter, session, stats))
-                pump_out = asyncio.create_task(self._pump_server(session, emit, stats, resume))
-                try:
-                    done, pending = await asyncio.wait(
-                        {pump_in, pump_out}, return_when=asyncio.FIRST_COMPLETED)
-                finally:
-                    # Cancelling `converse` itself (e.g. gRPC context cancellation) throws
-                    # CancelledError into the `await asyncio.wait(...)` above without
-                    # touching pump_in/pump_out — they'd otherwise leak as orphaned tasks
-                    # blocked forever on send/receive. Always reap both, on every exit path.
-                    for t in (pump_in, pump_out):
-                        if not t.done():
-                            t.cancel()
-                    await asyncio.gather(pump_in, pump_out, return_exceptions=True)
-                for t in done:
-                    exc = t.exception()
-                    if exc:
-                        raise exc
+            session_ref = _SessionRef()
+            # Created ONCE, outside the reconnect loop: this owns the bot's
+            # gRPC request stream and must survive every reconnect below --
+            # only the server-side pump is per-session.
+            pump_in = asyncio.create_task(self._pump_client(request_iter, session_ref, stats))
+            client_done = False
+            try:
+                while True:
+                    async with self._session_factory(
+                            self._model, self._live_config(start, resume.handle)) as session:
+                        session_ref.session = session
+                        if resume.reconnects == 0:
+                            # 2. Seed conversation history, then recall + system
+                            # context, as prior (non-final) turns -- ONLY on the
+                            # first connect. A resumed session already carries
+                            # this context via the resumption handle; re-seeding
+                            # would duplicate the conversation.
+                            seeded = 0
+                            for turn in start.history:
+                                if turn.content:
+                                    await session.send_client_content(
+                                        turns=types.Content(
+                                            role=("model" if turn.role == "assistant" else "user"),
+                                            parts=[types.Part(text=turn.content)]),
+                                        turn_complete=False,
+                                    )
+                                    seeded += 1
+                            if start.recall_context:
+                                await session.send_client_content(
+                                    turns=types.Content(role="user",
+                                                        parts=[types.Part(text=start.recall_context)]),
+                                    turn_complete=False,
+                                )
+                                seeded += 1
+                            logger.info("voice: seeded %d context turn(s); Live session open", seeded)
+                        else:
+                            logger.info(
+                                "voice: resumed Live session (reconnect #%d); context carried by handle",
+                                resume.reconnects)
+
+                        pump_out = asyncio.create_task(self._pump_server(session, emit, stats, resume))
+                        try:
+                            done, _pending = await asyncio.wait(
+                                {pump_in, pump_out}, return_when=asyncio.FIRST_COMPLETED)
+                        finally:
+                            # Only the SERVER pump is per-session -- cancel and
+                            # reap it on every iteration exit. pump_in must
+                            # survive the reconnect; it is reaped in the outer
+                            # finally below instead.
+                            if not pump_out.done():
+                                pump_out.cancel()
+                            await asyncio.gather(pump_out, return_exceptions=True)
+                        session_ref.session = None
+                        if pump_in in done:
+                            # The client asked to end (or its stream broke) --
+                            # that always means "exit", never "reconnect".
+                            client_done = True
+                        for t in done:
+                            exc = t.exception()
+                            if exc:
+                                raise exc
+                    if client_done:
+                        return
+                    if not (self._resumption_enabled and resume.handle):
+                        logger.info("voice: session ended with no resumption handle; not reconnecting")
+                        return
+                    if resume.reconnects >= self._max_reconnects:
+                        logger.warning("voice: reached max reconnects (%d); ending session",
+                                       self._max_reconnects)
+                        return
+                    resume.reconnects += 1
+                    resume.going_away = False
+                    logger.info("voice: reconnecting Live session with resumption handle (#%d)",
+                                resume.reconnects)
+            finally:
+                # Cancelling `converse` itself (e.g. gRPC context cancellation) throws
+                # CancelledError into the loop above without touching pump_in --
+                # it would otherwise leak as an orphaned task blocked forever on
+                # the bot's request stream. Always reap it, on every exit path.
+                if not pump_in.done():
+                    pump_in.cancel()
+                await asyncio.gather(pump_in, return_exceptions=True)
         except asyncio.CancelledError:
             outcome = "cancelled"
             raise
@@ -212,35 +267,49 @@ class LiveBridge:
             span.set_attribute("voice.audio_out_bytes", stats.audio_out_bytes)
             span.set_attribute("voice.turns", stats.turns)
             span.set_attribute("voice.interruptions", stats.interruptions)
+            span.set_attribute("voice.reconnects", resume.reconnects)
             span.end()
             logger.info(
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
-                "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d",
+                "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
+                resume.reconnects,
             )
 
-    async def _pump_client(self, request_iter, session, stats) -> None:
+    async def _pump_client(self, request_iter, session_ref, stats) -> None:
         async for ev in request_iter:
             kind = ev.WhichOneof("event")
-            if kind == "audio":
-                stats.audio_in_chunks += 1
-                stats.audio_in_bytes += len(ev.audio.pcm)
-                await session.send_realtime_input(
-                    audio=types.Blob(data=ev.audio.pcm, mime_type="audio/pcm;rate=16000"))
-            elif kind == "audio_stream_end":
-                # Debounced end-of-speech from the bot: tell the Live model the
-                # user paused so it finalizes the turn now, instead of ambient
-                # audio holding it open. Automatic VAD still applies.
-                await session.send_realtime_input(audio_stream_end=True)
-                logger.debug("voice: signaled audio_stream_end")
-            elif kind == "session_end":
+            if kind == "session_end":
                 logger.info("voice: client requested session_end after %d audio chunk(s)",
                             stats.audio_in_chunks)
                 return
+            session = session_ref.session
+            if session is None:
+                # Mid-reconnect gap (typically well under a second): drop rather
+                # than buffer -- stale audio would arrive after the resume as if
+                # it were current speech.
+                logger.debug("voice: dropping %s during session reconnect", kind)
+                continue
+            try:
+                if kind == "audio":
+                    stats.audio_in_chunks += 1
+                    stats.audio_in_bytes += len(ev.audio.pcm)
+                    await session.send_realtime_input(
+                        audio=types.Blob(data=ev.audio.pcm, mime_type="audio/pcm;rate=16000"))
+                elif kind == "audio_stream_end":
+                    # Debounced end-of-speech from the bot: tell the Live model
+                    # the user paused so it finalizes the turn now, instead of
+                    # ambient audio holding it open. Automatic VAD still applies.
+                    await session.send_realtime_input(audio_stream_end=True)
+                    logger.debug("voice: signaled audio_stream_end")
+            except Exception as e:  # noqa: BLE001
+                # The session died under us; the reconnect loop will replace it.
+                logger.debug("voice: send failed on a closing session (%s); dropping frame",
+                             type(e).__name__)
 
     async def _pump_server(self, session, emit, stats, resume) -> None:
         # receive() ends per-turn on turn_complete; loop to span the whole session.
