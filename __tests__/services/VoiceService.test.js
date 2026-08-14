@@ -674,6 +674,25 @@ test('audio_stream_end fires speechEndSilenceMs after the last speaking frame an
   expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(2);
 });
 
+test('Silero justEnded fires audio_stream_end immediately as the early endpointer, without the _tick timer elapsing', async () => {
+  const gate = fakeVadGate([
+    { speaking: true, justStarted: true, justEnded: false },
+    { speaking: false, justStarted: false, justEnded: true },
+  ]);
+  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate });
+
+  // Frame 1: speech onset opens the turn; no end signal yet.
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
+
+  // Frame 2: Silero declares end-of-speech (justEnded) -- audio_stream_end
+  // fires right here, with NO _tick() call in between (i.e. not via the
+  // silence-timer backstop).
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  expect(svc._guilds.get(guildId).turnActive).toBe(false);
+});
+
 test('interrupted server event flushes playback (stopPlayback)', async () => {
   const { svc, guildId, session, playerStop } = await buildActiveVoiceService({});
   session.emit('interrupted');

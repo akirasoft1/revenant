@@ -86,6 +86,10 @@ function createSileroVadEngine({ modelPath, sessionFactory } = {}) {
       // documented in wakeword.js's schedule().
       queue.push({ frame: Int16Array.from(int16Frame), gen: generation });
       drain();
+      // Async chain (queue+drain): `lastProb` here is the PRIOR completed
+      // inference's probability, not this frame's -- the decision at window N
+      // reflects window N-1's result, a ~1-window (~32ms @ WINDOW=512/16kHz)
+      // detection lag. Mirrors the equivalent note in wakeword.js's process().
       return lastProb;
     },
     whenIdle: async () => { await drainDone; },

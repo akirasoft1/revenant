@@ -267,6 +267,15 @@ class VoiceService {
       // _startSession flushes g.pending (pre-roll + these) once the session is up.
       (g.pending || (g.pending = [])).push(pcm16);
     }
+
+    // Early client endpoint (Gemini Hybrid VAD): when Silero declares end-of-speech,
+    // finalize the turn NOW rather than waiting on the _tick silence timer. The timer
+    // in _tick remains a backstop (fires only if this path didn't, e.g. no session yet).
+    if (v.justEnded && g.session && !g.audioEndSent) {
+      try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end (vad) failed: ${e.message}`); }
+      g.audioEndSent = true;
+      g.turnActive = false; // stop forwarding until the next speech onset
+    }
   }
 
   async _apply(guildId, actions, ctx = {}) {

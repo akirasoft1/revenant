@@ -56,8 +56,12 @@ module.exports = {
     // How long (ms) after the user's last real-speech frame to signal
     // audio_stream_end so the Live model finalizes the turn. Lower = snappier
     // replies but risks cutting off long thinking pauses; higher = more
-    // forgiving. NOTE: sub-threshold frames are dropped by the energy gate (they
-    // are NOT streamed); this timer is currently the sole endpointer as a result.
+    // forgiving. NOTE: once a turn opens, frames now stream continuously
+    // (Silero VAD gate; no energy-gate dropping) so Gemini's server VAD always
+    // sees real silence too. The PRIMARY early endpointer is Silero's
+    // `justEnded` firing audio_stream_end as soon as neural speech-end is
+    // detected (see VoiceService._handleUserPcm); this timer is the BACKSTOP
+    // that fires if that early path didn't (e.g. no session yet).
     speechEndSilenceMs: parseInt(process.env.VOICE_SPEECH_END_SILENCE_MS || '800', 10),
     // Silero VAD (per-stream neural speech detection; replaces the fixed energy
     // gate). Frames <threshold are non-speech. min*Frames are 32ms windows.
@@ -69,7 +73,7 @@ module.exports = {
     },
     // Allow barge-in (interrupting the bot mid-reply). Default false = half-duplex
     // (mic muted while the bot talks). true = full-duplex: real speech interrupts
-    // the reply; the energy gate still blocks ambient from false-triggering it.
+    // the reply; the Silero VAD gate still blocks ambient from false-triggering it.
     // Safe for most users — Discord's client runs WebRTC AEC + Krisp on by
     // default, so the bot's own voice is cancelled from a user's mic before it
     // reaches us. Residual risk is narrow: users who disabled Discord's echo
