@@ -10,6 +10,29 @@ const fs = require('fs').promises;
 const config = require('./config/config');
 const logger = require('./logger');
 const { shutdownTracing, withRootSpan } = require('./tracing');
+
+// Process-level safety net. Node has terminated the process on an unhandled
+// rejection since v15 (--unhandled-rejections=throw is the default, and nothing
+// in the Dockerfile or the deployment overrides it), and discord.js discards the
+// promise returned by an async event listener. Together those mean a single
+// rejected Discord API call inside a listener kills the pod -- reachable by any
+// user in a channel the bot can READ but not SEND to (DiscordAPIError 50013 from
+// sendTyping/reply), and by an expired interaction token (10062). Each restart
+// drops every piece of in-memory state: live voice sessions, pending image
+// retries, active chat threads, cooldowns, and the channel-context hot buffer.
+//
+// A rejected API call is not corrupt state, so we log it in full and keep
+// serving. An uncaught EXCEPTION is different -- it can leave state genuinely
+// inconsistent -- so we log it and let the process die, which at least
+// guarantees the crash is explained in the logs before Kubernetes restarts us.
+process.on('unhandledRejection', reason => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error(`Unhandled promise rejection (surviving): ${err.message}`, { stack: err.stack });
+});
+process.on('uncaughtException', error => {
+  logger.error(`Uncaught exception (terminating): ${error.message}`, { stack: error.stack });
+  process.exit(1);
+});
 const SummarizationService = require('./services/SummarizationService');
 const ReactionHandler = require('./handlers/ReactionHandler');
 const ReplyHandler = require('./handlers/ReplyHandler');
@@ -784,12 +807,26 @@ class DiscordBot {
 
       // Handle @mentions of the bot - seamless entry into conversation
       if (message.mentions.has(this.client.user)) {
-        await this._handleMentionChat(message);
+        // Guarded like the messageReactionAdd listener above: every reply/send
+        // in this path can reject with DiscordAPIError 50013 in a channel the
+        // bot may read but not post in, and discord.js drops the rejection on
+        // the floor for an async listener. The process-level net installed at
+        // the top of this file is the backstop; this is the one that keeps the
+        // failure attributable to the message that caused it.
+        try {
+          await this._handleMentionChat(message);
+        } catch (error) {
+          logger.error(
+            `Mention chat failed in channel ${message.channel.id} (guild ${message.guild ? message.guild.id : 'dm'}): ${error.message}`,
+            { stack: error.stack }
+          );
+        }
         return;
       }
     });
 
     this.client.on('interactionCreate', async interaction => {
+      try {
       // Handle slash commands
       if (interaction.isChatInputCommand()) {
         const context = {
@@ -834,6 +871,18 @@ class DiscordBot {
             ephemeral: true
           });
         }
+      }
+      } catch (error) {
+        // SlashCommandHandler.execute guards command.execute itself, but its
+        // three PRE-execute replies (unknown command, admin refusal, cooldown)
+        // sit outside that guard, and withRootSpan rethrows -- so an expired
+        // interaction token (DiscordAPIError 10062, already hit once here via a
+        // ~97s /voice join stall) propagated straight out of this listener.
+        // Button branches had the same exposure.
+        logger.error(
+          `Interaction handling failed (${interaction.isChatInputCommand() ? `/${interaction.commandName}` : interaction.customId || interaction.type}): ${error.message}`,
+          { stack: error.stack }
+        );
       }
     });
 
