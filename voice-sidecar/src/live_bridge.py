@@ -89,7 +89,8 @@ class _SessionStats:
     attached to the session span when the session ends."""
     __slots__ = ("audio_in_chunks", "audio_in_bytes", "audio_out_chunks",
                  "audio_out_bytes", "turns", "interruptions",
-                 "in_tx_chars", "out_tx_chars", "speaker_markers")
+                 "in_tx_chars", "out_tx_chars", "speaker_markers",
+                 "deferral_acks")
 
     def __init__(self):
         self.audio_in_chunks = 0
@@ -101,6 +102,7 @@ class _SessionStats:
         self.in_tx_chars = 0
         self.out_tx_chars = 0
         self.speaker_markers = 0
+        self.deferral_acks = 0
 
 
 class _ResumeState:
@@ -410,12 +412,12 @@ class LiveBridge:
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
                 "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d "
-                "speaker_markers=%d",
+                "speaker_markers=%d deferral_acks=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
-                resume.reconnects, stats.speaker_markers,
+                resume.reconnects, stats.speaker_markers, stats.deferral_acks,
             )
 
     async def _pump_client(self, request_iter, session_ref, stats) -> None:
@@ -443,11 +445,18 @@ class LiveBridge:
         #     updates current_speaker/pending_speaker directly regardless of
         #     session state, and re-arming (instead of clearing) here means
         #     the later None -> new-session transition doesn't discard it.
+        #   pending_ack: a deferral acknowledgment (Phase 4) owed to whoever
+        #     tried to speak while the bot was replying. Unlike
+        #     pending_speaker, this is NOT re-armed across a reconnect --
+        #     it's a one-shot nudge tied to a specific moment, not durable
+        #     conversational context, so it is simply dropped on a session
+        #     swap rather than replayed into a session it was never meant for.
         _last_session = None
         _warned_send_failure = False
         _pending_stream_end = False
         current_speaker = None
         pending_speaker = None
+        pending_ack = None
         async for ev in request_iter:
             kind = ev.WhichOneof("event")
             if kind == "session_end":
@@ -459,6 +468,7 @@ class LiveBridge:
                 _last_session = session
                 _warned_send_failure = False
                 pending_speaker = current_speaker   # re-arm: re-announce into the new session
+                pending_ack = None                  # one-shot: do not replay into a new session
                 if session is not None and _pending_stream_end:
                     try:
                         await session.send_realtime_input(audio_stream_end=True)
@@ -469,12 +479,43 @@ class LiveBridge:
                             "voice: failed to replay audio_stream_end after reconnect", exc_info=True)
                     finally:
                         _pending_stream_end = False
-            if kind == "set_speaker":
+            if kind == "acknowledge_waiting":
+                name = (ev.acknowledge_waiting.display_name or "").strip()
+                if name:
+                    pending_ack = name.replace("[", "").replace("]", "")
+            elif kind == "set_speaker":
                 name = (ev.set_speaker.display_name or "").strip()
-                # Only a name we are confident in; the bot omits rather than guess.
-                if name and name != current_speaker:
+                if not name:
+                    # Explicit clear (Phase 4 floor release): without this the
+                    # next speaker would inherit the previous speaker's
+                    # identity instead of being re-announced.
+                    current_speaker = None
+                    pending_speaker = None
+                elif name != current_speaker:
                     current_speaker = name
                     pending_speaker = name
+            if pending_ack and session is not None:
+                # Flushed as soon as a session exists -- unlike the speaker
+                # marker, this does not wait for the next audio chunk.
+                try:
+                    await session.send_client_content(
+                        turns=types.Content(role="user", parts=[types.Part(
+                            text=f"[SYSTEM: {pending_ack} tried to speak while you were replying. "
+                                 f"Briefly let them know you noticed, in your own voice. "
+                                 f"Do not answer anything else yet.]")]),
+                        # turn_complete=True (NOT False like the speaker marker):
+                        # we WANT a generated reply here -- this IS the
+                        # acknowledgment.
+                        turn_complete=True,
+                    )
+                    stats.deferral_acks += 1
+                    logger.info("voice: acknowledged waiting speaker %s", pending_ack)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "voice: failed to send deferral acknowledgment", exc_info=True)
+                finally:
+                    pending_ack = None
+            if kind in ("acknowledge_waiting", "set_speaker"):
                 continue
             if session is None:
                 # Mid-reconnect gap (~1-3s -- a full Live-session open): drop
