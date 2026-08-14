@@ -432,9 +432,17 @@ class LiveBridge:
         #     and the bot (which already set its own audioEndSent=true) will
         #     NOT resend it, costing a whole turn (FIX m1).
         #   current_speaker/pending_speaker: the currently-known speaker name
-        #     and whether a marker for it is still owed. Reset on a session
-        #     swap so a resumed session re-announces the speaker (the new
-        #     session has no memory of the [SPEAKER: ...] context turn).
+        #     and whether a marker for it is still owed. On a session swap,
+        #     pending_speaker is RE-ARMED to current_speaker (current_speaker
+        #     itself is left untouched) so the marker is re-sent into the new
+        #     session -- it has no memory of the [SPEAKER: ...] context turn
+        #     from before the swap, and the floor holder cannot change
+        #     mid-session, so nothing else would ever prompt another marker.
+        #     This also preserves a set_speaker that arrives DURING the
+        #     reconnect gap (session is briefly None mid-swap): that already
+        #     updates current_speaker/pending_speaker directly regardless of
+        #     session state, and re-arming (instead of clearing) here means
+        #     the later None -> new-session transition doesn't discard it.
         _last_session = None
         _warned_send_failure = False
         _pending_stream_end = False
@@ -450,8 +458,7 @@ class LiveBridge:
             if session is not _last_session:
                 _last_session = session
                 _warned_send_failure = False
-                current_speaker = None
-                pending_speaker = None
+                pending_speaker = current_speaker   # re-arm: re-announce into the new session
                 if session is not None and _pending_stream_end:
                     try:
                         await session.send_realtime_input(audio_stream_end=True)
@@ -487,9 +494,15 @@ class LiveBridge:
                         # aloud. Sent as late as possible (right before this
                         # speaker's first chunk) because send_realtime_input does
                         # not guarantee ordering against send_client_content.
+                        # Defence in depth: the bot-side sanitizer
+                        # (services/SpeakerNames.js) already strips bracket
+                        # characters, but a user-controlled name is scrubbed
+                        # again here so a `]` in the name can never escape the
+                        # marker brackets even if that sanitizer is bypassed.
+                        safe_speaker = pending_speaker.replace("[", "").replace("]", "")
                         await session.send_client_content(
                             turns=types.Content(role="user",
-                                                parts=[types.Part(text=f"[SPEAKER: {pending_speaker}]")]),
+                                                parts=[types.Part(text=f"[SPEAKER: {safe_speaker}]")]),
                             turn_complete=False,
                         )
                         stats.speaker_markers += 1

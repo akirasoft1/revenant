@@ -337,6 +337,17 @@ class VoiceService {
       // Identity travels on speaker CHANGE only -- decoupled from the audio
       // cadence. The sidecar turns this into an out-of-band [SPEAKER: name]
       // marker ahead of this speaker's next chunk.
+      //
+      // NOTE (Phase 4 dependency): there is currently NO way to CLEAR the
+      // speaker once set -- `u.name` null just means "don't send a marker",
+      // it never un-sends the last one that WAS sent. A speaker with no
+      // resolvable name therefore silently inherits whatever identity the
+      // previous speaker last announced. That's unreachable today because
+      // there is exactly one floor holder per session (FloorControl), so
+      // "the speaker" never legitimately changes to "unknown" mid-session.
+      // Phase 4's deferral work and `/voice listen` (continuous listening,
+      // no re-wake, no single floor holder) both break that invariant --
+      // revisit this when either lands.
       if (u.name && g.lastSpeakerSent !== userId && typeof g.session.sendSpeaker === 'function') {
         g.session.sendSpeaker({ userId, displayName: u.name });
         g.lastSpeakerSent = userId;

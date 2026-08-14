@@ -718,9 +718,17 @@ class DiscordBot {
 
         // Prefer the resolved preferred name (services/SpeakerNames.js); fall
         // back to the raw Discord username when unresolved. `authorId` stays
-        // the Discord id — identity keys never change.
-        const authorName = (this.speakerNames && this.speakerNames.resolve(message.author, message.member))
-          || message.author.username;
+        // the Discord id — identity keys never change. Guarded like the
+        // voice path (VoiceService._perUser): this runs in the messageCreate
+        // handler before any .catch() chain, so an uncaught throw here would
+        // become an unhandled rejection instead of just losing a preferred name.
+        let authorName = message.author.username;
+        try {
+          const resolved = this.speakerNames && this.speakerNames.resolve(message.author, message.member);
+          if (resolved) authorName = resolved;
+        } catch (e) {
+          logger.warn(`Speaker-name resolution failed for ${message.author.id}: ${e.message}`);
+        }
 
         this.mongoService.recordChannelMessage({
           messageId: message.id,

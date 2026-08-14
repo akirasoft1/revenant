@@ -185,7 +185,14 @@ function buildSystemPrompt() {
 // --- Verdict helpers -------------------------------------------------
 
 function containsMarkerLeak(text) {
-  return text.includes('[') || text.includes(']') || /\bspeaker\b/i.test(text);
+  // A real leak is the model reading the out-of-band "[SPEAKER: <name>]"
+  // marker aloud -- match the marker's actual shape, not any bare "[", "]",
+  // or the word "speaker" on its own (a reply that legitimately says "on
+  // speaker" would otherwise trip this CRITICAL non-zero-exit check).
+  if (/\[\s*SPEAKER\s*:/i.test(text)) return true;
+  // Also catch the literal tag with the brackets paraphrased away, for each
+  // name actually sent in marker form this run.
+  return SPEAKERS.some((s) => new RegExp(`SPEAKER\\s*:\\s*${s.displayName}\\b`, 'i').test(text));
 }
 
 function mentionsName(text, name) {

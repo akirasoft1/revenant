@@ -22,10 +22,19 @@ function sanitize(raw) {
   if (typeof raw !== 'string') return '';
   let s = raw.length > MAX_RAW_LEN ? raw.slice(0, MAX_RAW_LEN) : raw;
   s = s.replace(/[​-‍﻿]/g, '');            // zero-width
-  s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' '); // emoji/pictographs
+  s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, ' '); // emoji/pictographs/dingbats
+  s = s.replace(/[\u{FE0F}\u{20E3}]/gu, '');              // variation selector-16 / combining enclosing keycap
   s = s.replace(/™/g, ' ');                           // ™
   s = s.replace(/\((?:tm|r|c)\)/gi, ' ');                  // (tm) (r) (c)
   s = s.replace(/[\[\({][^\])}]*[\])}]/g, ' ');            // [CLAN] (tag) {x}
+  // Defence in depth: strip any leftover/unpaired bracket character (e.g. a
+  // lone `]` with no opener, which the paired-bracket regex above never
+  // matches). globalName is settable by ANY unprivileged Discord user, and
+  // the resolved name is later embedded verbatim inside "[SPEAKER: <name>]"
+  // -- an unpaired `]` there would close the marker early and let
+  // attacker-chosen text land outside it in a role="user" context turn (and
+  // in the stored Mongo authorName, re-injected via recall/tldr).
+  s = s.replace(/[\[\]{}()<>]/g, ' ');
   s = s.replace(/[_*~`|]/g, ' ');                          // markdown-ish noise
   s = s.replace(/\s+/g, ' ').trim();
   if (s.length > MAX_LEN) {

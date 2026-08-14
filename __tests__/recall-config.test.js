@@ -28,3 +28,24 @@ describe('recall config', () => {
     expect(config.recall.maxItems).toBe(12);
   });
 });
+
+describe('VOICE_SPEAKER_NAMES config (FIX 3)', () => {
+  beforeEach(() => { jest.resetModules(); });
+  afterEach(() => { delete process.env.VOICE_SPEAKER_NAMES; });
+
+  it('parses valid JSON overrides', () => {
+    process.env.VOICE_SPEAKER_NAMES = '{"u1":"Mike"}';
+    const config = require('../config/config');
+    expect(config.voice.speakerNames).toEqual({ u1: 'Mike' });
+  });
+
+  it('fails closed to an empty table AND warns on malformed JSON, naming the env var', () => {
+    process.env.VOICE_SPEAKER_NAMES = '{not valid json';
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = require('../config/config');
+    expect(config.voice.speakerNames).toEqual({}); // fail-closed behaviour unchanged
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toEqual(expect.stringContaining('VOICE_SPEAKER_NAMES'));
+    warnSpy.mockRestore();
+  });
+});
