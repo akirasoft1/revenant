@@ -187,7 +187,18 @@ class VoiceService {
         const wakeScore = state.gate && typeof state.gate.lastScore === 'function' ? state.gate.lastScore() : null;
         const fs = state.gate && typeof state.gate.frameStats === 'function' ? state.gate.frameStats() : null;
         const meanAbs = probes ? Math.round(sumAbs / probes) : 0;
-        logger.debug(`voice: utterance end (${reason}) user ${userId} guild ${guildId}: decoded ${decoded} frame(s), dropped ${dropped}, peak ${peak}/32767, meanAbs ${meanAbs}, wake maxScore ${wakeScore}${fs ? `, engine scheduled ${fs.scheduled}/droppedBusy ${fs.droppedBusy}` : ''}${wakeErr ? `, wake-engine error: ${wakeErr.message}` : ''}`);
+        // The wake gate is fed ONLY while the room is idle -- once a session is
+        // open, `_handleUserPcm` routes audio to the VAD instead. `lastScore()`
+        // is "max since the last reset", so during a conversation it reports a
+        // FROZEN score from some earlier utterance. Printing that unqualified
+        // made live sessions look like they were scoring badly when the wake
+        // engine had not run at all, so say which it is.
+        const wasIdle = state.machine && state.machine.state === 'idle';
+        const wakeField = wasIdle
+          ? `wake maxScore ${wakeScore}`
+          : `wake n/a (session ${state.machine ? state.machine.state : '?'}; gate not fed, last score ${wakeScore} is stale)`;
+        const turnField = `turnActive ${!!state.turnActive}, forwarded ${state.session ? 'live' : 'buffered'}`;
+        logger.debug(`voice: utterance end (${reason}) user ${userId} guild ${guildId}: decoded ${decoded} frame(s), dropped ${dropped}, peak ${peak}/32767, meanAbs ${meanAbs}, ${wakeField}, ${turnField}${fs ? `, engine scheduled ${fs.scheduled}/droppedBusy ${fs.droppedBusy}` : ''}${wakeErr ? `, wake-engine error: ${wakeErr.message}` : ''}`);
       };
       stream.once('end', () => onEnd('end'));
       stream.once('error', (e) => { logger.warn(`voice: receive stream error from user ${userId} in guild ${guildId}: ${e.message}`); onEnd('error'); });
@@ -253,7 +264,16 @@ class VoiceService {
     // fallback -- the fix for the old energy-gate starvation. The turn stops
     // forwarding when _tick fires audio_stream_end (which clears g.turnActive).
     const v = g.vad ? g.vad.push(pcm16) : { speaking: true, justStarted: !g.turnActive, justEnded: false };
-    if (v.justStarted) {
+    // Open the turn on LEVEL, not just the rising edge. `justStarted` alone is
+    // edge-triggered, and a missed closing edge wedges the session forever:
+    // Discord stops delivering packets the moment a speaker goes quiet, so the
+    // gate can miss the ~768ms of sub-threshold frames it needs to close. It
+    // then stays "speaking", never emits another rising edge, while _tick's
+    // timer independently clears turnActive -- and every later frame falls out
+    // at `if (!g.turnActive) return`. That is the 2026-08-14 outage: only the
+    // first utterance of a session ever reached the model. Treating "the gate
+    // says speech and no turn is open" as an onset makes that self-healing.
+    if (v.justStarted || (v.speaking && !g.turnActive)) {
       g.turnActive = true;
       g.audioEndSent = false;
       await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
@@ -465,6 +485,12 @@ class VoiceService {
       try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
       g.audioEndSent = true;
       g.turnActive = false; // stop forwarding until the next speech onset
+      // Keep the VAD gate's own state in lockstep. This timer fires precisely
+      // when the gate did NOT close on its own (no trailing silence frames --
+      // Discord stops sending packets when the speaker goes quiet), so the gate
+      // still believes speech is in progress. Left alone it would never emit
+      // another rising edge for the next utterance.
+      if (g.vad && typeof g.vad.reset === 'function') g.vad.reset();
     }
 
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
