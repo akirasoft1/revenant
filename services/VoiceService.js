@@ -20,27 +20,9 @@ const { Readable, PassThrough } = require('stream');
 // startup gap.
 const MAX_PREROLL_FRAMES = 150;
 
-// A frame whose mean |sample| (int16 scale) is >= this counts as real speech
-// (vs. ambient ~0-20). In the active/hot path (_handleUserPcm) sub-threshold
-// frames ARE dropped — not streamed — to block false barge-ins and stop ambient
-// from holding a turn open; the same signal also times the debounced
-// audio_stream_end. NOTE: this fixed-threshold energy gate is a crude client-side
-// VAD slated for rework — the SOTA path is to stop dropping frames and let
-// Gemini's server VAD endpoint (or run Silero client-side). See the voice VAD
-// brainstorm/spec before extending this constant.
-const REAL_SPEECH_MEANABS = 50;
-
 // Fallback: how long after the last real-speech frame to send audio_stream_end
 // (finalize the turn) when config doesn't provide one.
 const DEFAULT_SPEECH_END_SILENCE_MS = 800;
-
-// Cheap strided mean-|sample| of an s16le PCM buffer.
-function frameMeanAbs(buf) {
-  let sum = 0;
-  let n = 0;
-  for (let off = 0; off + 1 < buf.length; off += 64) { sum += Math.abs(buf.readInt16LE(off)); n += 1; }
-  return n ? sum / n : 0;
-}
 
 class VoiceService {
   constructor({ voiceClient, mongoService, config, deps, contextBuilder }) {
@@ -138,13 +120,15 @@ class VoiceService {
     // find no entry and silently no-op while the bot stayed connected to the
     // VC. `gate` is filled in moments later, synchronously, once created;
     // `leave()`/`_endSession()` already guard for a still-null gate.
-    const state = { connection, player, gate: null, machine, session: null,
+    const state = { connection, player, gate: null, vad: null, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
-      preroll: [], pending: null, lastSpeechAt: null, audioEndSent: false };
+      preroll: [], pending: null, lastSpeechAt: null, audioEndSent: false,
+      turnActive: false };
     this._guilds.set(guildId, state);
 
     state.gate = d.makeWakeGate();
+    state.vad = d.makeVadGate ? d.makeVadGate() : null;
 
     connection.receiver.speaking.on('start', (userId) => {
       // De-dupe per user: `speaking start` can fire repeatedly for a user whose
@@ -255,7 +239,7 @@ class VoiceService {
     // feeds the bot's voice back as "user input" and it answers itself on a loop.
     // Trade-off: no barge-in while it's speaking. Set VOICE_ALLOW_BARGE_IN=true
     // (headphones only) to permit barge-in -- real speech then interrupts the
-    // reply; the energy gate below still blocks ambient from false-triggering it.
+    // reply; the VAD gate below still blocks ambient from false-triggering it.
     // player.state.status stays 'playing'/'buffering' through the reply incl.
     // drain, so this covers the tail too.
     if (!(this._config.voice && this._config.voice.allowBargeIn)) {
@@ -263,19 +247,19 @@ class VoiceService {
       if (playing === 'playing' || playing === 'buffering') return;
     }
 
-    // active/hot: only forward REAL speech to the Live model; drop ambient/
-    // near-silence. This prevents (1) FALSE barge-ins -- with
-    // START_OF_ACTIVITY_INTERRUPTS, Gemini would otherwise hear breathing/room
-    // noise while the bot is talking and cut its own reply off ("Premature
-    // close" on the playback stream) -- and (2) ambient holding a turn open.
-    // Turn FINALIZATION no longer needs trailing silence: _tick sends an
-    // explicit audio_stream_end after the user goes quiet (that was the missing
-    // piece the first time we tried gating). Real speech is meanAbs ~200+;
-    // ambient ~0-20.
-    if (frameMeanAbs(pcm16) < REAL_SPEECH_MEANABS) return;
-    g.lastSpeechAt = this._deps.now();
-    g.audioEndSent = false;
-    await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
+    // active/hot: Silero VAD drives the turn. A turn opens on speech onset;
+    // once open we stream EVERY frame continuously (including the user's pauses
+    // and trailing silence) so Gemini's server VAD sees real end-of-speech as a
+    // fallback -- the fix for the old energy-gate starvation. The turn stops
+    // forwarding when _tick fires audio_stream_end (which clears g.turnActive).
+    const v = g.vad ? g.vad.push(pcm16) : { speaking: true, justStarted: !g.turnActive, justEnded: false };
+    if (v.justStarted) {
+      g.turnActive = true;
+      g.audioEndSent = false;
+      await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
+    }
+    if (v.speaking) g.lastSpeechAt = this._deps.now();
+    if (!g.turnActive) return; // between turns: forward nothing
     if (g.session) {
       g.session.sendAudio(pcm16);
     } else {
@@ -321,6 +305,8 @@ class VoiceService {
       // this same utterance so it can't immediately re-fire onWake once the
       // sidecar recovers (mirrors the reset in _endSession).
       if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
+      g.turnActive = false;
+      if (g.vad && typeof g.vad.reset === 'function') g.vad.reset();
       return;
     }
 
@@ -469,6 +455,7 @@ class VoiceService {
     if (g.session && g.lastSpeechAt !== null && !g.audioEndSent && (now - g.lastSpeechAt) >= silenceMs) {
       try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
       g.audioEndSent = true;
+      g.turnActive = false; // stop forwarding until the next speech onset
     }
 
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
@@ -497,6 +484,8 @@ class VoiceService {
     // Discard any PCM buffered mid-utterance so the next wake-word window
     // isn't skewed by leftover audio from the just-ended session.
     if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
+    g.turnActive = false;
+    if (g.vad && typeof g.vad.reset === 'function') g.vad.reset();
   }
 
   async leave(guildId) {
