@@ -671,6 +671,26 @@ test('listen() when already active is a no-op (returns false)', async () => {
   expect(engaged).toBe(false);
 });
 
+// --- Bug fix: listen() must grant the floor, or the active-branch's floor
+// check withholds EVERY speaker's audio (including the invoking admin's),
+// leaving the session open but silently forwarding nothing. ---
+
+test('listen() grants the floor to the invoking user so their audio is actually forwarded', async () => {
+  const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+  const deps = makeDeps({ makeVadGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  const guildId = 'g1';
+  const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId, userId: 'admin1' });
+  expect(engaged).toBe(true);
+
+  const g = svc._guilds.get(guildId);
+  expect(g.floor.holder()).toBe('admin1'); // listen() must make the invoker the floor holder
+
+  const session = voiceClient.converse.mock.results[0].value;
+  await svc._handleUserPcm(guildId, 'admin1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudio).toHaveBeenCalled(); // the whole point of listen mode: audio must reach the model
+});
+
 test('half-duplex: no user audio is streamed while the bot is playing its reply (VAD gate not even consulted)', async () => {
   const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
   const { svc, guildId, session, player } = await buildActiveVoiceService({ makeVadGate: () => gate });

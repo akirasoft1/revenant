@@ -230,6 +230,12 @@ class VoiceService {
       logger.info(`voice: listen requested but a session is already active in guild ${guildId}`);
       return false;
     }
+    // Grant the floor to the invoking admin, same as the wake path does for
+    // whoever says the wake word. Without this, _handleUserPcm's active-branch
+    // floor check (`isHolder`) is false for EVERY speaker -- including the
+    // invoker -- since forceListen() never otherwise sets a holder, and the
+    // session opens but silently forwards no audio at all.
+    g.floor.grant(userId);
     await this._apply(guildId, actions, { userId });
     logger.info(`voice: listen mode engaged in guild ${guildId} (user ${userId}) — no wake word required`);
     return true;
