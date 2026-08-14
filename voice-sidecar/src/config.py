@@ -11,6 +11,9 @@ class Config:
     otlp_endpoint: str | None
     google_cloud_project: str | None
     google_cloud_location: str | None
+    context_compression_trigger_tokens: int
+    session_resumption_enabled: bool
+    max_session_reconnects: int
 
 
 def load() -> Config:
@@ -23,4 +26,18 @@ def load() -> Config:
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         google_cloud_project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
         google_cloud_location=os.environ.get("GOOGLE_CLOUD_LOCATION"),
+        # Sliding-window context compression: without it, audio-only Live
+        # sessions die at ~15 min (audio accrues ~25 tokens/s). With it the
+        # session is unbounded; the window trims oldest context past the trigger.
+        context_compression_trigger_tokens=int(
+            os.environ.get("VOICE_CONTEXT_COMPRESSION_TRIGGER_TOKENS", "25000")),
+        # Session resumption: the server hands us a handle; on a dropped/GoAway
+        # connection we reconnect with it and keep the conversation's context.
+        # Accept the usual falsey spellings (case-insensitive), not just the
+        # literal "false" -- config toggles set via k8s/env tooling commonly
+        # use "0"/"no"/"off" too.
+        session_resumption_enabled=os.environ.get(
+            "VOICE_SESSION_RESUMPTION_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "off"),
+        max_session_reconnects=int(os.environ.get("VOICE_MAX_SESSION_RECONNECTS", "5")),
     )

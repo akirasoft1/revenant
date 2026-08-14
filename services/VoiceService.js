@@ -291,7 +291,16 @@ class VoiceService {
     // the fix for the old energy-gate starvation. The turn stops forwarding
     // when _tick fires audio_stream_end (which clears g.turnActive).
     const v = u.vadGate ? u.vadGate.push(pcm16) : { speaking: true, justStarted: !g.turnActive, justEnded: false };
-    if (v.justStarted) {
+    // Open the turn on LEVEL, not just the rising edge. `justStarted` alone is
+    // edge-triggered, and a missed closing edge wedges the session forever:
+    // Discord stops delivering packets the moment a speaker goes quiet, so the
+    // gate can miss the ~768ms of sub-threshold frames it needs to close. It
+    // then stays "speaking", never emits another rising edge, while _tick's
+    // timer independently clears turnActive -- and every later frame falls out
+    // at `if (!g.turnActive) return`. That is the 2026-08-14 outage: only the
+    // first utterance of a session ever reached the model. Treating "the gate
+    // says speech and no turn is open" as an onset makes that self-healing.
+    if (v.justStarted || (v.speaking && !g.turnActive)) {
       g.turnActive = true;
       g.audioEndSent = false;
       await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
@@ -515,6 +524,15 @@ class VoiceService {
       try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
       g.audioEndSent = true;
       g.turnActive = false; // stop forwarding until the next speech onset
+      // Keep the floor-holder's VAD gate in lockstep. This timer fires precisely
+      // when that gate did NOT close on its own (no trailing silence frames --
+      // Discord stops sending packets when the speaker goes quiet), so it still
+      // believes speech is in progress and would never emit another rising edge
+      // for the next utterance. Only the holder drives the turn, so only the
+      // holder's gate needs clearing.
+      const holderId = g.floor && g.floor.holder();
+      const holder = holderId && g.perUser ? g.perUser.get(holderId) : null;
+      if (holder && holder.vadGate && typeof holder.vadGate.reset === 'function') holder.vadGate.reset();
     }
 
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));

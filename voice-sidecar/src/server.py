@@ -67,7 +67,10 @@ def _build_bridge(config):
         return client.aio.live.connect(model=model, config=live_config)
 
     return LiveBridge(session_factory, model=config.voice_live_model,
-                       default_voice=config.default_voice_name)
+                       default_voice=config.default_voice_name,
+                       compression_trigger_tokens=config.context_compression_trigger_tokens,
+                       resumption_enabled=config.session_resumption_enabled,
+                       max_reconnects=config.max_session_reconnects)
 
 
 def serve() -> None:

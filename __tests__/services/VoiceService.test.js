@@ -905,3 +905,51 @@ test('two speakers: alice holds through her turn; bob only takes the floor after
   await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
   expect(session2.sendAudio).toHaveBeenCalledTimes(1);
 });
+
+// --- Regression: a missed end-of-speech edge must not wedge the session ------
+//
+// Production outage (2026-08-14, fixed on main and re-applied here after a
+// silent merge resolution dropped it): audio stopped reaching the model after
+// the FIRST turn. The sidecar received only the first utterance (audio_in=200
+// chunks / 4.0s) while the user kept talking, and the session idled out exactly
+// followupWindowMs after turnComplete -- proof onUserSpeechStart never fired
+// again.
+//
+// Cause: opening a turn was purely EDGE-triggered on `justStarted`. Discord
+// stops delivering packets once a speaker goes quiet, so the VAD gate can miss
+// the sub-threshold frames it needs to close (minSilenceFrames = 768ms). If it
+// never closes it never produces another rising edge -- while _tick's timer
+// independently clears turnActive. The two drift apart and the turn can never
+// reopen: every later frame hits `if (!g.turnActive) return`.
+describe('turn re-arming after a missed end-of-speech edge', () => {
+  test('holder speech still forwards when the gate reports speaking with no rising edge', async () => {
+    // The gate believes it is still mid-utterance and emits no edges at all --
+    // exactly the wedged state observed in production.
+    const gate = fakeVadGate([{ speaking: true, justStarted: false, justEnded: false }]);
+    const { svc, guildId, session, holderId } = await buildActiveVoiceService({ makeVadGate: () => gate });
+    const g = svc._guilds.get(guildId);
+    g.turnActive = false; // _tick's backstop already closed the previous turn
+
+    await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
+
+    expect(session.sendAudio).toHaveBeenCalledTimes(1);
+    expect(g.turnActive).toBe(true);
+  });
+
+  test('_tick resets the FLOOR HOLDER\'s VAD gate when it finalizes a turn', async () => {
+    let t = 1000;
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, holderId } = await buildActiveVoiceService({
+      makeVadGate: () => gate, now: () => t, speechEndSilenceMs: 800,
+    });
+    await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
+    t = 1900;
+    svc._tick(guildId);
+
+    expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+    // The holder's gate state must be cleared in lockstep with turnActive,
+    // otherwise it stays "speaking" forever and never re-arms.
+    const holder = svc._guilds.get(guildId).perUser.get(holderId);
+    expect(holder.vadGate.reset).toHaveBeenCalled();
+  });
+});
