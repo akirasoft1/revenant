@@ -96,6 +96,14 @@ module.exports = {
     clientEndpointing: process.env.VOICE_CLIENT_ENDPOINTING === 'true',
 
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
+
+    // userId -> spoken name overrides, e.g. {"1616...":"Mike"}. Authoritative:
+    // Discord's own name layers are unreliable here (see spec 5.4.1). Malformed
+    // JSON must never take the bot down -- fall back to an empty table.
+    speakerNames: (() => {
+      try { return JSON.parse(process.env.VOICE_SPEAKER_NAMES || '{}'); }
+      catch (e) { return {}; }
+    })(),
   },
   discord: {
     token: process.env.DISCORD_TOKEN,
