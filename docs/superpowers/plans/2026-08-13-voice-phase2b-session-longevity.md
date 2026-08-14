@@ -18,7 +18,7 @@
 - **Model is `gemini-live-2.5-flash`** (`VOICE_LIVE_MODEL`), on the GEAP/Vertex backend.
 - **Never truncate log messages.**
 - **Tests must not make network calls** — always inject a fake session factory (the existing `tests/test_live_bridge.py` pattern).
-- Run the sidecar suite from `voice-sidecar/`: `python3 -m pytest -v` (or `make test`). It must be fully green before each commit.
+- **Run the sidecar suite from `voice-sidecar/` with the VENV interpreter: `.venv/bin/python -m pytest -v`.** Do NOT use the system `python3` / `make test` here — the system interpreter (miniconda) has protobuf runtime 5.29.5 while `src/voice_pb2.py` is gencode 7.35.1, so every proto-importing test errors at collection with `VersionError`. The venv has the matching 7.35.1. Baseline on this branch before any change: **20 passed**. It must be fully green before each commit.
 - Exact SDK field names (from the spec's §9 grounded reference — use verbatim):
   - `types.ContextWindowCompressionConfig(sliding_window=types.SlidingWindow(), trigger_tokens=<int>)`
   - `types.SessionResumptionConfig(handle=<str|None>)`
@@ -109,7 +109,7 @@ def test_session_resumption_can_be_disabled(monkeypatch):
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run (from `voice-sidecar/`): `python3 -m pytest tests/test_live_bridge.py tests/test_config.py -v`
+Run (from `voice-sidecar/`): `.venv/bin/python -m pytest tests/test_live_bridge.py tests/test_config.py -v`
 Expected: FAIL — `TypeError` on the new kwarg / `AttributeError: context_window_compression is None` / missing Config fields.
 
 - [ ] **Step 3: Add the Config fields**
@@ -178,7 +178,7 @@ Match the existing construction's style/variable names. If `test_server.py` cons
 
 - [ ] **Step 6: Run tests to green**
 
-Run: `python3 -m pytest -v`
+Run: `.venv/bin/python -m pytest -v`
 Expected: PASS (all sidecar tests, including the new ones).
 
 - [ ] **Step 7: Commit**
@@ -256,7 +256,7 @@ async def test_pump_server_ignores_non_resumable_update():
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `python3 -m pytest tests/test_live_bridge.py -v`
+Run: `.venv/bin/python -m pytest tests/test_live_bridge.py -v`
 Expected: FAIL — `_ResumeState` does not exist / `_pump_server` takes 3 positional args.
 
 - [ ] **Step 3: Add `_ResumeState`**
@@ -298,7 +298,7 @@ Change the signature to `async def _pump_server(self, session, emit, stats, resu
 
 - [ ] **Step 6: Run tests to green**
 
-Run: `python3 -m pytest -v`
+Run: `.venv/bin/python -m pytest -v`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -401,7 +401,7 @@ async def test_reconnects_are_capped():
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `python3 -m pytest tests/test_live_bridge.py -v`
+Run: `.venv/bin/python -m pytest tests/test_live_bridge.py -v`
 Expected: FAIL — only one session is ever opened (no reconnect loop).
 
 - [ ] **Step 3: Add `_SessionRef` and make `_pump_client` use it**
@@ -536,12 +536,12 @@ and append `reconnects=%d` + `resume.reconnects` to the session END log line. (`
 
 - [ ] **Step 5: Run the reconnect tests**
 
-Run: `python3 -m pytest tests/test_live_bridge.py -v`
+Run: `.venv/bin/python -m pytest tests/test_live_bridge.py -v`
 Expected: PASS — reconnect with handle, no re-seed, no error emitted, no-handle case does not reconnect, cap respected.
 
 - [ ] **Step 6: Run the whole sidecar suite**
 
-Run: `python3 -m pytest -v`
+Run: `.venv/bin/python -m pytest -v`
 Expected: PASS (all). Pay attention to the pre-existing tests (normal-close, audio_stream_end, seeding) — they must still pass unchanged in intent; adapt only their construction if a signature moved.
 
 - [ ] **Step 7: Commit**
