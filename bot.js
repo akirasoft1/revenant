@@ -30,6 +30,7 @@ const Mem0Service = require('./services/Mem0Service');
 const QdrantService = require('./services/QdrantService');
 const NickMappingService = require('./services/NickMappingService');
 const ChannelContextService = require('./services/ChannelContextService');
+const { createSpeakerNames } = require('./services/SpeakerNames');
 const ImagePromptAnalyzerService = require('./services/ImagePromptAnalyzerService');
 const CatchMeUpService = require('./services/CatchMeUpService');
 const VoiceSearchService = require('./services/VoiceSearchService');
@@ -138,6 +139,13 @@ class DiscordBot {
       logger.info('IRC history search is disabled');
     }
 
+    // Shared preferred-name resolver (services/SpeakerNames.js) — pure JS, no
+    // native deps, so it's safe to build unconditionally (unlike voice's
+    // native-dependent bits, which stay lazily required behind VOICE_ENABLED
+    // below). One instance is reused by ChannelContextService (chat/recall)
+    // and by VoiceService (voice) so both paths resolve the same names.
+    this.speakerNames = createSpeakerNames({ overrides: config.voice.speakerNames });
+
     // Initialize Channel Context service for passive conversation awareness
     this.channelContextService = null;
     if (config.channelContext?.enabled) {
@@ -147,7 +155,8 @@ class DiscordBot {
           this.openaiClient,
           this.mongoService,
           this.mem0Service,
-          config.discord?.clientId
+          config.discord?.clientId,
+          this.speakerNames
         );
         logger.info('Channel context service initialized (pending start)');
       } catch (error) {
@@ -274,6 +283,7 @@ class DiscordBot {
           mongoService: this.mongoService,
           config,
           contextBuilder: (args) => this.chatService.buildTurnContext(args),
+          speakerNames: this.speakerNames,
           deps: {
             joinVoiceChannel: dv.joinVoiceChannel,
             createAudioPlayer: dv.createAudioPlayer,
@@ -298,6 +308,13 @@ class DiscordBot {
             ),
             now: () => Date.now(), setInterval, clearInterval,
             getVoiceConnection: dv.getVoiceConnection,
+            // Cached-only lookup (no privileged-intent fetch); a cache miss
+            // degrades to the override table via { id: userId } in
+            // SpeakerNames.resolve.
+            lookupUser: (userId) => {
+              const u = this.client.users.cache.get(userId);
+              return u ? { id: u.id, username: u.username, globalName: u.globalName } : { id: userId };
+            },
           },
         });
         logger.info(`VoiceService initialized -> ${config.voice.address}`);
@@ -699,12 +716,26 @@ class DiscordBot {
           message.author.id, message.guild.id, message.channel.id
         ).catch(err => logger.debug(`User activity tracking failed: ${err.message}`));
 
+        // Prefer the resolved preferred name (services/SpeakerNames.js); fall
+        // back to the raw Discord username when unresolved. `authorId` stays
+        // the Discord id — identity keys never change. Guarded like the
+        // voice path (VoiceService._perUser): this runs in the messageCreate
+        // handler before any .catch() chain, so an uncaught throw here would
+        // become an unhandled rejection instead of just losing a preferred name.
+        let authorName = message.author.username;
+        try {
+          const resolved = this.speakerNames && this.speakerNames.resolve(message.author, message.member);
+          if (resolved) authorName = resolved;
+        } catch (e) {
+          logger.warn(`Speaker-name resolution failed for ${message.author.id}: ${e.message}`);
+        }
+
         this.mongoService.recordChannelMessage({
           messageId: message.id,
           channelId: message.channel.id,
           guildId: message.guild.id,
           authorId: message.author.id,
-          authorName: message.author.username,
+          authorName,
           content: message.content,
           timestamp: new Date()
         }).catch(err => logger.debug(`Channel message recording failed: ${err.message}`));

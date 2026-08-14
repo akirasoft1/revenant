@@ -26,12 +26,15 @@ const MAX_PREROLL_FRAMES = 150;
 const DEFAULT_SPEECH_END_SILENCE_MS = 800;
 
 class VoiceService {
-  constructor({ voiceClient, mongoService, config, deps, contextBuilder }) {
+  constructor({ voiceClient, mongoService, config, deps, contextBuilder, speakerNames }) {
     this._client = voiceClient;
     this._mongo = mongoService;
     this._config = config;
     this._deps = deps;
     this._contextBuilder = contextBuilder;
+    // Optional (Phase 3 identity). When absent, _perUser resolves no names and
+    // no [SPEAKER: ...] markers are ever sent -- behaves exactly as before.
+    this._speakerNames = speakerNames || null;
     // guildId -> { connection, player, machine, session, channelId, buffers,
     //              tickTimer, sessionOpenedAtMs, perUser: Map<userId, {wakeGate,
     //              vadGate, preroll}>, floor: FloorControl }
@@ -69,6 +72,7 @@ class VoiceService {
       `Your replies are spoken aloud by a text-to-speech voice, so never write out laughter or sound effects as text — no "hehe", "haha", "lol", "*laughs*", etc. They get read literally and sound robotic. Convey amusement through your wording and delivery instead. Keep replies conversational and reasonably brief.`,
       `Write for the ear, not the page. Never wrap titles or names in quotation marks — a trailing straight quote gets voiced as the inches symbol, so "Toy Story 3" is read aloud as "Toy Story 3 inches". Just say the title plainly. Avoid other punctuation that gets spoken rather than heard, like parentheses, asterisks, slashes and emoji.`,
       `Say digit strings the way a person would read them out: zip codes, phone numbers, addresses, flight numbers, years and version numbers go digit by digit or in natural pairs — 60067 is "six oh oh six seven", not "sixty thousand sixty-seven". Use ordinary words for ordinary quantities ("72 degrees" is fine).`,
+      `You are in a shared voice room. Before someone's turn you may receive a line like "[SPEAKER: Mike]". That is out-of-band metadata telling you who is talking now — NEVER read it aloud, never repeat the brackets or the word SPEAKER, and never mention that you receive it. Use it only to know who you are talking to, and address people by name when it is natural.`,
     ].join('\n\n');
     return prompt ? `${prompt}\n\n${note}` : note;
   }
@@ -140,7 +144,7 @@ class VoiceService {
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
       pending: null, lastSpeechAt: null, audioEndSent: false, turnActive: false,
-      perUser: new Map(), floor: new FloorControl() };
+      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null };
     this._guilds.set(guildId, state);
 
     connection.receiver.speaking.on('start', (userId) => {
@@ -226,6 +230,12 @@ class VoiceService {
       logger.info(`voice: listen requested but a session is already active in guild ${guildId}`);
       return false;
     }
+    // Grant the floor to the invoking admin, same as the wake path does for
+    // whoever says the wake word. Without this, _handleUserPcm's active-branch
+    // floor check (`isHolder`) is false for EVERY speaker -- including the
+    // invoker -- since forceListen() never otherwise sets a holder, and the
+    // session opens but silently forwards no audio at all.
+    g.floor.grant(userId);
     await this._apply(guildId, actions, { userId });
     logger.info(`voice: listen mode engaged in guild ${guildId} (user ${userId}) — no wake word required`);
     return true;
@@ -243,6 +253,15 @@ class VoiceService {
         vadGate: this._deps.makeVadGate ? this._deps.makeVadGate() : null,
         preroll: [],
       };
+      // Resolved ONCE per speaker: the hot path must never re-resolve, and we
+      // never assert a name we are not confident in (null -> no marker sent).
+      let name = null;
+      try {
+        name = this._speakerNames
+          ? this._speakerNames.resolve(this._deps.lookupUser ? this._deps.lookupUser(userId) : { id: userId }, null)
+          : null;
+      } catch (e) { logger.warn(`voice: speaker-name resolution failed for ${userId}: ${e.message}`); }
+      u.name = name;
       g.perUser.set(userId, u);
     }
     return u;
@@ -321,6 +340,24 @@ class VoiceService {
     if (v.speaking) g.lastSpeechAt = this._deps.now();
     if (!g.turnActive) return; // between turns: forward nothing
     if (g.session) {
+      // Identity travels on speaker CHANGE only -- decoupled from the audio
+      // cadence. The sidecar turns this into an out-of-band [SPEAKER: name]
+      // marker ahead of this speaker's next chunk.
+      //
+      // NOTE (Phase 4 dependency): there is currently NO way to CLEAR the
+      // speaker once set -- `u.name` null just means "don't send a marker",
+      // it never un-sends the last one that WAS sent. A speaker with no
+      // resolvable name therefore silently inherits whatever identity the
+      // previous speaker last announced. That's unreachable today because
+      // there is exactly one floor holder per session (FloorControl), so
+      // "the speaker" never legitimately changes to "unknown" mid-session.
+      // Phase 4's deferral work and `/voice listen` (continuous listening,
+      // no re-wake, no single floor holder) both break that invariant --
+      // revisit this when either lands.
+      if (u.name && g.lastSpeakerSent !== userId && typeof g.session.sendSpeaker === 'function') {
+        g.session.sendSpeaker({ userId, displayName: u.name });
+        g.lastSpeakerSent = userId;
+      }
       g.session.sendAudio(pcm16);
     } else {
       // Session still opening (post-wake startup): buffer so nothing is lost;
@@ -447,6 +484,20 @@ class VoiceService {
 
     session.sendStart({ userId, channelId: g.channelId, guildId,
       systemPrompt, recallContext, history, voiceName: this._config.voice.liveVoice });
+
+    // The pre-roll/pending flush below sends the wake-triggering utterance
+    // directly via session.sendAudio, entirely outside _handleUserPcm's
+    // sendSpeaker gate -- so without this, the audio that TRIGGERED the wake
+    // word (the most important audio for "who is talking now") would reach
+    // the model with no [SPEAKER: name] marker. Label it here, once, for the
+    // wake-triggering speaker (same cached u.name as the hot path), and
+    // record it so _handleUserPcm doesn't re-send the same marker for the
+    // next live frame from this speaker.
+    const starter = this._perUser(g, userId);
+    if (starter.name && typeof session.sendSpeaker === 'function') {
+      session.sendSpeaker({ userId, displayName: starter.name });
+      g.lastSpeakerSent = userId;
+    }
 
     // Flush the pre-roll (wake-phrase audio) plus anything buffered while the
     // session was opening, so a first-turn question spoken with the wake phrase
@@ -583,6 +634,7 @@ class VoiceService {
     g.pending = null;
     g.lastSpeechAt = null;
     g.audioEndSent = false;
+    g.lastSpeakerSent = null; // a new session re-announces the speaker
     if (g.floor) g.floor.release();
     if (g.perUser) {
       for (const u of g.perUser.values()) {

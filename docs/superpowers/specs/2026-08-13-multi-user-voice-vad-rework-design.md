@@ -108,6 +108,38 @@ Each unit is small, single-purpose, and independently testable. New pure-logic u
 - **Prompt:** roster + "these `[SPEAKER: …]` lines are out-of-band metadata; never read them aloud" added to `system_instruction`, built from the existing channel-voice persona path (`_appendVoicePersona`).
 - **Risk-gated:** validated by the Layer-4 smoke test before Phase 3 relies on it.
 
+#### 5.4.1 Where the spoken name comes from (decided 2026-08-14)
+"The bot sends the display name" is naive: Discord exposes four name layers and
+the two automatic ones are both unreliable in this guild. `user.username`
+carries junk suffixes (`inc1067` for someone who goes by `inc`), and per-guild
+`member.nickname` is often a joke (`Macroplastics by Bic(tm)`).
+discord.js's `member.displayName` resolves `nickname ?? globalName ?? username`
+— i.e. it prefers exactly the worst option here. This matters beyond cosmetics
+because Phase 3 names are **spoken aloud by TTS**: an unsanitised nickname is
+voiced literally ("Macroplastics by Bic trademark, you asked…").
+
+A shared **`SpeakerNames` resolver** owns this, resolving in order:
+1. **Override table** — authoritative, `VOICE_SPEAKER_NAMES` JSON (`userId -> spoken name`) in the deployed configmap.
+2. `user.globalName` — usually the clean self-chosen name.
+3. `member.nickname` — per-guild (note: nickname/member data may require the privileged `GuildMembers` intent, which is NOT currently enabled; the override table sidesteps this).
+4. `user.username` with a trailing digit-run stripped (`inc1067` -> `inc`).
+5. Otherwise **omit the marker** rather than assert a wrong name.
+
+Whatever is chosen is **sanitised for speech** (strip emoji, `™`/`(tm)`,
+bracketed clan tags, zero-width chars; collapse whitespace; cap length), and an
+empty result falls through to the next layer.
+
+**Scope:** the resolver is shared, not voice-only — the chat/recall path
+(`ChannelContextService`) currently stores raw `message.author.username`, so
+friends already appear as `inc1067` in `/tldr` and recall. One resolver fixes
+both. Previously-stored rows keep their old names (no backfill).
+
+**Deliberate follow-up (not in Phase 3): self-service names.** Move the table to
+MongoDB behind a `/voice name @user <spoken name>` command so people set their
+own. Explicitly wanted for the emergent chaos of users renaming themselves;
+deferred only to keep Phase 3 shippable. Configmap stays as the seed/default
+layer underneath it.
+
 ### 5.5 Transcript attribution (`VoiceService` + `MongoService`)
 - **Change:** author voice transcripts with the real Discord `userId` (from the stream the audio arrived on) paired with `input_audio_transcription` text, instead of anonymous. Closes the CLAUDE.md "per-speaker transcript author fields" deferred follow-up; `/tldr` and recall gain per-speaker identity.
 

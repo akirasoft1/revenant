@@ -119,6 +119,13 @@ class VoiceClient {
         logger.debug(`VoiceClient sendAudioStreamEnd write threw: ${e.message}`);
       }
     };
+    session.sendSpeaker = ({ userId, displayName }) => {
+      try {
+        call.write({ set_speaker: { user_id: userId || '', display_name: displayName || '' } });
+      } catch (e) {
+        logger.debug(`VoiceClient sendSpeaker write threw: ${e.message}`);
+      }
+    };
     session.end = () => {
       try {
         call.write({ session_end: {} });

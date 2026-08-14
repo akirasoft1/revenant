@@ -689,6 +689,88 @@ describe('ChannelContextService', () => {
   });
 });
 
+describe('ChannelContextService - speakerNames resolver', () => {
+  const baseConfig = {
+    channelContext: {
+      enabled: true,
+      recentMessageCount: 100,
+      batchIndexIntervalMinutes: 60,
+      retentionDays: 30,
+      qdrantCollection: 'channel_conversations',
+      searchScoreThreshold: 0.4,
+      semanticSearchLimit: 5,
+      extractChannelMemories: false,
+      memoryExtractionInterval: 50,
+    },
+    qdrant: { host: 'qdrant', port: 6333 },
+  };
+
+  function makeMessage(overrides = {}) {
+    return {
+      id: 'msg1',
+      channel: { id: 'channel1' },
+      guild: { id: 'guild1' },
+      author: { id: 'u1', username: 'inc1067', bot: false },
+      member: null,
+      content: 'hello',
+      reference: null,
+      ...overrides,
+    };
+  }
+
+  function makeMongo() {
+    return { updateChannelActivity: jest.fn().mockResolvedValue(true) };
+  }
+
+  test('records the resolved preferred name, not the raw username', async () => {
+    const speakerNames = {
+      resolve: jest.fn((user) => (user && user.id === 'u1' ? 'Mike' : null)),
+    };
+    const svc = new ChannelContextService(baseConfig, {}, makeMongo(), null, 'bot-1', speakerNames);
+    svc._enabled = true;
+    svc.isChannelTracked = jest.fn().mockReturnValue(true);
+
+    await svc.recordMessage(makeMessage());
+
+    const buffer = svc.channelBuffers.get('channel1');
+    const record = buffer.messages.getAll()[0];
+    expect(record.authorName).toBe('Mike');
+    expect(record.authorId).toBe('u1'); // identity key stays the Discord id
+
+    const participant = buffer.activeParticipants.get('u1');
+    expect(participant.username).toBe('Mike');
+    expect(speakerNames.resolve).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'u1', username: 'inc1067' }),
+      null
+    );
+  });
+
+  test('falls back to the raw username when the resolver returns null', async () => {
+    const speakerNames = { resolve: jest.fn().mockReturnValue(null) };
+    const svc = new ChannelContextService(baseConfig, {}, makeMongo(), null, 'bot-1', speakerNames);
+    svc._enabled = true;
+    svc.isChannelTracked = jest.fn().mockReturnValue(true);
+
+    await svc.recordMessage(makeMessage());
+
+    const buffer = svc.channelBuffers.get('channel1');
+    expect(buffer.messages.getAll()[0].authorName).toBe('inc1067');
+    expect(buffer.activeParticipants.get('u1').username).toBe('inc1067');
+  });
+
+  test('falls back to the raw username when no resolver is provided (default behaviour unchanged)', async () => {
+    const svc = new ChannelContextService(baseConfig, {}, makeMongo(), null, 'bot-1');
+    svc._enabled = true;
+    svc.isChannelTracked = jest.fn().mockReturnValue(true);
+
+    await svc.recordMessage(makeMessage());
+
+    const buffer = svc.channelBuffers.get('channel1');
+    expect(buffer.messages.getAll()[0].authorName).toBe('inc1067');
+    expect(buffer.activeParticipants.get('u1').username).toBe('inc1067');
+  });
+});
+
 describe('ChannelContextService.buildHybridContext - configurable prompt slice', () => {
   test('uses config.promptRecentCount when slicing the recent buffer', async () => {
     // Use a value (7) that is distinct from both the old hardcode (10) and the

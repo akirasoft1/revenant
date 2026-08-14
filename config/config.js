@@ -96,6 +96,21 @@ module.exports = {
     clientEndpointing: process.env.VOICE_CLIENT_ENDPOINTING === 'true',
 
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
+
+    // userId -> spoken name overrides, e.g. {"1616...":"Mike"}. Authoritative:
+    // Discord's own name layers are unreliable here (see spec 5.4.1). Malformed
+    // JSON must never take the bot down -- fall back to an empty table.
+    speakerNames: (() => {
+      try { return JSON.parse(process.env.VOICE_SPEAKER_NAMES || '{}'); }
+      catch (e) {
+        // Fail-closed (empty table), but SAY SO -- a typo'd JSON blob must not
+        // silently present as "my overrides just don't work". The logger
+        // isn't guaranteed to be initialized yet at config-load time, so use
+        // console.warn here.
+        console.warn(`VOICE_SPEAKER_NAMES is not valid JSON; ignoring it and using no overrides: ${e.message}`);
+        return {};
+      }
+    })(),
   },
   discord: {
     token: process.env.DISCORD_TOKEN,
