@@ -50,3 +50,6 @@ todos_08162026.txt
 # Local wake-word test asset (personal voice recording)
 Recording.m4a
 *.m4a
+
+# Generated TTS fixtures for the multi-stream floor harness (scripts/gen-test-voices.js)
+voice-fixtures/

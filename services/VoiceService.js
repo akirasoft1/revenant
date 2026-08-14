@@ -11,6 +11,7 @@
 'use strict';
 const logger = require('../logger');
 const VoiceSessionMachine = require('./voice/VoiceSessionMachine');
+const FloorControl = require('./voice/FloorControl');
 const { downsampleTo16kMono, upsample24kMonoTo48kStereo } = require('./voice/audio');
 const { Readable, PassThrough } = require('stream');
 
@@ -31,8 +32,9 @@ class VoiceService {
     this._config = config;
     this._deps = deps;
     this._contextBuilder = contextBuilder;
-    // guildId -> { connection, player, gate, machine, session, channelId,
-    //              buffers, tickTimer, sessionOpenedAtMs }
+    // guildId -> { connection, player, machine, session, channelId, buffers,
+    //              tickTimer, sessionOpenedAtMs, perUser: Map<userId, {wakeGate,
+    //              vadGate, preroll}>, floor: FloorControl }
     this._guilds = new Map();
   }
 
@@ -118,17 +120,15 @@ class VoiceService {
     // saturates the bot's CPU limit for tens of seconds. If `_guilds.set()`
     // happened after that call, a `/voice leave` racing the slow setup would
     // find no entry and silently no-op while the bot stayed connected to the
-    // VC. `gate` is filled in moments later, synchronously, once created;
-    // `leave()`/`_endSession()` already guard for a still-null gate.
-    const state = { connection, player, gate: null, vad: null, machine, session: null,
+    // VC. Per-speaker gates are built lazily on first contact (`_perUser`),
+    // well after this `_guilds.set()`; `leave()`/`_endSession()` already guard
+    // for a still-empty `perUser` map.
+    const state = { connection, player, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
-      preroll: [], pending: null, lastSpeechAt: null, audioEndSent: false,
-      turnActive: false };
+      pending: null, lastSpeechAt: null, audioEndSent: false, turnActive: false,
+      perUser: new Map(), floor: new FloorControl() };
     this._guilds.set(guildId, state);
-
-    state.gate = d.makeWakeGate();
-    state.vad = d.makeVadGate ? d.makeVadGate() : null;
 
     connection.receiver.speaking.on('start', (userId) => {
       // De-dupe per user: `speaking start` can fire repeatedly for a user whose
@@ -183,9 +183,11 @@ class VoiceService {
         // best wake score the engine reached, and any ONNX-chain error. This
         // distinguishes "no audio", "audio all-corrupt (DAVE/encryption)",
         // "wake engine erroring", and "audio fine but below threshold".
-        const wakeErr = state.gate && typeof state.gate.lastError === 'function' ? state.gate.lastError() : null;
-        const wakeScore = state.gate && typeof state.gate.lastScore === 'function' ? state.gate.lastScore() : null;
-        const fs = state.gate && typeof state.gate.frameStats === 'function' ? state.gate.frameStats() : null;
+        const u = state.perUser.get(userId);
+        const gate = u && u.wakeGate;
+        const wakeErr = gate && typeof gate.lastError === 'function' ? gate.lastError() : null;
+        const wakeScore = gate && typeof gate.lastScore === 'function' ? gate.lastScore() : null;
+        const fs = gate && typeof gate.frameStats === 'function' ? gate.frameStats() : null;
         const meanAbs = probes ? Math.round(sumAbs / probes) : 0;
         logger.debug(`voice: utterance end (${reason}) user ${userId} guild ${guildId}: decoded ${decoded} frame(s), dropped ${dropped}, peak ${peak}/32767, meanAbs ${meanAbs}, wake maxScore ${wakeScore}${fs ? `, engine scheduled ${fs.scheduled}/droppedBusy ${fs.droppedBusy}` : ''}${wakeErr ? `, wake-engine error: ${wakeErr.message}` : ''}`);
       };
@@ -216,21 +218,42 @@ class VoiceService {
     return true;
   }
 
+  // Lazily build the per-speaker gate context. Each speaker runs their OWN
+  // wake-word + VAD engine (the ONNX engines need contiguous single-speaker
+  // frames; a shared gate would interleave two people's audio) and their own
+  // pre-roll. Gate factories are the same DI as before, now per user.
+  _perUser(g, userId) {
+    let u = g.perUser.get(userId);
+    if (!u) {
+      u = {
+        wakeGate: this._deps.makeWakeGate(),
+        vadGate: this._deps.makeVadGate ? this._deps.makeVadGate() : null,
+        preroll: [],
+      };
+      g.perUser.set(userId, u);
+    }
+    return u;
+  }
+
   async _handleUserPcm(guildId, userId, pcm48Stereo) {
     const g = this._guilds.get(guildId);
     if (!g) return;
     const pcm16 = downsampleTo16kMono(pcm48Stereo);
 
     if (g.machine.state === 'idle') {
-      // Keep a short rolling pre-roll so the words spoken WITH the wake phrase
-      // aren't lost while the session opens.
-      g.preroll.push(pcm16);
-      if (g.preroll.length > MAX_PREROLL_FRAMES) g.preroll.shift();
-      if (g.gate.push(pcm16)) {
-        logger.info(`voice: wake word detected in guild ${guildId} (user ${userId})`);
-        g.pending = g.preroll.slice(); // carry the wake-phrase audio into the session
-        g.preroll = [];
-        await this._apply(guildId, g.machine.onWake(), { userId });
+      const u = this._perUser(g, userId);
+      // Per-speaker pre-roll so the words spoken WITH the wake phrase aren't lost.
+      u.preroll.push(pcm16);
+      if (u.preroll.length > MAX_PREROLL_FRAMES) u.preroll.shift();
+      if (u.wakeGate.push(pcm16)) {
+        // First waker takes the floor; a near-simultaneous second wake loses the
+        // race and will be handled by the active path (withheld + noted waiting).
+        if (g.floor.grant(userId)) {
+          logger.info(`voice: wake word detected in guild ${guildId} (user ${userId}) — floor granted`);
+          g.pending = u.preroll.slice(); // carry THIS speaker's wake-phrase audio in
+          u.preroll = [];
+          await this._apply(guildId, g.machine.onWake(), { userId });
+        }
       }
       return;
     }
@@ -247,13 +270,37 @@ class VoiceService {
       if (playing === 'playing' || playing === 'buffering') return;
     }
 
-    // active/hot: Silero VAD drives the turn. A turn opens on speech onset;
-    // once open we stream EVERY frame continuously (including the user's pauses
-    // and trailing silence) so Gemini's server VAD sees real end-of-speech as a
-    // fallback -- the fix for the old energy-gate starvation. The turn stops
-    // forwarding when _tick fires audio_stream_end (which clears g.turnActive).
-    const v = g.vad ? g.vad.push(pcm16) : { speaking: true, justStarted: !g.turnActive, justEnded: false };
-    if (v.justStarted) {
+    const u = this._perUser(g, userId);
+    const isHolder = g.floor.isHolder(userId);
+
+    // Non-holder: detect that they spoke (for attribution/logging + the future
+    // "someone else wants in" signal), but DO NOT forward their audio.
+    if (!isHolder) {
+      const nv = u.vadGate ? u.vadGate.push(pcm16) : { speaking: false, justStarted: false, justEnded: false };
+      if (nv.justStarted) {
+        g.floor.noteWaiting(userId);
+        logger.debug(`voice: ${userId} spoke while ${g.floor.holder()} holds the floor (guild ${guildId}) — withheld`);
+      }
+      return;
+    }
+
+    // Floor-holder: Silero VAD drives the turn (same Phase-1 logic, now scoped
+    // to this speaker's own gate). A turn opens on speech onset; once open we
+    // stream EVERY frame continuously (including the user's pauses and trailing
+    // silence) so Gemini's server VAD sees real end-of-speech as a fallback --
+    // the fix for the old energy-gate starvation. The turn stops forwarding
+    // when _tick fires audio_stream_end (which clears g.turnActive).
+    const v = u.vadGate ? u.vadGate.push(pcm16) : { speaking: true, justStarted: !g.turnActive, justEnded: false };
+    // Open the turn on LEVEL, not just the rising edge. `justStarted` alone is
+    // edge-triggered, and a missed closing edge wedges the session forever:
+    // Discord stops delivering packets the moment a speaker goes quiet, so the
+    // gate can miss the ~768ms of sub-threshold frames it needs to close. It
+    // then stays "speaking", never emits another rising edge, while _tick's
+    // timer independently clears turnActive -- and every later frame falls out
+    // at `if (!g.turnActive) return`. That is the 2026-08-14 outage: only the
+    // first utterance of a session ever reached the model. Treating "the gate
+    // says speech and no turn is open" as an onset makes that self-healing.
+    if (v.justStarted || (v.speaking && !g.turnActive)) {
       g.turnActive = true;
       g.audioEndSent = false;
       await this._apply(guildId, g.machine.onUserSpeechStart(), { userId });
@@ -312,10 +359,16 @@ class VoiceService {
       g.pending = null; // drop the captured pre-roll; no session to receive it
       // Discard any in-flight wake-word detection state from the tail of
       // this same utterance so it can't immediately re-fire onWake once the
-      // sidecar recovers (mirrors the reset in _endSession).
-      if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
+      // sidecar recovers (mirrors the reset in _endSession), and release the
+      // floor so the aborted wake doesn't leave a phantom holder.
+      g.floor.release();
+      if (g.perUser) {
+        for (const u of g.perUser.values()) {
+          if (u.wakeGate && typeof u.wakeGate.reset === 'function') u.wakeGate.reset();
+          if (u.vadGate && typeof u.vadGate.reset === 'function') u.vadGate.reset();
+        }
+      }
       g.turnActive = false;
-      if (g.vad && typeof g.vad.reset === 'function') g.vad.reset();
       return;
     }
 
@@ -435,7 +488,13 @@ class VoiceService {
     const botText = g.buffers.out.join(' ').trim();
     g.buffers = { in: [], out: [] };
     const base = { channelId: g.channelId, guildId, timestamp: new Date(), source: 'voice' };
-    if (userText) await this._mongo.recordChannelMessage({ ...base, authorId: 'voice-user', content: userText, isBot: false });
+    // Attribute the user turn to whoever currently holds the floor (the real
+    // Discord userId). turnComplete/_persistTurn fires before the follow-up
+    // window releases the floor, so holder() is still the speaker; fall back to
+    // the old placeholder only for the edge where the floor was already
+    // released (e.g. a teardown race).
+    const speakerId = (g.floor && g.floor.holder()) || 'voice-user';
+    if (userText) await this._mongo.recordChannelMessage({ ...base, authorId: speakerId, content: userText, isBot: false });
     if (botText) await this._mongo.recordChannelMessage({ ...base, authorId: 'bot', content: botText, isBot: true });
   }
 
@@ -465,6 +524,15 @@ class VoiceService {
       try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
       g.audioEndSent = true;
       g.turnActive = false; // stop forwarding until the next speech onset
+      // Keep the floor-holder's VAD gate in lockstep. This timer fires precisely
+      // when that gate did NOT close on its own (no trailing silence frames --
+      // Discord stops sending packets when the speaker goes quiet), so it still
+      // believes speech is in progress and would never emit another rising edge
+      // for the next utterance. Only the holder drives the turn, so only the
+      // holder's gate needs clearing.
+      const holderId = g.floor && g.floor.holder();
+      const holder = holderId && g.perUser ? g.perUser.get(holderId) : null;
+      if (holder && holder.vadGate && typeof holder.vadGate.reset === 'function') holder.vadGate.reset();
     }
 
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
@@ -474,12 +542,6 @@ class VoiceService {
     // Tear down any in-progress playback so a half-streamed reply doesn't linger
     // into the next session.
     this._stopPlayback(g);
-    // Reset audio buffers + speech-end tracking so the next idle/listen period
-    // starts clean.
-    g.pending = null;
-    g.preroll = [];
-    g.lastSpeechAt = null;
-    g.audioEndSent = false;
     if (g.session) {
       const session = g.session;
       // Belt-and-suspenders with the identity guards in _startSession:
@@ -490,11 +552,22 @@ class VoiceService {
       g.session = null;
     }
     g.sessionOpenedAtMs = null;
-    // Discard any PCM buffered mid-utterance so the next wake-word window
-    // isn't skewed by leftover audio from the just-ended session.
-    if (g.gate && typeof g.gate.reset === 'function') g.gate.reset();
+    // Reset audio buffers + speech-end tracking + the floor + every
+    // per-speaker gate so the next idle/listen period starts clean. Discard
+    // any PCM buffered mid-utterance so the next wake-word window isn't
+    // skewed by leftover audio from the just-ended session.
     g.turnActive = false;
-    if (g.vad && typeof g.vad.reset === 'function') g.vad.reset();
+    g.pending = null;
+    g.lastSpeechAt = null;
+    g.audioEndSent = false;
+    if (g.floor) g.floor.release();
+    if (g.perUser) {
+      for (const u of g.perUser.values()) {
+        if (u.wakeGate && typeof u.wakeGate.reset === 'function') u.wakeGate.reset();
+        if (u.vadGate && typeof u.vadGate.reset === 'function') u.vadGate.reset();
+        u.preroll = [];
+      }
+    }
   }
 
   async leave(guildId) {
