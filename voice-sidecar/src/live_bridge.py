@@ -207,6 +207,16 @@ class LiveBridge:
             # only the server-side pump is per-session.
             pump_in = asyncio.create_task(self._pump_client(request_iter, session_ref, stats))
             client_done = False
+            # Tracks whether we've ACTUALLY seeded history/recall_context into
+            # a session yet -- deliberately separate from resume.reconnects,
+            # which is the shared reconnect/retry BUDGET counter and also
+            # increments on a failed session OPEN (FIX I2). If seeding were
+            # gated on resume.reconnects == 0, a failed first open would bump
+            # the counter before any context was ever sent, so the successful
+            # retry would wrongly take the "resumed, context carried by
+            # handle" branch and seed nothing -- even though resume.handle is
+            # None. Only set True once context has actually been sent.
+            seeded_context = False
             try:
                 while True:
                     # --- (Re)open the Live session for this iteration.
@@ -226,12 +236,16 @@ class LiveBridge:
                                 self._model, self._live_config(start, resume.handle)) as session:
                             entered = True
                             session_ref.session = session
-                            if resume.reconnects == 0:
+                            if not seeded_context:
                                 # 2. Seed conversation history, then recall + system
-                                # context, as prior (non-final) turns -- ONLY on the
-                                # first connect. A resumed session already carries
-                                # this context via the resumption handle; re-seeding
-                                # would duplicate the conversation.
+                                # context, as prior (non-final) turns -- ONLY the
+                                # first time context is actually seeded. A resumed
+                                # session already carries this context via the
+                                # resumption handle; re-seeding would duplicate the
+                                # conversation. Gated on seeded_context (not
+                                # resume.reconnects, which also counts failed
+                                # opens) so a failed-then-retried first open still
+                                # seeds on the successful attempt.
                                 seeded = 0
                                 for turn in start.history:
                                     if turn.content:
@@ -250,6 +264,7 @@ class LiveBridge:
                                     )
                                     seeded += 1
                                 logger.info("voice: seeded %d context turn(s); Live session open", seeded)
+                                seeded_context = True
                             else:
                                 logger.info(
                                     "voice: resumed Live session (reconnect #%d); context carried by handle",

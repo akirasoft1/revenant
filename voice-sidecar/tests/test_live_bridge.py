@@ -671,6 +671,44 @@ async def test_failed_reopen_is_retried_with_backoff_against_reconnect_budget():
     assert not any(ev.WhichOneof("event") == "error" for ev in out)
 
 
+async def test_failed_first_open_still_seeds_context_on_successful_retry():
+    """Regression test for a bug introduced alongside I2. `resume.reconnects`
+    is the shared reconnect/retry BUDGET counter -- I2 correctly makes a
+    FAILED (re)open increment it too, so open-failures consume the budget.
+    But seeding was (wrongly) gated on that SAME counter being 0. So: first
+    __aenter__ fails -> resume.reconnects becomes 1 -> the successful retry
+    then takes the "resumed, context carried by handle" branch and seeds
+    NOTHING, even though resume.handle is None (there is no handle -- this
+    is not a real resume). History + recall_context must still be seeded on
+    the first session that actually opens, regardless of how many failed
+    open attempts preceded it."""
+    session_after = FakeSession([])  # opens fine on the 2nd attempt, then blocks
+    factory = _flaky_open_factory(fail_count=1, session_after=session_after)
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=5)
+    start = voice_pb2.SessionStart(
+        user_id="u1",
+        recall_context="MEM",
+        history=[
+            voice_pb2.Turn(role="user", content="hey"),
+            voice_pb2.Turn(role="assistant", content="hi"),
+        ],
+    )
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=start)
+        await asyncio.Event().wait()  # keep the client stream open
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.8)  # >= the ~0.5s (+jitter) backoff before the retry
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert factory.attempts.count == 2  # 1 failed open + 1 successful retry
+    seeded_texts = [turns.parts[0].text for turns, _turn_complete in session_after.seeded]
+    assert seeded_texts == ["hey", "hi", "MEM"]
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
 async def test_reopen_failure_budget_exhausted_surfaces_as_error():
     """FIX I2 regression test (the give-up path). When every retry attempt
     keeps failing to (re)open, the budget must still be enforced -- ending
