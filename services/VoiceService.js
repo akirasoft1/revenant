@@ -653,6 +653,15 @@ class VoiceService {
         if (u.wakeGate && typeof u.wakeGate.reset === 'function') u.wakeGate.reset();
         if (u.vadGate && typeof u.vadGate.reset === 'function') u.vadGate.reset();
         u.preroll = [];
+        // Scope the withheld-speech measurement (see the justEnded debug log
+        // above) to a single session, not to the whole join. Without this,
+        // waitingMs keeps accruing across every wake/talk/idle cycle for as
+        // long as the bot stays in the channel (idle auto-leave doesn't
+        // exist yet), so a threshold chosen from these numbers would be
+        // reading cumulative totals as if they were per-episode durations.
+        // Flag-independent on purpose: the measurement ships with
+        // deferralEnabled OFF, so this can't ride on that flag.
+        u.waitingMs = 0;
       }
     }
   }

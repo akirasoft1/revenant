@@ -1169,4 +1169,56 @@ describe('waiting-speaker measurement', () => {
     expect(g.floor.waiting()).toContain('bob');
     expect(svc._perUser(g, 'bob').waitingMs).toBeGreaterThan(0);
   });
+
+  // FIX 2: nothing in the suite previously drove a justEnded transition for a
+  // NON-holder, so the log line that is this task's actual deliverable never
+  // ran in CI. Drive bob through speech-start then speech-end and assert the
+  // log carries all three diagnostic fields the threshold decision needs.
+  test('logs duration, playback state, and resolved name when a withheld speaker stops talking', async () => {
+    const otherGate = fakeVadGate([
+      { speaking: true, justStarted: true, justEnded: false },
+      { speaking: false, justStarted: false, justEnded: true },
+    ]);
+    const { svc, guildId } = await buildActiveVoiceService({
+      holder: 'alice',
+      // allowBargeIn keeps the mic flowing while the bot plays, so `playing`
+      // reaches the non-holder branch instead of being swallowed by the
+      // earlier half-duplex early-return -- this is the exact echo scenario
+      // (bot's own voice re-entering a mic) the measurement exists to catch.
+      allowBargeIn: true,
+      playing: true,
+      speakerNames: { resolve: () => 'Bob', sanitize: (s) => s },
+    });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = otherGate;
+
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2))); // speech starts, waitingMs accrues
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2))); // speech ends -> justEnded -> log
+
+    const call = logger.debug.mock.calls.find((c) => /withheld speech from Bob/.test(c[0]));
+    expect(call).toBeDefined();
+    expect(call[0]).toMatch(/withheld speech from Bob in guild g1: \d+ms/); // resolved name + duration
+    expect(call[0]).toContain('alice holds the floor'); // who has the floor
+    expect(call[0]).toContain('bot playback=playing'); // playback state
+  });
+
+  // FIX 1: waitingMs must be scoped to a session, not to the whole join --
+  // g.perUser persists across many wake/talk/idle cycles (idle auto-leave
+  // doesn't exist yet), and the only other reset lives behind the
+  // (flag-gated, currently-off) Phase 4 announcement path. Without a
+  // flag-independent reset here, the numbers this measurement exists to
+  // gather would be cumulative-since-join instead of per-episode.
+  test('_endSession resets waitingMs so the measurement is scoped per session', async () => {
+    const otherGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId } = await buildActiveVoiceService({ holder: 'alice' });
+    const g = svc._guilds.get(guildId);
+    svc._perUser(g, 'bob').vadGate = otherGate;
+
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
+    expect(svc._perUser(g, 'bob').waitingMs).toBeGreaterThan(0);
+
+    svc._endSession(g);
+
+    expect(svc._perUser(g, 'bob').waitingMs).toBe(0);
+  });
 });
