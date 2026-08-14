@@ -40,6 +40,17 @@ class VoiceService {
 
   isEnabled() { return !!(this._config.voice && this._config.voice.enabled); }
 
+  // Whether WE finalize the turn (explicit audio_stream_end) or leave it to
+  // Gemini's automatic server-side VAD. Doing both double-finalizes the same
+  // utterance -- the model then transcribes and answers one question twice.
+  // Since Phase 1 streams trailing silence continuously, the server VAD is
+  // capable of endpointing on its own, so this is a real either/or.
+  _clientEndpointing() {
+    const v = this._config.voice;
+    return !!(v && v.clientEndpointing === true);
+  }
+
+
   wakeWord() { return (this._config.voice && this._config.voice.wakeWord) || 'hey jarvis'; }
 
   // Voice-only note appended to the system prompt: (1) own the wake-phrase name
@@ -319,7 +330,15 @@ class VoiceService {
     // finalize the turn NOW rather than waiting on the _tick silence timer. The timer
     // in _tick remains a backstop (fires only if this path didn't, e.g. no session yet).
     if (v.justEnded && g.session && !g.audioEndSent) {
-      try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end (vad) failed: ${e.message}`); }
+      // Closing the turn LOCALLY and TELLING GEMINI are separate concerns. The
+      // local bookkeeping must happen either way -- skipping it would leave
+      // turnActive stuck true and (in _tick) the VAD gate un-reset, which is the
+      // wedge this class of bug keeps producing. Only the network signal is
+      // conditional: when the server VAD owns endpointing, sending our own
+      // audio_stream_end finalizes the same audio a SECOND time.
+      if (this._clientEndpointing()) {
+        try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end (vad) failed: ${e.message}`); }
+      }
       g.audioEndSent = true;
       g.turnActive = false; // stop forwarding until the next speech onset
     }
@@ -521,7 +540,9 @@ class VoiceService {
     // absence of REAL speech does). Sent at most once per speech->silence cycle.
     const silenceMs = (this._config.voice && this._config.voice.speechEndSilenceMs) || DEFAULT_SPEECH_END_SILENCE_MS;
     if (g.session && g.lastSpeechAt !== null && !g.audioEndSent && (now - g.lastSpeechAt) >= silenceMs) {
-      try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
+      if (this._clientEndpointing()) {
+        try { g.session.sendAudioStreamEnd(); } catch (e) { logger.warn(`voice: audio_stream_end failed: ${e.message}`); }
+      }
       g.audioEndSent = true;
       g.turnActive = false; // stop forwarding until the next speech onset
       // Keep the floor-holder's VAD gate in lockstep. This timer fires precisely

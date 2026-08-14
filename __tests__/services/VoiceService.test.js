@@ -121,6 +121,7 @@ async function buildActiveVoiceService(overrides = {}) {
   const configOverrides = {};
   if (overrides.allowBargeIn !== undefined) configOverrides.allowBargeIn = overrides.allowBargeIn;
   if (overrides.speechEndSilenceMs !== undefined) configOverrides.speechEndSilenceMs = overrides.speechEndSilenceMs;
+  if (overrides.clientEndpointing !== undefined) configOverrides.clientEndpointing = overrides.clientEndpointing;
   const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, overrides.contextBuilder);
   const guildId = 'g1';
   await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
@@ -702,7 +703,10 @@ test('audio_stream_end fires speechEndSilenceMs after the last speaking frame an
     { speaking: true, justStarted: true, justEnded: false },
     { speaking: true, justStarted: true, justEnded: false }, // re-arm for the 2nd turn below
   ]);
-  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate, now, speechEndSilenceMs: 800 });
+  const { svc, guildId, session } = await buildActiveVoiceService({
+      // client endpointing is OFF by default now (server VAD owns it);
+      // this test is specifically about OUR endpointer, so opt in.
+      clientEndpointing: true, makeVadGate: () => gate, now, speechEndSilenceMs: 800 });
 
   await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2))); // opens the turn, lastSpeechAt = 1000
   expect(session.sendAudio).toHaveBeenCalledTimes(1);
@@ -729,7 +733,10 @@ test('Silero justEnded fires audio_stream_end immediately as the early endpointe
     { speaking: true, justStarted: true, justEnded: false },
     { speaking: false, justStarted: false, justEnded: true },
   ]);
-  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate });
+  const { svc, guildId, session } = await buildActiveVoiceService({
+      // client endpointing is OFF by default now (server VAD owns it);
+      // this test is specifically about OUR endpointer, so opt in.
+      clientEndpointing: true, makeVadGate: () => gate });
 
   // Frame 1: speech onset opens the turn; no end signal yet.
   await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
@@ -835,7 +842,9 @@ test('single-speaker flow is unchanged (wake -> forward -> early end -> attribut
 
   // Silero end-of-speech -> early audio_stream_end, turn closes.
   await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
-  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  // Endpointing is the server VAD's job by default now, so we no longer send
+  // audio_stream_end -- the observable contract is that the turn closes.
+  expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
   expect(g.turnActive).toBe(false);
 
   // Turn completes -> transcript persisted under alice's real userId.
@@ -879,7 +888,10 @@ test('two speakers: alice holds through her turn; bob only takes the floor after
 
   // Alice's turn ends (Silero justEnded) -> audio_stream_end.
   await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
-  expect(session1.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  // Endpointing belongs to the server VAD by default, so no client signal;
+  // what matters for the floor hand-off is that alice's turn closed.
+  expect(session1.sendAudioStreamEnd).not.toHaveBeenCalled();
+  expect(g.turnActive).toBe(false);
 
   // Server finishes the turn -> machine goes 'hot' (follow-up window armed).
   session1.emit('turnComplete');
@@ -926,7 +938,13 @@ describe('turn re-arming after a missed end-of-speech edge', () => {
     // The gate believes it is still mid-utterance and emits no edges at all --
     // exactly the wedged state observed in production.
     const gate = fakeVadGate([{ speaking: true, justStarted: false, justEnded: false }]);
-    const { svc, guildId, session, holderId } = await buildActiveVoiceService({ makeVadGate: () => gate });
+    const { svc, guildId, session, holderId } = await buildActiveVoiceService({
+      // client endpointing is OFF by default now (server VAD owns it);
+      // this test is specifically about OUR endpointer, so opt in.
+      clientEndpointing: true,
+      // client endpointing is OFF by default now (server VAD owns it);
+      // this test is specifically about OUR endpointer, so opt in.
+      clientEndpointing: true, makeVadGate: () => gate });
     const g = svc._guilds.get(guildId);
     g.turnActive = false; // _tick's backstop already closed the previous turn
 
@@ -946,10 +964,48 @@ describe('turn re-arming after a missed end-of-speech edge', () => {
     t = 1900;
     svc._tick(guildId);
 
-    expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+    // With client endpointing OFF (the default) we do NOT signal Gemini -- but
+    // the LOCAL turn bookkeeping must still run, which is the whole point here.
+    expect(svc._guilds.get(guildId).turnActive).toBe(false);
     // The holder's gate state must be cleared in lockstep with turnActive,
     // otherwise it stays "speaking" forever and never re-arms.
     const holder = svc._guilds.get(guildId).perUser.get(holderId);
     expect(holder.vadGate.reset).toHaveBeenCalled();
+  });
+});
+
+// --- Dual-endpointing toggle -------------------------------------------------
+// Observed live: one utterance transcribed and answered 2-3x (31.9s of reply
+// audio for a ~10s answer) while audio_in showed the audio was sent ONCE. Since
+// Phase 1 streams trailing silence, Gemini's automatic VAD can finalize the
+// turn by itself -- doing that AND sending our own audio_stream_end finalizes
+// the same audio twice. VOICE_CLIENT_ENDPOINTING=false hands endpointing
+// entirely to the server so only one finalization happens.
+describe('client endpointing toggle', () => {
+  test('does NOT send audio_stream_end when client endpointing is disabled', async () => {
+    let t = 1000;
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: true }]);
+    const { svc, guildId, session } = await buildActiveVoiceService({
+      makeVadGate: () => gate, now: () => t, speechEndSilenceMs: 800, clientEndpointing: false,
+    });
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+    t = 5000;
+    svc._tick(guildId);
+    expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
+    expect(session.sendAudio).toHaveBeenCalled(); // audio still streams
+  });
+
+  test('does NOT send audio_stream_end by DEFAULT (server VAD owns endpointing)', async () => {
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: true }]);
+    const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate });
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+    expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
+  });
+
+  test('sends audio_stream_end when explicitly re-enabled', async () => {
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: true }]);
+    const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate, clientEndpointing: true });
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+    expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
   });
 });
