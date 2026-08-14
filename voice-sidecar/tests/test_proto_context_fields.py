@@ -17,3 +17,11 @@ def test_voiceclientevent_carries_set_speaker():
     assert e.WhichOneof("event") == "set_speaker"
     assert e.set_speaker.user_id == "u1"
     assert e.set_speaker.display_name == "Mike"
+
+
+def test_voiceclientevent_carries_acknowledge_waiting():
+    e = voice_pb2.VoiceClientEvent(
+        acknowledge_waiting=voice_pb2.AcknowledgeWaiting(display_name="Sarah")
+    )
+    assert e.WhichOneof("event") == "acknowledge_waiting"
+    assert e.acknowledge_waiting.display_name == "Sarah"

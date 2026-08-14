@@ -39,6 +39,12 @@ message SetSpeaker {
   string display_name = 2;
 }
 
+// Ask the model to acknowledge someone who tried to speak while it was
+// replying. Sent once, after the bot's playback has drained.
+message AcknowledgeWaiting {
+  string display_name = 1;
+}
+
 message VoiceClientEvent {
   oneof event {
     SessionStart   session_start    = 1;
@@ -49,6 +55,7 @@ message VoiceClientEvent {
     // holding it open).
     AudioStreamEnd audio_stream_end = 4;
     SetSpeaker     set_speaker      = 5;
+    AcknowledgeWaiting acknowledge_waiting = 6;
   }
 }
 message VoiceServerEvent {

@@ -126,6 +126,13 @@ class VoiceClient {
         logger.debug(`VoiceClient sendSpeaker write threw: ${e.message}`);
       }
     };
+    session.sendAcknowledgeWaiting = ({ displayName }) => {
+      try {
+        call.write({ acknowledge_waiting: { display_name: displayName || '' } });
+      } catch (e) {
+        logger.debug(`VoiceClient sendAcknowledgeWaiting write threw: ${e.message}`);
+      }
+    };
     session.end = () => {
       try {
         call.write({ session_end: {} });
