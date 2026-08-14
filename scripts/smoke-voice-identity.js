@@ -371,6 +371,11 @@ async function main() {
   const noDoubleAnswerPass = doubleAnswerSegments.length === 0;
   log(`\nNO DOUBLE-ANSWER: ${noDoubleAnswerPass ? 'PASS' : 'FAIL'}`);
   log('  Each speaker turn should produce exactly one turn_complete (a single full reply).');
+  log('  NOTE: a FAIL here is only meaningful if the clip is ONE continuous utterance.');
+  log('  A pre-recorded clip with a natural pause (e.g. "Hey Jarvis." ... "what is the');
+  log('  weather?") is legitimately split into two turns by the server VAD, producing two');
+  log('  answers. Check the ATTRIBUTION list below: if one speaker shows two DIFFERENT');
+  log('  input transcripts, the split is correct behaviour, not the double-answer bug.');
   for (const r of perSpeakerResults) {
     log(`    - Speaker ${r.label} (${r.displayName}): turn_complete x${r.turnsThisSegment}, ${r.audioBytesThisSegment} bytes audio${r.turnsThisSegment > 1 ? '  <-- DOUBLE ANSWER' : ''}`);
   }
