@@ -1425,6 +1425,55 @@ describe('ChatService', () => {
         expect(result.fallback.notice.length).toBeGreaterThan(0);
       });
 
+      it('says the agent returned nothing — not that it was unavailable — on an empty turn', async () => {
+        // The agent WAS available and answered; it just produced no text.
+        // Reporting that as "Agent unavailable" sends whoever reads it hunting
+        // for a sidecar outage that never happened.
+        chatServiceLocal.config = { openai: { model: 'gpt-9-distinctive' } };
+        mockAgentClient.chat.mockResolvedValue({
+          messageText: '   ',
+          summary: { executionCount: 0, anyFailed: false, executionIds: [] },
+          fallbackOccurred: false,
+        });
+
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('cloud says hi');
+        expect(result.fallback.notice).toMatch(/empty/i);
+        expect(result.fallback.notice).not.toMatch(/unavailable/i);
+        expect(result.fallback.notice).toContain('gpt-9-distinctive');
+        expect(result.fallback.reason).toMatch(/empty/i);
+      });
+
+      it('still says "unavailable" when the agent call actually failed', async () => {
+        // Guard on the pair above: the empty-turn wording must not have simply
+        // replaced the outage wording.
+        mockAgentClient.chat.mockRejectedValue(new Error('sidecar unhealthy'));
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+        expect(result.fallback.notice).toMatch(/unavailable/i);
+        expect(result.fallback.notice).not.toMatch(/empty/i);
+      });
+
+      it('surfaces both failures when the direct path also fails', async () => {
+        // A double outage used to render a bare "Failed to generate response:
+        // ..." with no hint the agent path was tried first and failed
+        // differently — usually the more diagnostic half of the story.
+        mockAgentClient.chat.mockRejectedValue(new Error('sidecar deadline exceeded'));
+        mockOpenAIClientLocal.responses.create.mockRejectedValue(new Error('openai 500 distinctive'));
+
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('openai 500 distinctive');
+        expect(result.error).toContain('sidecar deadline exceeded');
+        expect(result.fallback).toBeDefined();
+        expect(result.fallback.occurred).toBe(true);
+        const errored = logger.error.mock.calls.map((c) => c[0]).join('\n');
+        expect(errored).toContain('Both chat paths failed');
+        expect(errored).toContain('sidecar deadline exceeded');
+      });
+
       it('does not flag a normal agent turn as degraded', async () => {
         const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
         expect(result.message).toBe('agent says hi');

@@ -694,7 +694,13 @@ ${context}`;
         // failed agent turn instead, so the existing catch below falls through
         // to direct OpenAI and the user gets an answer rather than silence.
         if (!agentResp.messageText || !agentResp.messageText.trim()) {
-          throw new Error('agent returned an empty message (no text part in the final turn)');
+          // Tagged so the catch below can tell the user the truth: the agent
+          // was AVAILABLE and answered, it just produced no text. Reporting
+          // that as "Agent unavailable" sends anyone reading the logs or the
+          // notice looking for a sidecar outage that never happened.
+          const emptyTurn = new Error('agent returned an empty message (no text part in the final turn)');
+          emptyTurn.agentEmptyTurn = true;
+          throw emptyTurn;
         }
 
         const cvPersonality = personalityManager.get('channel-voice') || {
@@ -730,21 +736,43 @@ ${context}`;
         // before, so both the log and the user-visible notice name what
         // actually answered.
         const directModel = (this.config && this.config.openai && this.config.openai.model) || 'gpt-5.1';
-        logger.warn(`Agent call failed (${err && err.stack ? err.stack : err}); falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
+        const emptyTurn = err && err.agentEmptyTurn === true;
+        if (emptyTurn) {
+          logger.warn(`Agent returned an empty turn (${err.message}) — the sidecar was reachable and the call succeeded, it simply produced no text; falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
+        } else {
+          logger.warn(`Agent call failed (${err && err.stack ? err.stack : err}); falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
+        }
         agentFallback = {
           occurred: true,
-          reason: `agent sidecar unavailable: ${err.message}`,
-          notice: `Agent unavailable — answered with ${directModel} instead`,
+          reason: emptyTurn
+            ? 'agent returned an empty response (the sidecar answered, but with no text)'
+            : `agent sidecar unavailable: ${err.message}`,
+          notice: emptyTurn
+            ? `Agent returned an empty response — answered with ${directModel} instead`
+            : `Agent unavailable — answered with ${directModel} instead`,
         };
       }
     }
 
     const result = await this._directChat(personalityId, userMessage, user, channelId, guildId, imageUrl);
-    // Surface the agent -> direct-OpenAI swap on whatever the direct path
-    // returned, unless that path already reported its own fallback (the
-    // local-LLM redirect), which is more specific.
-    if (agentFallback && result && result.success && !result.fallback) {
-      result.fallback = agentFallback;
+    if (agentFallback && result) {
+      if (result.success) {
+        // Surface the agent -> direct-OpenAI swap on whatever the direct path
+        // returned, unless that path already reported its own fallback (the
+        // local-LLM redirect), which is more specific.
+        if (!result.fallback) {
+          result.fallback = agentFallback;
+        }
+      } else {
+        // Double outage. Without this the user (and the log) sees only the
+        // direct path's bare "Failed to generate response: ..." with no hint
+        // that the agent path was tried first and failed for a DIFFERENT
+        // reason — which is usually the more diagnostic half of the story.
+        const directError = result.error || 'Failed to generate response';
+        logger.error(`Both chat paths failed for user ${user.id} in channel ${channelId || 'unknown'}: agent path — ${agentFallback.reason}; direct path — ${directError}`);
+        result.fallback = result.fallback || agentFallback;
+        result.error = `${directError} (the agent sidecar was tried first and failed differently: ${agentFallback.reason})`;
+      }
     }
     return result;
   }

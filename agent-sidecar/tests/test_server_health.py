@@ -117,6 +117,88 @@ async def test_health_goes_unhealthy_over_the_wire_after_repeated_chat_failures(
         await server.stop(grace=0)
 
 
+async def test_a_chat_cancelled_by_the_client_deadline_records_a_breaker_failure():
+    # THE flagship case this breaker exists for, and the one it used to miss.
+    # grpc.aio delivers asyncio.CancelledError into the handler when the
+    # client's deadline expires, and CancelledError inherits from
+    # BaseException — so an `except Exception` never sees it. A backend that
+    # accepts the connection and then goes silent (GEAP control-plane
+    # failover, a dropped NAT entry, a stalled SDK retry) therefore burned the
+    # bot's full 600s chatDeadlineMs on EVERY channel-voice message, forever,
+    # because nothing ever recorded a failure and Health stayed true.
+    #
+    # Driven through a real gRPC server and a real client deadline on purpose:
+    # the bug is that the exception type is not the one the code expected, so
+    # a test that called record_failure directly would pass while the bug
+    # survived untouched.
+    async def _never_returns(**_kwargs):
+        await asyncio.Event().wait()  # nothing ever sets it
+
+    agent = AsyncMock()
+    agent.process_chat = _never_returns
+
+    breaker = ChatCircuitBreaker(failure_threshold=1, cooldown_seconds=60, clock=_FakeClock())
+    servicer = AgentServicer(agent, breaker=breaker)
+    server, port = await _start_server(servicer)
+    try:
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = agent_pb2_grpc.AgentStub(channel)
+            with pytest.raises(grpc.aio.AioRpcError) as exc:
+                await stub.Chat(
+                    agent_pb2.ChatRequest(user_id="u", user_message="hi"), timeout=0.5,
+                )
+            assert exc.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+
+            # The server-side cancellation lands a moment after the client
+            # gives up, so poll rather than assuming same-tick delivery.
+            for _ in range(100):
+                if breaker.consecutive_failures:
+                    break
+                await asyncio.sleep(0.05)
+            assert breaker.consecutive_failures >= 1, (
+                "a hung Chat killed by the client deadline recorded no failure — "
+                "the breaker cannot see the single most expensive failure mode"
+            )
+            assert (await stub.Health(agent_pb2.HealthRequest())).healthy is False
+    finally:
+        await server.stop(grace=0)
+
+
+async def test_the_sidecar_gives_up_on_a_hung_turn_before_the_bot_deadline_does():
+    # Belt to the CancelledError braces: the sidecar bounds the turn itself
+    # (AGENT_CHAT_TIMEOUT_SECONDS, default 540s vs the bot's 600s
+    # chatDeadlineMs) so the bot receives a real DEADLINE_EXCEEDED naming the
+    # bound instead of hitting its own client-side deadline, and the handler
+    # unwinds normally instead of being cancelled from outside.
+    async def _never_returns(**_kwargs):
+        await asyncio.Event().wait()
+
+    agent = AsyncMock()
+    agent.process_chat = _never_returns
+
+    breaker = ChatCircuitBreaker(failure_threshold=1, cooldown_seconds=60, clock=_FakeClock())
+    servicer = AgentServicer(agent, breaker=breaker, chat_timeout_seconds=0.05)
+    ctx = _Ctx()
+    # The outer wait_for is the test's own guard: without the bound under test
+    # this handler never returns, and a hanging test tells you nothing.
+    try:
+        with pytest.raises(_Aborted):
+            await asyncio.wait_for(
+                servicer.Chat(agent_pb2.ChatRequest(user_id="u", user_message="hi"), ctx),
+                timeout=5,
+            )
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "Chat never returned: the sidecar does not bound its own turn, so a hung agent "
+            "runs until the bot's 600s client deadline kills it"
+        )
+
+    assert ctx.aborted_with[0] == grpc.StatusCode.DEADLINE_EXCEEDED
+    assert "chat timeout" in ctx.aborted_with[1]
+    assert breaker.consecutive_failures == 1
+    assert (await servicer.Health(agent_pb2.HealthRequest(), None)).healthy is False
+
+
 async def test_chat_unimplemented_when_agent_not_configured(health_server):
     port = health_server
     async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:

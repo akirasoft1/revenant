@@ -21,6 +21,15 @@ _DEFAULT_BASE_PROMPT = "You are a helpful assistant."
 _DEFAULT_HEALTH_FAILURE_THRESHOLD = 3
 _DEFAULT_HEALTH_COOLDOWN_SECONDS = 60.0
 
+# Hard ceiling on one Chat turn, deliberately set UNDER the bot's 600s
+# `chatDeadlineMs` (services/AgentClient.js) so the sidecar is the side that
+# gives up first: the bot then gets a real DEADLINE_EXCEEDED with a message
+# naming the bound instead of its own client-side deadline expiry, and the
+# handler unwinds normally rather than being cancelled from outside. Well
+# above any legitimate turn — the orchestrator's own per-execution deadline is
+# `wall_clock + 120` (420s by default) for a single sandbox call.
+_DEFAULT_CHAT_TIMEOUT_SECONDS = 540.0
+
 
 class ChatCircuitBreaker:
     """Consecutive-failure circuit breaker over the Chat RPC, feeding Health.
@@ -160,10 +169,16 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
 
     def __init__(
         self, channel_voice_agent=None, observability_agent=None, config=None, breaker=None,
+        chat_timeout_seconds=None,
     ) -> None:
         self._agent = channel_voice_agent
         self._obs_agent = observability_agent
         self._config = config
+        self._chat_timeout = (
+            chat_timeout_seconds
+            if chat_timeout_seconds is not None
+            else getattr(config, "agent_chat_timeout_seconds", _DEFAULT_CHAT_TIMEOUT_SECONDS)
+        )
         self._breaker = breaker or ChatCircuitBreaker(
             failure_threshold=getattr(
                 config, "agent_health_failure_threshold", _DEFAULT_HEALTH_FAILURE_THRESHOLD,
@@ -184,25 +199,61 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
             self._breaker.record_failure("Chat agent not configured")
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, "Chat agent not configured")
             return agent_pb2.ChatResponse()
-        with trace.get_tracer(__name__).start_as_current_span("agent.chat") as span:
-            try:
-                result = await self._agent.process_chat(
-                    user_id=request.user_id,
-                    user_message=request.user_message,
-                    system_prompt=request.system_prompt,
-                    memory_context=request.memory_context,
-                    history=[{"role": t.role, "content": t.content} for t in request.history],
-                )
-            except Exception as e:  # noqa: BLE001
-                log.exception("Chat handler failed")
-                self._breaker.record_failure(f"{type(e).__name__}: {e}")
-                await context.abort(grpc.StatusCode.INTERNAL, str(e))
-                return agent_pb2.ChatResponse()
-            # Surface the sandbox-invocation decision for Dynatrace so the
-            # per-turn invocation rate is queryable (sandbox-invocation tuning).
-            n = len(result.execution_ids)
-            span.set_attribute("sandbox.invoked", n > 0)
-            span.set_attribute("sandbox.call_count", n)
+        # asyncio.CancelledError inherits from BaseException, NOT Exception, so
+        # the `except Exception` below can never see it — and grpc.aio delivers
+        # exactly that into the handler when the CLIENT's deadline expires.
+        # That is the single most expensive failure mode this breaker exists
+        # for: a backend that accepts the connection and goes silent burns the
+        # bot's full 600s chatDeadlineMs on every channel-voice message and,
+        # without this, records nothing, so Health stays true and it repeats
+        # indefinitely. Count it and re-raise (never swallow a cancellation).
+        # A cancel here is either the client's deadline or sidecar shutdown;
+        # both are honest "the agent path is not serving right now" signals,
+        # and over-counting is already this breaker's ruled policy.
+        try:
+            with trace.get_tracer(__name__).start_as_current_span("agent.chat") as span:
+                try:
+                    result = await asyncio.wait_for(
+                        self._agent.process_chat(
+                            user_id=request.user_id,
+                            user_message=request.user_message,
+                            system_prompt=request.system_prompt,
+                            memory_context=request.memory_context,
+                            history=[
+                                {"role": t.role, "content": t.content} for t in request.history
+                            ],
+                        ),
+                        timeout=self._chat_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    # Deliberately distinct from the client-cancel path: here the
+                    # sidecar gave up first, which is the intended ordering.
+                    reason = (
+                        f"agent turn exceeded the sidecar's {self._chat_timeout:.0f}s chat timeout "
+                        f"(AGENT_CHAT_TIMEOUT_SECONDS); abandoning it so the bot gets a real error "
+                        f"instead of waiting out its own 600s chat deadline"
+                    )
+                    log.error(reason)
+                    self._breaker.record_failure(reason)
+                    await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, reason)
+                    return agent_pb2.ChatResponse()
+                except Exception as e:  # noqa: BLE001
+                    log.exception("Chat handler failed")
+                    self._breaker.record_failure(f"{type(e).__name__}: {e}")
+                    await context.abort(grpc.StatusCode.INTERNAL, str(e))
+                    return agent_pb2.ChatResponse()
+                # Surface the sandbox-invocation decision for Dynatrace so the
+                # per-turn invocation rate is queryable (sandbox-invocation tuning).
+                n = len(result.execution_ids)
+                span.set_attribute("sandbox.invoked", n > 0)
+                span.set_attribute("sandbox.call_count", n)
+        except asyncio.CancelledError:
+            self._breaker.record_failure(
+                "Chat cancelled before it produced a reply — the client's deadline expired "
+                "(the bot waited out its full chatDeadlineMs on a turn that never came back) "
+                "or the sidecar is shutting down"
+            )
+            raise
 
         # A turn that returns no text is a failed turn, not a successful one:
         # the bot already rejects it and falls through to direct OpenAI

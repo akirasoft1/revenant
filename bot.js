@@ -963,9 +963,7 @@ class DiscordBot {
       // case, which mislabelled every other fallback (agent sidecar down, agent
       // running without the channel personality) as a local-LLM problem \u2014 a
       // different feature entirely. ChatService supplies the wording.
-      const fallbackNotice = result.fallback?.occurred
-        ? `> *\u26A0\uFE0F ${result.fallback.notice || result.fallback.reason || 'Responded in a degraded mode'}*\n\n`
-        : '';
+      const fallbackNotice = TextUtils.fallbackNotice(result.fallback);
       const response = TextUtils.wrapUrls(`${fallbackNotice}${result.message}`);
 
       // Convert any generated images to Discord attachments

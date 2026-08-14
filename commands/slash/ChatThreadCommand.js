@@ -87,8 +87,11 @@ class ChatThreadSlashCommand extends BaseSlashCommand {
       return;
     }
 
-    // Send the response in the thread
-    const response = TextUtils.wrapUrls(result.message);
+    // Send the response in the thread, announcing a degraded reply the same
+    // way mention chat does (this surface used to ignore result.fallback).
+    const response = TextUtils.wrapUrls(
+      `${TextUtils.fallbackNotice(result.fallback)}${result.message}`
+    );
 
     // Split long messages
     const chunks = this.splitMessage(response, 2000);
@@ -179,7 +182,9 @@ class ChatThreadSlashCommand extends BaseSlashCommand {
       return true;
     }
 
-    const response = TextUtils.wrapUrls(result.message);
+    const response = TextUtils.wrapUrls(
+      `${TextUtils.fallbackNotice(result.fallback)}${result.message}`
+    );
 
     // Split long messages
     const chunks = this.splitMessage(response, 2000);

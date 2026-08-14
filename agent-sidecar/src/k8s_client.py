@@ -4,11 +4,14 @@ No unit tests — this code is only meaningfully correct when run against a
 real Kubernetes API server, which happens in Phase 9 manual integration tests.
 """
 import asyncio
+import logging
 import time
 
 from kubernetes import client as kube_client  # noqa: F401  (typing reference)
 from kubernetes.client.rest import ApiException
-from kubernetes.stream import stream
+from kubernetes.stream import stream, ws_client as _ws_client
+
+log = logging.getLogger(__name__)
 
 
 # (connect, read) seconds handed to every kubernetes-client call as
@@ -21,7 +24,86 @@ from kubernetes.stream import stream
 # call is outstanding. Permits are global and finite, so repeated hangs walk
 # the sandbox to a standstill that only a pod restart clears. A bounded
 # request raises instead, which unwinds the thread AND releases the permit.
+#
+# NOTE: `_request_timeout` covers the plain REST calls only. It does NOT cover
+# the exec/attach websocket — see _install_ws_connect_timeout below.
 _DEFAULT_REQUEST_TIMEOUT = (5, 30)
+
+
+def _install_ws_connect_timeout(timeout_s: float) -> bool:
+    """Give the exec/attach websocket a real socket timeout. Returns whether
+    the patch could be applied.
+
+    `_request_timeout` is silently ignored on the attach path. Traced through
+    the installed client (kubernetes 35.0.0 / websocket-client 1.9.0):
+    `ws_client.websocket_call` reads `_request_timeout` but only uses it for
+    `client.run_forever(...)`, which is reached ONLY when `_preload_content` is
+    true. We pass `_preload_content=False` (we need the live WSClient to write
+    stdin), so `websocket_call` returns immediately after constructing
+    `WSClient` — and the whole hang happens *inside* that constructor, in
+    `create_websocket` → `WebSocket.connect()`. There, `_http._open_socket`
+    does `sock.settimeout(options.timeout)` with `options.timeout is None`, so
+    the TCP connect, the TLS handshake and the HTTP-upgrade read are all
+    unbounded blocking reads. An API server that accepts the connection and
+    goes silent parks the `asyncio.to_thread` worker forever, and since every
+    K8s call in this sidecar goes through `to_thread` against a default
+    executor of `min(32, cpu+4)` workers, repeated hangs stall ALL sandbox
+    execution until a pod restart.
+
+    Neither knob suggested for this is usable, both verified empirically
+    against a server that accepts and then says nothing:
+      * `websocket.setdefaulttimeout()` — `getdefaulttimeout()` is consulted
+        only by `create_connection()` and `WebSocketApp`; `create_websocket`
+        uses `WebSocket()` + `.connect()`, which never reads it. Still hung.
+      * `socket.setdefaulttimeout()` — defeated by the explicit
+        `sock.settimeout(None)` in `_open_socket`. Still hung.
+      * `sockopt` — `create_websocket` constructs `WebSocket(sslopt=…)` itself
+        and its `connect_opt` carries only headers/proxy, so there is no seam
+        to pass one through.
+
+    What does work is the documented `WebSocket.connect(timeout=…)` option, so
+    we substitute the `WebSocket` symbol *that `create_websocket` resolves* with
+    a subclass that defaults it. `sock_opt.timeout` then reaches
+    `_open_socket`, bounding connect/TLS/handshake, and stays on the socket for
+    the later `write_stdin`/`recv` too.
+
+    Scope: this rebinds an attribute of `kubernetes.stream.ws_client` only, so
+    it cannot touch any other socket in the process — and that module is the
+    sidecar's only websocket-client user. It is process-global (the constructor
+    does not re-install per instance) and it IS a monkeypatch of a third-party
+    symbol: if a future kubernetes release stops resolving `WebSocket` through
+    this module, the patch would silently stop applying, so it returns a bool,
+    logs on failure, and `tests/test_k8s_client_timeouts.py` asserts it is live
+    against a real socket that never answers.
+    """
+    base = getattr(_ws_client, "WebSocket", None)
+    if base is None or not isinstance(base, type):
+        log.error(
+            "cannot bound the K8s exec/attach websocket: kubernetes.stream.ws_client no longer "
+            "exposes a WebSocket class to substitute. The attach handshake is now an UNBOUNDED "
+            "blocking read — an API server that accepts the connection and goes silent will park "
+            "an asyncio.to_thread worker permanently. This needs re-tracing against the installed "
+            "kubernetes client version."
+        )
+        return False
+
+    class _TimeoutWebSocket(base):  # type: ignore[misc, valid-type]
+        """websocket-client WebSocket with a default socket timeout."""
+
+        def connect(self, url, **options):
+            options.setdefault("timeout", timeout_s)
+            return super().connect(url, **options)
+
+    _TimeoutWebSocket.__name__ = "TimeoutWebSocket"
+    _ws_client.WebSocket = _TimeoutWebSocket
+    return True
+
+
+# Installed at import so it is in force before any attach can run. The read
+# half of the default request timeout is the right bound: the attach handshake
+# is a normal API-server round trip, not a long-lived stream (we never call
+# run_forever — we write stdin, close, and poll pod status over REST).
+_WS_TIMEOUT_INSTALLED = _install_ws_connect_timeout(_DEFAULT_REQUEST_TIMEOUT[1])
 
 
 class LiveK8sClient:
@@ -81,6 +163,11 @@ class LiveK8sClient:
                 stderr=False,
                 tty=False,
                 _preload_content=False,
+                # Passed for completeness (and in case a future client honours
+                # it here), but it is a NO-OP on this path: websocket_call only
+                # applies _request_timeout via run_forever, which _preload_content
+                # =False skips. The socket bound that actually applies comes from
+                # _install_ws_connect_timeout above.
                 _request_timeout=self._timeout,
             )
             try:

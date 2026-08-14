@@ -73,6 +73,7 @@ class SandboxOrchestrator:
         memory_limit: str,
         stdout_storage_cap_bytes: int = 256 * 1024,
         overall_deadline_s: int | None = None,
+        cleanup_deadline_s: float = 30.0,
     ) -> None:
         self._k8s = k8s
         self._gate = gate
@@ -92,6 +93,11 @@ class SandboxOrchestrator:
         self._overall_deadline = (
             overall_deadline_s if overall_deadline_s is not None else wall_clock_seconds + 120
         )
+        # ...and a second bound on the cleanup that runs in `_do_run`'s finally.
+        # `asyncio.wait_for` cancels the task and then WAITS for that finally to
+        # finish before raising, so a slow `delete_job` extends the permit hold
+        # past `overall_deadline_s` — the deadline alone does not bound the hold.
+        self._cleanup_deadline = cleanup_deadline_s
 
     async def run(
         self,
@@ -211,6 +217,20 @@ class SandboxOrchestrator:
             )
         finally:
             try:
-                await self._k8s.delete_job(job_name)
+                # Bounded: this finally runs while the task is being cancelled by
+                # the overall deadline, and the permit is still held until it
+                # returns. An abandoned Job cleans itself up anyway via
+                # activeDeadlineSeconds + ttlSecondsAfterFinished, so giving up
+                # on the delete is cheaper than holding a global permit.
+                await asyncio.wait_for(
+                    self._k8s.delete_job(job_name), timeout=self._cleanup_deadline,
+                )
+            except asyncio.TimeoutError:
+                log.error(
+                    "deleting sandbox Job %s exceeded the %ss cleanup deadline; abandoning the "
+                    "delete and releasing the concurrency permit. The Job self-cleans via "
+                    "activeDeadlineSeconds + ttlSecondsAfterFinished.",
+                    job_name, self._cleanup_deadline,
+                )
             except Exception:
                 pass  # cleanup best-effort
