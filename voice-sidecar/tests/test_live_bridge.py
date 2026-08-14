@@ -747,6 +747,67 @@ def _slow_open_factory(session, open_delay=0.05):
     return make
 
 
+async def test_speaker_marker_is_sent_once_before_that_speakers_audio():
+    session = FakeSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="u1", display_name="Mike"))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x01"))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x02"))
+        await asyncio.Event().wait()
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    markers = [t for (t, complete) in session.seeded if "[SPEAKER:" in str(t)]
+    assert len(markers) == 1, f"expected exactly one marker, got {markers}"
+    assert "Mike" in str(markers[0])
+    # marker must NOT finalize a turn
+    assert all(complete is False for (_t, complete) in session.seeded)
+    assert len(session.sent_audio) == 2
+
+
+async def test_marker_is_resent_when_the_speaker_changes():
+    session = FakeSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    async def emit(ev): pass
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="u1", display_name="Mike"))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x01"))
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="u2", display_name="Sarah"))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x02"))
+        await asyncio.Event().wait()
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
+    assert len(markers) == 2 and "Mike" in markers[0] and "Sarah" in markers[1]
+
+
+async def test_empty_speaker_name_sends_no_marker():
+    session = FakeSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    async def emit(ev): pass
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+        yield voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id="u1", display_name=""))
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x01"))
+        await asyncio.Event().wait()
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert not any("[SPEAKER:" in str(t) for (t, _c) in session.seeded)
+
+
 async def test_audio_sent_before_the_first_session_opens_is_not_dropped():
     session = FakeSession([])
     bridge = LiveBridge(_slow_open_factory(session), model="m", default_voice="Puck")
