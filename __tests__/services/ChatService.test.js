@@ -1356,6 +1356,82 @@ describe('ChatService', () => {
       }
     });
 
+    describe('degradation is visible (audit group 1)', () => {
+      const logger = require('../../logger');
+      const personalityManager = require('../../personalities');
+
+      let originalGet;
+
+      beforeEach(() => {
+        // Let the direct-OpenAI fall-through actually succeed so we can inspect
+        // the notice attached to it.
+        originalGet = personalityManager.get.getMockImplementation();
+        personalityManager.get.mockImplementation((id) => ({
+          id, name: 'Channel Voice', emoji: '🗣️', systemPrompt: 'sp',
+        }));
+        logger.warn.mockClear();
+        logger.error.mockClear();
+      });
+
+      afterEach(() => {
+        personalityManager.get.mockImplementation(originalGet);
+      });
+
+      it('tells the user which model answered when the agent call fails', async () => {
+        chatServiceLocal.config = { openai: { model: 'gpt-9-distinctive' } };
+        mockAgentClient.chat.mockRejectedValue(new Error('sidecar unhealthy'));
+
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('cloud says hi');
+        expect(result.fallback).toBeDefined();
+        expect(result.fallback.occurred).toBe(true);
+        expect(result.fallback.notice).toContain('gpt-9-distinctive');
+        // ...and the log names the substitute model too.
+        const warned = logger.warn.mock.calls.map((c) => c[0]).join('\n');
+        expect(warned).toContain('gpt-9-distinctive');
+      });
+
+      it('logs an error and flags the turn when buildTurnContext throws', async () => {
+        chatServiceLocal.buildTurnContext = jest.fn().mockRejectedValue(new Error('recall exploded'));
+
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+
+        // Degraded-but-working: the agent turn still ran, with empty context.
+        expect(mockAgentClient.chat).toHaveBeenCalledWith(expect.objectContaining({
+          systemPrompt: '', memoryContext: '', history: [],
+        }));
+        expect(result.success).toBe(true);
+        const errored = logger.error.mock.calls.map((c) => c[0]).join('\n');
+        expect(errored).toContain('recall exploded');
+        expect(errored).toContain('NO memory context');
+        expect(result.fallback).toBeDefined();
+        expect(result.fallback.occurred).toBe(true);
+      });
+
+      it("propagates the sidecar's fallback_occurred into a user-visible notice", async () => {
+        mockAgentClient.chat.mockResolvedValue({
+          messageText: 'agent says hi',
+          summary: { executionCount: 0, anyFailed: false, executionIds: [] },
+          fallbackOccurred: true,
+        });
+
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+
+        expect(result.fallback).toBeDefined();
+        expect(result.fallback.occurred).toBe(true);
+        expect(typeof result.fallback.notice).toBe('string');
+        expect(result.fallback.notice.length).toBeGreaterThan(0);
+      });
+
+      it('does not flag a normal agent turn as degraded', async () => {
+        const result = await chatServiceLocal.chat('channel-voice', 'hi', user, 'c', 'g');
+        expect(result.message).toBe('agent says hi');
+        expect(result.fallback).toBeUndefined();
+      });
+    });
+
     it('channel-voice agent route forwards built context', async () => {
       chatServiceLocal.buildTurnContext = jest.fn().mockResolvedValue({
         systemPrompt: 'SP',

@@ -216,6 +216,13 @@ class AgentChatResult:
     message_text: str
     execution_ids: list[str]
     any_failed: bool
+    # True when the turn ran on the sidecar's own generic base prompt because
+    # the bot supplied no system_prompt. That is a DEGRADED reply: the learned
+    # channel-voice personality is missing, and the path that produces it in
+    # practice (a failure building the turn context) strips memory and history
+    # with it. Propagated to ChatResponse.fallback_occurred so the bot can tell
+    # the user rather than serving a personality-less answer as if it were normal.
+    fallback_occurred: bool = False
 
 
 class ChannelVoiceAgent:
@@ -233,11 +240,18 @@ class ChannelVoiceAgent:
         self._orch = orchestrator
         self._base_system_prompt = base_system_prompt
 
+    @staticmethod
+    def _uses_base_prompt(system_prompt: str) -> bool:
+        """Single authority for 'this turn fell back to the generic base
+        prompt'. Both _compose_instruction and the fallback_occurred flag read
+        it, so the flag can never disagree with what was actually sent."""
+        return not (system_prompt and system_prompt.strip())
+
     def _compose_instruction(self, *, system_prompt: str) -> str:
         """Build the ADK Agent instruction: bot-supplied system_prompt when
         present, else the sidecar's own base prompt (old-bot-client
         backward compat), always followed by the sandbox tool preamble."""
-        base = system_prompt.strip() if system_prompt and system_prompt.strip() else self._base_system_prompt
+        base = self._base_system_prompt if self._uses_base_prompt(system_prompt) else system_prompt.strip()
         return f"{base}\n\n{TOOL_AVAILABILITY_PREAMBLE}"
 
     def _compose_context_block(self, *, memory_context: str, history) -> str:
@@ -349,4 +363,5 @@ class ChannelVoiceAgent:
             message_text=message_text,
             execution_ids=list(tool.execution_ids),
             any_failed=any_failed,
+            fallback_occurred=self._uses_base_prompt(system_prompt),
         )

@@ -81,3 +81,21 @@ def test_load_dynatrace_env_optional(monkeypatch):
     cfg = config_mod.load()
     assert cfg.dt_mcp_url is None
     assert cfg.dt_platform_token is None
+
+
+def test_agent_health_breaker_defaults(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://x")
+    monkeypatch.delenv("AGENT_HEALTH_FAILURE_THRESHOLD", raising=False)
+    monkeypatch.delenv("AGENT_HEALTH_COOLDOWN_SECONDS", raising=False)
+    cfg = config_mod.load()
+    assert cfg.agent_health_failure_threshold == 3
+    assert cfg.agent_health_cooldown_seconds == 60.0
+
+
+def test_agent_health_breaker_env_overrides(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://x")
+    monkeypatch.setenv("AGENT_HEALTH_FAILURE_THRESHOLD", "5")
+    monkeypatch.setenv("AGENT_HEALTH_COOLDOWN_SECONDS", "12.5")
+    cfg = config_mod.load()
+    assert cfg.agent_health_failure_threshold == 5
+    assert cfg.agent_health_cooldown_seconds == 12.5

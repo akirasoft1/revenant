@@ -61,6 +61,14 @@ class Config:
     dt_mcp_url: str | None
     dt_platform_token: str | None
 
+    # Chat circuit breaker behind the Health RPC (see server.ChatCircuitBreaker).
+    # Health reports unhealthy after this many consecutive Chat failures, then
+    # re-reports healthy after the cooldown to admit one trial Chat. Defaulted
+    # (and last) so existing call sites that build a Config explicitly keep
+    # working without restating them.
+    agent_health_failure_threshold: int = 3
+    agent_health_cooldown_seconds: float = 60.0
+
 
 def load() -> Config:
     return Config(
@@ -68,6 +76,8 @@ def load() -> Config:
         agent_model=os.environ.get("AGENT_MODEL", "gemini-3-flash-preview"),
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
         openai_model=os.environ.get("OPENAI_MODEL", "gpt-5.1"),
+        agent_health_failure_threshold=int(os.environ.get("AGENT_HEALTH_FAILURE_THRESHOLD", "3")),
+        agent_health_cooldown_seconds=float(os.environ.get("AGENT_HEALTH_COOLDOWN_SECONDS", "60")),
         mongo_uri=_resolve_mongo_uri(),
         sandbox_inline_output_chars=int(os.environ.get("SANDBOX_INLINE_OUTPUT_CHARS", "750")),
         sandbox_wall_clock_seconds=int(os.environ.get("SANDBOX_WALL_CLOCK_SECONDS", "300")),

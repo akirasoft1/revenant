@@ -959,8 +959,12 @@ class DiscordBot {
       }
 
       // Format response and wrap URLs (no personality header \u2014 channel-voice is the only personality)
+      // Describe what actually degraded. This used to hardcode the local-LLM
+      // case, which mislabelled every other fallback (agent sidecar down, agent
+      // running without the channel personality) as a local-LLM problem \u2014 a
+      // different feature entirely. ChatService supplies the wording.
       const fallbackNotice = result.fallback?.occurred
-        ? `> *\u26A0\uFE0F Local LLM unavailable \u2014 responded with cloud fallback instead*\n\n`
+        ? `> *\u26A0\uFE0F ${result.fallback.notice || result.fallback.reason || 'Responded in a degraded mode'}*\n\n`
         : '';
       const response = TextUtils.wrapUrls(`${fallbackNotice}${result.message}`);
 

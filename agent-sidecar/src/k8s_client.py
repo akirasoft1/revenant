@@ -11,16 +11,31 @@ from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 
 
+# (connect, read) seconds handed to every kubernetes-client call as
+# `_request_timeout`. WITHOUT these the client waits forever: an API server
+# that accepts the connection and then goes silent (control-plane failover,
+# an overloaded apiserver, a dropped NAT entry) parks the calling worker
+# thread permanently. Because these calls run under `asyncio.to_thread`, each
+# hang also burns a slot in the event loop's default executor — and, one level
+# up, the orchestrator's `ConcurrencyGate` permit is held for as long as the
+# call is outstanding. Permits are global and finite, so repeated hangs walk
+# the sandbox to a standstill that only a pod restart clears. A bounded
+# request raises instead, which unwinds the thread AND releases the permit.
+_DEFAULT_REQUEST_TIMEOUT = (5, 30)
+
+
 class LiveK8sClient:
-    def __init__(self, *, batch, core, namespace: str) -> None:
+    def __init__(self, *, batch, core, namespace: str, request_timeout=_DEFAULT_REQUEST_TIMEOUT) -> None:
         self._batch = batch
         self._core = core
         self._ns = namespace
+        self._timeout = request_timeout
 
     async def create_job(self, spec: dict) -> str:
         try:
             created = await asyncio.to_thread(
                 self._batch.create_namespaced_job, self._ns, spec,
+                _request_timeout=self._timeout,
             )
             return created.metadata.name
         except ApiException as e:
@@ -35,6 +50,7 @@ class LiveK8sClient:
                 self._core.list_namespaced_pod,
                 self._ns,
                 label_selector=f"job-name={job_name}",
+                _request_timeout=self._timeout,
             )
             if pods.items:
                 pod = pods.items[0]
@@ -65,6 +81,7 @@ class LiveK8sClient:
                 stderr=False,
                 tty=False,
                 _preload_content=False,
+                _request_timeout=self._timeout,
             )
             try:
                 ws.write_stdin(payload.decode("utf-8"))
@@ -76,12 +93,16 @@ class LiveK8sClient:
                     pass
 
             t0 = time.monotonic()
-            pod = self._core.read_namespaced_pod(pod_name, self._ns)
+            pod = self._core.read_namespaced_pod(
+                pod_name, self._ns, _request_timeout=self._timeout,
+            )
             while time.monotonic() - t0 < deadline_s + 5:
                 if pod.status.phase in ("Succeeded", "Failed"):
                     break
                 time.sleep(0.5)
-                pod = self._core.read_namespaced_pod(pod_name, self._ns)
+                pod = self._core.read_namespaced_pod(
+                    pod_name, self._ns, _request_timeout=self._timeout,
+                )
 
             timed_out = False
             oom_killed = False
@@ -97,14 +118,19 @@ class LiveK8sClient:
             if pod.status.reason == "DeadlineExceeded":
                 timed_out = True
 
-            logs = self._core.read_namespaced_pod_log(pod_name, self._ns)
+            logs = self._core.read_namespaced_pod_log(
+                pod_name, self._ns, _request_timeout=self._timeout,
+            )
             return exit_code, logs, timed_out, oom_killed
 
         return await asyncio.to_thread(_do)
 
     async def get_pod_node(self, pod_name: str) -> str | None:
         try:
-            pod = await asyncio.to_thread(self._core.read_namespaced_pod, pod_name, self._ns)
+            pod = await asyncio.to_thread(
+                self._core.read_namespaced_pod, pod_name, self._ns,
+                _request_timeout=self._timeout,
+            )
             return pod.spec.node_name
         except ApiException:
             return None
@@ -116,6 +142,7 @@ class LiveK8sClient:
                 job_name,
                 self._ns,
                 propagation_policy="Foreground",
+                _request_timeout=self._timeout,
             )
         except ApiException:
             pass

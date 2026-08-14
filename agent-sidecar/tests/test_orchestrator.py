@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -142,3 +143,57 @@ async def test_stdout_capped_at_storage_limit(make_orch):
     result = await orch.run(user_id="u", language="bash", code="x", stdin=None, env={})
     assert len(result.stdout) <= 256 * 1024 + 64  # cap + truncation marker
     assert result.stdout_truncated is True
+
+
+class HangingK8sClient(FakeK8sClient):
+    """API server that accepts the call and then never answers."""
+
+    async def wait_pod_ready(self, job_name: str, timeout_s: int) -> str:
+        await asyncio.sleep(3600)
+        raise AssertionError("unreachable")
+
+
+def _orch_with_deadline(k8s, gate, deadline_s):
+    return SandboxOrchestrator(
+        k8s=k8s,
+        gate=gate,
+        egress=NoopEgressScraper(),
+        namespace="discord-article-bot",
+        sandbox_image="sandbox-base:test",
+        wall_clock_seconds=300,
+        cpu_limit="2",
+        memory_limit="2Gi",
+        overall_deadline_s=deadline_s,
+    )
+
+
+async def test_a_hung_k8s_call_cannot_hold_the_concurrency_permit_forever():
+    # A hang used to park inside the gate's `async with` forever. Permits are
+    # global and finite, so repeated hangs walked the sandbox to a permanent
+    # standstill that only a pod restart cleared.
+    gate = ConcurrencyGate(per_user=1, global_=1)
+    orch = _orch_with_deadline(HangingK8sClient(), gate, 1)
+
+    result = await asyncio.wait_for(
+        orch.run(user_id="u1", language="bash", code="x", stdin=None, env={}),
+        timeout=10,
+    )
+    assert result.orchestrator_error == "orchestrator_timeout"
+    assert result.timed_out is True
+
+    # The permit must be back: a fresh execution for the same user (and the
+    # single global slot) has to be admitted rather than hitting the cap.
+    ok = await asyncio.wait_for(
+        SandboxOrchestrator(
+            k8s=FakeK8sClient(scripted_logs="fine", scripted_exit=0),
+            gate=gate,
+            egress=NoopEgressScraper(),
+            namespace="discord-article-bot",
+            sandbox_image="sandbox-base:test",
+            wall_clock_seconds=300,
+            cpu_limit="2",
+            memory_limit="2Gi",
+        ).run(user_id="u1", language="bash", code="x", stdin=None, env={}),
+        timeout=10,
+    )
+    assert ok.stdout == "fine"

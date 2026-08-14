@@ -646,6 +646,7 @@ ${context}`;
     // Route channel-voice through the agent sidecar when available and healthy.
     // On agent failure or unhealthy state, fall through to the existing direct
     // OpenAI path so the bot keeps working when the sidecar is down.
+    let agentFallback = null;
     if (
       personalityId === 'channel-voice'
       && this.agentClient
@@ -653,6 +654,13 @@ ${context}`;
       && process.env.AGENT_ENABLED !== 'false'
     ) {
       try {
+        // If buildTurnContext throws, the turn still runs — but with NO system
+        // prompt (so the sidecar uses its generic base.txt instead of the
+        // learned channel-voice personality), NO memory context and NO history.
+        // That is a bot that has abruptly forgotten who it is and everything it
+        // knew, so it gets logged loudly and reported to the user rather than
+        // swallowed. Degraded-but-working is the right behaviour; silent is not.
+        let contextDegraded = false;
         const turnCtx = await this.buildTurnContext({
           userId: user.id,
           userTag: user.tag || user.username || '',
@@ -660,7 +668,11 @@ ${context}`;
           guildId: guildId || '',
           userMessage,
           personalityId,
-        }).catch(() => ({ systemPrompt: '', memoryBlock: '', historyTurns: [] }));
+        }).catch((ctxErr) => {
+          contextDegraded = true;
+          logger.error(`buildTurnContext failed for user ${user.id} in channel ${channelId || 'unknown'}; this channel-voice turn runs with NO system prompt (generic base prompt instead of the learned channel-voice personality), NO memory context and NO history: ${ctxErr && ctxErr.stack ? ctxErr.stack : ctxErr}`);
+          return { systemPrompt: '', memoryBlock: '', historyTurns: [] };
+        });
         const agentResp = await this.agentClient.chat({
           userId: user.id,
           userTag: user.tag || user.username || '',
@@ -700,13 +712,50 @@ ${context}`;
           },
           tokens: { input: 0, output: 0, total: 0 },
           executionSummary: agentResp.summary,
-          fallback: agentResp.fallbackOccurred ? { occurred: true, reason: 'agent fallback' } : undefined,
+          // The sidecar sets fallback_occurred when the turn ran on its generic
+          // base prompt; contextDegraded is the bot-side view of the same event.
+          // Either way the reply is missing the channel's learned voice, so say so.
+          fallback: (agentResp.fallbackOccurred || contextDegraded)
+            ? {
+              occurred: true,
+              reason: 'agent ran without the channel-voice personality or memory context',
+              notice: 'Memory and channel personality unavailable — answered without them',
+            }
+            : undefined,
         };
       } catch (err) {
-        logger.warn(`Agent call failed; falling through to direct-OpenAI: ${err.message}`);
+        // The user is about to get an answer from a DIFFERENT MODEL ON A
+        // DIFFERENT PROVIDER (direct OpenAI instead of Gemini via the agent
+        // sidecar). This repo has been bitten by silent model substitution
+        // before, so both the log and the user-visible notice name what
+        // actually answered.
+        const directModel = (this.config && this.config.openai && this.config.openai.model) || 'gpt-5.1';
+        logger.warn(`Agent call failed (${err && err.stack ? err.stack : err}); falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
+        agentFallback = {
+          occurred: true,
+          reason: `agent sidecar unavailable: ${err.message}`,
+          notice: `Agent unavailable — answered with ${directModel} instead`,
+        };
       }
     }
 
+    const result = await this._directChat(personalityId, userMessage, user, channelId, guildId, imageUrl);
+    // Surface the agent -> direct-OpenAI swap on whatever the direct path
+    // returned, unless that path already reported its own fallback (the
+    // local-LLM redirect), which is more specific.
+    if (agentFallback && result && result.success && !result.fallback) {
+      result.fallback = agentFallback;
+    }
+    return result;
+  }
+
+  /**
+   * The direct (non-agent) chat path: OpenAI or local LLM, with conversation
+   * history from Mongo. Split out of chat() so the agent path can attach a
+   * user-visible notice to whatever this returns when it fell through.
+   * @private
+   */
+  async _directChat(personalityId, userMessage, user, channelId = null, guildId = null, imageUrl = null) {
     const personality = personalityManager.get(personalityId);
 
     if (!personality) {
@@ -725,7 +774,8 @@ ${context}`;
               result.fallback = {
                 occurred: true,
                 originalPersonality: personalityId,
-                reason: 'Local LLM unavailable'
+                reason: 'Local LLM unavailable',
+                notice: 'Local LLM unavailable — responded with cloud fallback instead'
               };
             }
             return result;
@@ -1039,7 +1089,8 @@ ${context}`;
         result.fallback = {
           occurred: true,
           originalPersonality: personalityId,
-          reason: 'Local LLM unavailable'
+          reason: 'Local LLM unavailable',
+          notice: 'Local LLM unavailable — responded with cloud fallback instead'
         };
       }
 
