@@ -45,7 +45,15 @@ const SAMPLE_RATE = 16000;
 // default 700) without pulling in config/config.js -- that module requires
 // DISCORD_TOKEN/OPENAI_API_KEY/MONGO_URI and exits if they're missing, which
 // this offline-by-design harness must not depend on.
-const DEFERRAL_MIN_SPEECH_MS = parseInt(process.env.VOICE_DEFERRAL_MIN_SPEECH_MS || '700', 10);
+// Mirrors config.js's validation too, not just its default: a non-numeric or
+// non-positive value falls back to 700 rather than becoming NaN/0. Without
+// this the harness would print `threshold: 0ms` and declare QUALIFIED on the
+// first frame for exactly the malformed env var that production handles
+// correctly -- a tuning tool disagreeing with production, which is the defect
+// this harness was already fixed for once.
+const _rawMinSpeech = Number(process.env.VOICE_DEFERRAL_MIN_SPEECH_MS);
+const DEFERRAL_MIN_SPEECH_MS =
+  Number.isFinite(_rawMinSpeech) && _rawMinSpeech > 0 ? _rawMinSpeech : 700;
 
 function decode16kMono(file) {
   return execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-ac', '1',

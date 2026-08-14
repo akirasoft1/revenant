@@ -385,8 +385,18 @@ async function main() {
     const turnsBefore = turnCompleteCount;
     const outputsBefore = outputTranscripts.length;
 
-    session.sendAcknowledgeWaiting({ displayName: 'Sarah' });
-    log("  sendAcknowledgeWaiting({ displayName: 'Sarah' })");
+    // The send reports whether the write went out. Don't log success for a
+    // nudge the client already knows it dropped -- this is the only real-model
+    // path that exercises the ack, so a silent false here would read as "the
+    // model ignored it" when in fact nothing was ever sent.
+    const ackSent = session.sendAcknowledgeWaiting({ displayName: 'Sarah' });
+    if (ackSent === false) {
+      log("  sendAcknowledgeWaiting({ displayName: 'Sarah' }) -> CLIENT REPORTED THE WRITE DID NOT GO OUT");
+      log('  Every DEFERRAL check below is therefore meaningless -- the sidecar never received');
+      log('  the nudge, so an absent reply says nothing about the model. Fix the stream first.');
+    } else {
+      log("  sendAcknowledgeWaiting({ displayName: 'Sarah' }) -> sent");
+    }
 
     log(`  waiting up to ${TURN_TIMEOUT_MS}ms for turn_complete...`);
     const got = await waitForEvent(session, 'turnComplete', TURN_TIMEOUT_MS);
