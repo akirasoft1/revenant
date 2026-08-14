@@ -25,3 +25,20 @@ data:
   # dynatrace-mcp server over the platform-reserved MCP gateway endpoint.
   # Non-secret (no token embedded); DT_PLATFORM_TOKEN (Secret) authenticates.
   DT_MCP_URL: "https://qgv89709.apps.dynatrace.com/platform-reserved/mcp-gateway/v0.1/servers/dynatrace-mcp/mcp"
+  # --- Agent health circuit breaker (audit 2026-08-14) ---
+  # The bot's only circuit breaker for the agent path used to be "is the gRPC
+  # port answering", which stayed true through expired Vertex credentials, an
+  # unreachable Mongo, and hangs. The sidecar now reports unhealthy after N
+  # consecutive Chat failures and recovers via a half-open trial after the
+  # cooldown. Raise the threshold to tolerate more flakiness before falling
+  # back to direct OpenAI; raise the cooldown to retry a broken backend less
+  # often.
+  AGENT_HEALTH_FAILURE_THRESHOLD: "3"
+  AGENT_HEALTH_COOLDOWN_SECONDS: "60"
+  # LOCKSTEP with services/AgentClient.js `chatDeadlineMs` (600000 ms, a
+  # constructor default and NOT env-tunable). This MUST stay below it so the
+  # sidecar abandons a stuck turn and returns a real error before the bot's own
+  # deadline fires — otherwise the bot times out first, the sidecar keeps
+  # working on an abandoned turn, and the breaker never learns the turn failed.
+  # If you raise this past 600s, change chatDeadlineMs in the same commit.
+  AGENT_CHAT_TIMEOUT_SECONDS: "540"
