@@ -34,8 +34,24 @@ enabled so OneAgent and this pod's own OTLP spans both reach Dynatrace.
 
 ## Apply order
 
+**Apply from the deployed overlay, NOT from this directory.** The manifests here are
+tracked templates: `voice-deployment.yaml` is pinned to the literal placeholder
+`REPLACE_WITH_SHA`, which does not exist on Docker Hub. `kubectl apply -f k8s/voice/`
+therefore rewrites the live deployment's image to a broken tag (stalling the rollout in
+`ImagePullBackOff`) and reverts the deployed Service and NetworkPolicy to their placeholder
+forms. See "Real values live in the gitignored deployed overlay" below.
+
 ```bash
-kubectl apply -f k8s/voice/ -n discord-article-bot
+# Full apply (first install, or when Service/NetworkPolicy change):
+kubectl apply -f k8s/overlays/deployed/voice-deployment.yaml \
+              -f k8s/overlays/deployed/voice-service.yaml \
+              -f k8s/overlays/deployed/voice-networkpolicy.yaml \
+              -n discord-article-bot
+
+# Image-only update (the usual case):
+kubectl set image deployment/discord-article-bot-voice \
+  voice=mvilliger/discord-article-bot-voice:<git-short-sha> -n discord-article-bot
+
 kubectl rollout status deployment/discord-article-bot-voice -n discord-article-bot --timeout=120s
 kubectl logs deployment/discord-article-bot-voice -n discord-article-bot | tail -20
 # expect: "voice sidecar listening on 0.0.0.0:50051"
