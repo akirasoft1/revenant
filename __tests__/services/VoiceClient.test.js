@@ -245,4 +245,40 @@ describe('VoiceClient', () => {
     expect(fakeCall.write).not.toHaveBeenCalled();
     c.close();
   });
+
+  test('a stream error still reaches an attached error listener', (done) => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.on('error', (err) => {
+      expect(err.message).toBe('14 UNAVAILABLE: sidecar went away');
+      c.close();
+      done();
+    });
+    fakeCall.emit('error', new Error('14 UNAVAILABLE: sidecar went away'));
+  });
+
+  test('a stream error AFTER teardown does not throw ERR_UNHANDLED_ERROR', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.on('error', () => {});
+
+    // Exactly what VoiceService._endSession does before session.end(). The gRPC
+    // call stays wired to this session, so a late stream error re-enters here
+    // with no listener attached. EventEmitter.emit('error') RETHROWS in that
+    // state, synchronously, inside the gRPC callback -- which took the whole
+    // bot process down (not just voice) on any sidecar reschedule mid-session.
+    session.removeAllListeners();
+
+    expect(() => {
+      fakeCall.emit('error', new Error('14 UNAVAILABLE: sidecar went away'));
+    }).not.toThrow();
+
+    c.close();
+  });
 });

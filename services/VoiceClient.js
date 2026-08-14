@@ -95,7 +95,21 @@ class VoiceClient {
           break;
       }
     });
-    call.on('error', (err) => session.emit('error', err));
+    // `EventEmitter.emit('error')` is special: with no 'error' listener attached,
+    // Node THROWS the emitted error rather than dropping it. VoiceService's
+    // `_endSession` calls `session.removeAllListeners()` and then `session.end()`,
+    // but this gRPC handler stays wired to the underlying call — so a stream error
+    // arriving in the window after teardown (sidecar rescheduled, Live connection
+    // dropped, or simply the error that CAUSED the teardown arriving late) would
+    // throw ERR_UNHANDLED_ERROR synchronously inside the gRPC callback and take
+    // the whole bot process down, not just voice.
+    call.on('error', (err) => {
+      if (session.listenerCount('error') > 0) {
+        session.emit('error', err);
+        return;
+      }
+      logger.warn(`voice: gRPC stream error after session teardown (no listener attached): ${err.message}`);
+    });
     call.on('end', () => session.emit('end'));
 
     session.sendStart = (s) =>
