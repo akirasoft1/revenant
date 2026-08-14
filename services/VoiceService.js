@@ -468,6 +468,20 @@ class VoiceService {
     session.sendStart({ userId, channelId: g.channelId, guildId,
       systemPrompt, recallContext, history, voiceName: this._config.voice.liveVoice });
 
+    // The pre-roll/pending flush below sends the wake-triggering utterance
+    // directly via session.sendAudio, entirely outside _handleUserPcm's
+    // sendSpeaker gate -- so without this, the audio that TRIGGERED the wake
+    // word (the most important audio for "who is talking now") would reach
+    // the model with no [SPEAKER: name] marker. Label it here, once, for the
+    // wake-triggering speaker (same cached u.name as the hot path), and
+    // record it so _handleUserPcm doesn't re-send the same marker for the
+    // next live frame from this speaker.
+    const starter = this._perUser(g, userId);
+    if (starter.name && typeof session.sendSpeaker === 'function') {
+      session.sendSpeaker({ userId, displayName: starter.name });
+      g.lastSpeakerSent = userId;
+    }
+
     // Flush the pre-roll (wake-phrase audio) plus anything buffered while the
     // session was opening, so a first-turn question spoken with the wake phrase
     // reaches the model. gRPC/the sidecar buffer these until the Live session is

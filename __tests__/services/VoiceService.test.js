@@ -98,8 +98,8 @@ function to48kStereo(buf16Mono) {
 // Build a joined-but-idle VoiceService -- a live voice connection exists but
 // no one has woken the room yet. Returns a spy on `_startSession` so tests can
 // assert a session did/didn't open without depending on gRPC internals.
-async function buildJoinedVoiceService(deps, configOverrides = {}, contextBuilder) {
-  const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, contextBuilder);
+async function buildJoinedVoiceService(deps, configOverrides = {}, contextBuilder, speakerNames) {
+  const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, contextBuilder, speakerNames);
   const guildId = 'g1';
   await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
   const startSession = jest.spyOn(svc, '_startSession');
@@ -1041,5 +1041,90 @@ describe('speaker identity', () => {
     const p = svc._appendVoicePersona('BASE');
     expect(p).toMatch(/\[SPEAKER:/);
     expect(p.toLowerCase()).toMatch(/never read|do not read|aloud/);
+  });
+
+  // Regression: the wake-triggering utterance (pre-roll + anything buffered
+  // during the multi-second session-open window) flushes via a direct
+  // session.sendAudio loop in _startSession, entirely outside
+  // _handleUserPcm's sendSpeaker gate. Without labeling it there too, the
+  // FIRST audio of every session -- the audio that most needs "who is
+  // talking now" -- reached the model unmarked.
+  test('pre-roll flush is labeled: SetSpeaker fires once, before sendAudio, for the wake-triggering speaker', async () => {
+    const deps = makeDeps({
+      makeWakeGate: () => fakeWakeGate('nextPushWakes'),
+      makeVadGate: () => fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]),
+    });
+    const speakerNames = { resolve: () => 'Mike', sanitize: (s) => s };
+    const { svc, guildId, voiceClient } = await buildJoinedVoiceService(deps, {}, undefined, speakerNames);
+
+    // Wake -> alice takes the floor -> session opens -> her pre-roll (the
+    // wake-phrase audio) flushes into the fresh session.
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+    const session = voiceClient.converse.mock.results[0].value;
+    expect(session.sendSpeaker).toHaveBeenCalledTimes(1);
+    expect(session.sendSpeaker).toHaveBeenCalledWith(expect.objectContaining({ userId: 'alice', displayName: 'Mike' }));
+    expect(session.sendAudio).toHaveBeenCalled(); // the pre-roll frame(s) flushed
+
+    // Ordering: the marker must precede the pre-roll audio it labels.
+    const speakerOrder = session.sendSpeaker.mock.invocationCallOrder[0];
+    const firstAudioOrder = session.sendAudio.mock.invocationCallOrder[0];
+    expect(speakerOrder).toBeLessThan(firstAudioOrder);
+
+    // A subsequent LIVE frame from the same (still-holding) speaker must not
+    // re-send the marker -- _startSession already recorded lastSpeakerSent.
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+    expect(session.sendSpeaker).toHaveBeenCalledTimes(1);
+  });
+
+  test('speaker change across sessions: each wake-triggering speaker gets their own SetSpeaker call', async () => {
+    let t = 0;
+    const now = () => t;
+    const deps = makeDeps({
+      now,
+      makeWakeGate: () => fakeWakeGate('nextPushWakes'),
+      makeVadGate: () => fakeVadGate([
+        { speaking: true, justStarted: true, justEnded: false },
+        { speaking: false, justStarted: false, justEnded: true },
+      ]),
+    });
+    const speakerNames = {
+      resolve: (user) => {
+        if (user && user.id === 'alice') return 'Alice';
+        if (user && user.id === 'bob') return 'Bob';
+        return null;
+      },
+      sanitize: (s) => s,
+    };
+    const { svc, guildId, voiceClient } = await buildJoinedVoiceService(deps, {}, undefined, speakerNames);
+
+    // Alice wakes -> holds the floor, session 1 opens labeled Alice.
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(speech()));
+    const g = svc._guilds.get(guildId);
+    expect(g.floor.holder()).toBe('alice');
+    const session1 = voiceClient.converse.mock.results[0].value;
+    expect(session1.sendSpeaker).toHaveBeenCalledWith(expect.objectContaining({ userId: 'alice', displayName: 'Alice' }));
+
+    // Alice's turn ends and the room idles out, releasing the floor.
+    await svc._handleUserPcm(guildId, 'alice', to48kStereo(silence()));
+    session1.emit('turnComplete');
+    await new Promise((r) => setImmediate(r));
+    expect(g.machine.state).toBe('hot');
+    t = 5000;
+    svc._tick(guildId);
+    await new Promise((r) => setImmediate(r));
+    expect(g.machine.state).toBe('idle');
+    expect(g.floor.holder()).toBeNull();
+
+    // Bob now wakes -> HE takes the floor; a fresh session opens labeled Bob.
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(speech()));
+    expect(g.floor.holder()).toBe('bob');
+    expect(voiceClient.converse).toHaveBeenCalledTimes(2);
+    const session2 = voiceClient.converse.mock.results[1].value;
+    expect(session2).not.toBe(session1);
+    expect(session2.sendSpeaker).toHaveBeenCalledWith(expect.objectContaining({ userId: 'bob', displayName: 'Bob' }));
+
+    // Each session only ever heard its own speaker announced.
+    expect(session1.sendSpeaker).not.toHaveBeenCalledWith(expect.objectContaining({ userId: 'bob' }));
+    expect(session2.sendSpeaker).not.toHaveBeenCalledWith(expect.objectContaining({ userId: 'alice' }));
   });
 });
