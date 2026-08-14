@@ -249,6 +249,7 @@ class DiscordBot {
         }
         const VoiceClient = require('./services/VoiceClient');
         const VoiceService = require('./services/VoiceService');
+        const { createSpeakerNames } = require('./services/SpeakerNames');
         const dv = require('@discordjs/voice');
         // Per-packet Opus decoder (@discordjs/opus) rather than prism-media's
         // stream Transform: VoiceService decodes each received frame in a
@@ -274,6 +275,7 @@ class DiscordBot {
           mongoService: this.mongoService,
           config,
           contextBuilder: (args) => this.chatService.buildTurnContext(args),
+          speakerNames: createSpeakerNames({ overrides: config.voice.speakerNames }),
           deps: {
             joinVoiceChannel: dv.joinVoiceChannel,
             createAudioPlayer: dv.createAudioPlayer,
@@ -298,6 +300,13 @@ class DiscordBot {
             ),
             now: () => Date.now(), setInterval, clearInterval,
             getVoiceConnection: dv.getVoiceConnection,
+            // Cached-only lookup (no privileged-intent fetch); a cache miss
+            // degrades to the override table via { id: userId } in
+            // SpeakerNames.resolve.
+            lookupUser: (userId) => {
+              const u = this.client.users.cache.get(userId);
+              return u ? { id: u.id, username: u.username, globalName: u.globalName } : { id: userId };
+            },
           },
         });
         logger.info(`VoiceService initialized -> ${config.voice.address}`);

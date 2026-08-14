@@ -25,11 +25,12 @@ function makeDeps(overrides = {}) {
   };
 }
 
-function makeService(deps, configOverrides = {}, contextBuilder) {
+function makeService(deps, configOverrides = {}, contextBuilder, speakerNames) {
   const voiceClient = {
     converse: jest.fn(() => {
       const s = new EventEmitter();
       s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.sendAudioStreamEnd = jest.fn(); s.end = jest.fn();
+      s.sendSpeaker = jest.fn();
       return s;
     }),
     isHealthy: jest.fn(() => true),
@@ -39,7 +40,7 @@ function makeService(deps, configOverrides = {}, contextBuilder) {
     followupWindowMs: 1000, idleTimeoutMs: 60000, maxSessions: 2, maxSessionSeconds: 600,
     ...configOverrides } };
   const builder = contextBuilder || jest.fn().mockResolvedValue({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
-  return { svc: new VoiceService({ voiceClient, mongoService, config, deps, contextBuilder: builder }),
+  return { svc: new VoiceService({ voiceClient, mongoService, config, deps, contextBuilder: builder, speakerNames }),
            voiceClient, mongoService, contextBuilder: builder };
 }
 
@@ -122,7 +123,7 @@ async function buildActiveVoiceService(overrides = {}) {
   if (overrides.allowBargeIn !== undefined) configOverrides.allowBargeIn = overrides.allowBargeIn;
   if (overrides.speechEndSilenceMs !== undefined) configOverrides.speechEndSilenceMs = overrides.speechEndSilenceMs;
   if (overrides.clientEndpointing !== undefined) configOverrides.clientEndpointing = overrides.clientEndpointing;
-  const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, overrides.contextBuilder);
+  const { svc, voiceClient, mongoService } = makeService(deps, configOverrides, overrides.contextBuilder, overrides.speakerNames);
   const guildId = 'g1';
   await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
   const g = svc._guilds.get(guildId);
@@ -1007,5 +1008,38 @@ describe('client endpointing toggle', () => {
     const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate, clientEndpointing: true });
     await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
     expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('speaker identity', () => {
+  test('sends SetSpeaker once per speaker change, not per frame', async () => {
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, holderId } = await buildActiveVoiceService({
+      makeVadGate: () => gate,
+      speakerNames: { resolve: () => 'Mike', sanitize: (s) => s },
+    });
+    await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
+    await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
+    expect(session.sendSpeaker).toHaveBeenCalledTimes(1);
+    expect(session.sendSpeaker).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'Mike' }));
+    expect(session.sendAudio).toHaveBeenCalledTimes(2);
+  });
+
+  test('sends no SetSpeaker when the name cannot be resolved', async () => {
+    const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, holderId } = await buildActiveVoiceService({
+      makeVadGate: () => gate,
+      speakerNames: { resolve: () => null, sanitize: (s) => s },
+    });
+    await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
+    expect(session.sendSpeaker).not.toHaveBeenCalled();
+    expect(session.sendAudio).toHaveBeenCalledTimes(1); // audio still flows
+  });
+
+  test('voice persona instructs the model never to read the marker aloud', () => {
+    const { svc } = makeService(makeDeps({}), {}, undefined);
+    const p = svc._appendVoicePersona('BASE');
+    expect(p).toMatch(/\[SPEAKER:/);
+    expect(p.toLowerCase()).toMatch(/never read|do not read|aloud/);
   });
 });
