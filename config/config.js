@@ -111,6 +111,15 @@ module.exports = {
         return {};
       }
     })(),
+
+    // Phase 4 deferral: acknowledge a speaker who interjected while someone
+    // else held the floor. Default OFF -- the qualification threshold below is
+    // meant to be set from the measurement logging before this is flipped on.
+    deferralEnabled: process.env.VOICE_DEFERRAL_ENABLED === 'true',
+    // How much VAD-detected speech a withheld speaker must produce before they
+    // are worth announcing. Filters coughs, one-word backchannels and any echo
+    // that survives Discord's client-side AEC.
+    deferralMinSpeechMs: parseInt(process.env.VOICE_DEFERRAL_MIN_SPEECH_MS || '700', 10),
   },
   discord: {
     token: process.env.DISCORD_TOKEN,

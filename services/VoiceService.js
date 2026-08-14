@@ -309,9 +309,21 @@ class VoiceService {
     // "someone else wants in" signal), but DO NOT forward their audio.
     if (!isHolder) {
       const nv = u.vadGate ? u.vadGate.push(pcm16) : { speaking: false, justStarted: false, justEnded: false };
+      if (nv.speaking) {
+        // 16 kHz mono s16le -> 2 bytes/sample. Accrue only REAL speech, so a
+        // waiter is qualified on how long they actually talked, not on how long
+        // Discord happened to deliver packets.
+        u.waitingMs = (u.waitingMs || 0) + Math.round((pcm16.length / 2) / 16);
+      }
       if (nv.justStarted) {
         g.floor.noteWaiting(userId);
-        logger.debug(`voice: ${userId} spoke while ${g.floor.holder()} holds the floor (guild ${guildId}) — withheld`);
+      }
+      if (nv.justEnded) {
+        // Measurement (ships even with the feature off): is this a real
+        // interjection, or the bot's own voice re-entering someone's mic? The
+        // threshold VOICE_DEFERRAL_MIN_SPEECH_MS is meant to be set from this.
+        const playing = g.player && g.player.state && g.player.state.status;
+        logger.debug(`voice: withheld speech from ${u.name || userId} in guild ${guildId}: ${u.waitingMs || 0}ms while ${g.floor.holder()} holds the floor, bot playback=${playing || 'idle'}`);
       }
       return;
     }

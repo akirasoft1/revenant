@@ -1148,3 +1148,25 @@ describe('speaker identity', () => {
     expect(session2.sendSpeaker).not.toHaveBeenCalledWith(expect.objectContaining({ userId: 'alice' }));
   });
 });
+
+describe('waiting-speaker measurement', () => {
+  test('accrues withheld speech duration on the non-holder per-user context', async () => {
+    const holderGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const otherGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const gates = { alice: holderGate, bob: otherGate };
+    const { svc, guildId } = await buildActiveVoiceService({
+      holder: 'alice',
+      makeVadGate: () => gates.__next || holderGate,
+    });
+    const g = svc._guilds.get(guildId);
+    // seed bob's context with his own gate so the non-holder branch uses it
+    svc._perUser(g, 'bob').vadGate = otherGate;
+
+    // 20ms frame @16k mono = 320 samples = 640 bytes
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
+    await svc._handleUserPcm(guildId, 'bob', to48kStereo(Buffer.alloc(320 * 2)));
+
+    expect(g.floor.waiting()).toContain('bob');
+    expect(svc._perUser(g, 'bob').waitingMs).toBeGreaterThan(0);
+  });
+});
