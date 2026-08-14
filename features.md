@@ -156,6 +156,7 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Unified Chat Context & In-Voice Memory**: The channel-voice system prompt (dynamic, with live profile substituted) is passed into the Live session, so spoken replies match the same learned communication style as text chat. Ranked recall context (Mem0 + channel semantic + facts) and recent conversation history are available to voice turns via the same shared `ChatService.buildTurnContext` builder used for text; in-voice replies are memory-aware just like text responses.
 - **Barge-in / Interruption**: Configurable barge-in support so the bot's own playback can be interrupted by the user speaking
 - **Memory In, Transcripts Out**: Recall context feeds into voice turns the same way it does text chat; every voice exchange lands in the MongoDB message store as a transcript, feeding `/tldr` and recall just like text messages
+- **Long-Running Sessions**: Sliding-window context compression removes the ~15-minute audio-only session limit, and transparent session resumption reconnects seamlessly when a connection drops or the server sends a pre-disconnect warning
 - **Graceful Degradation**: `/voice` reports unavailable if the sidecar is unreachable or `VOICE_ENABLED=false`; no restart needed to flip
 - **Deferred**: idle auto-leave, per-speaker transcript attribution, and dynamic (non-static) voice-profile injection are tracked as follow-ups, not yet implemented
 

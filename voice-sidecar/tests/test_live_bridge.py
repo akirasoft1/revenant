@@ -7,7 +7,8 @@ from google.genai import errors as genai_errors
 from websockets.exceptions import ConnectionClosedOK
 
 from src import voice_pb2
-from src.live_bridge import LiveBridge
+from src.live_bridge import LiveBridge, _ResumeState, _SessionRef
+from src.live_bridge import _SessionStats as _SessionStatsForTest
 
 
 class FakeSession:
@@ -141,6 +142,68 @@ async def test_audio_stream_end_signals_the_session():
     assert session.stream_ends >= 1
 
 
+async def test_pump_client_replays_dropped_audio_stream_end_after_reconnect():
+    # FIX m1: an audio_stream_end dropped during the mid-reconnect gap (no
+    # session_ref.session yet) must be replayed once the new session lands --
+    # otherwise that turn's finalize signal is lost, and the bot (which
+    # already set its own audioEndSent=true) will NOT resend it.
+    session_ref = _SessionRef()  # starts mid-gap: no session yet
+    s2 = FakeSession([])
+
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(audio_stream_end=voice_pb2.AudioStreamEnd())  # dropped
+        await asyncio.sleep(0.02)
+        session_ref.session = s2  # reconnect lands
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x01"))
+        await asyncio.Event().wait()
+
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck")
+    task = asyncio.create_task(
+        bridge._pump_client(req_iter(), session_ref, _SessionStatsForTest()))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert s2.stream_ends == 1, "the dropped audio_stream_end must be replayed exactly once"
+    assert len(s2.sent_audio) == 1, "the normal frame after the replay must still go through"
+
+
+class FailingSendSession:
+    """A session whose send_realtime_input always raises -- models a session
+    that is dying/closing under the client pump (FIX M7)."""
+
+    async def send_realtime_input(self, **kwargs):
+        raise RuntimeError("send failed")
+
+
+async def test_pump_client_warns_once_per_session_then_debug(caplog):
+    # FIX M7: with ~20ms audio frames, a dying session would otherwise churn
+    # the log at DEBUG-per-frame silently. The FIRST send failure in a
+    # session must log at WARNING (a real signal); subsequent ones stay at
+    # DEBUG.
+    session_ref = _SessionRef()
+    session_ref.session = FailingSendSession()
+
+    async def req_iter():
+        for pcm in (b"\x01", b"\x02", b"\x03"):
+            yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=pcm))
+        await asyncio.Event().wait()
+
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck")
+    with caplog.at_level(logging.DEBUG):
+        task = asyncio.create_task(
+            bridge._pump_client(req_iter(), session_ref, _SessionStatsForTest()))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    send_failure_records = [r for r in caplog.records if "send failed" in r.getMessage()]
+    warnings = [r for r in send_failure_records if r.levelno == logging.WARNING]
+    debugs = [r for r in send_failure_records if r.levelno == logging.DEBUG]
+    assert len(warnings) == 1, "only the FIRST send failure in a session should warn"
+    assert len(debugs) == 2, "subsequent failures in the same session should stay at DEBUG"
+
+
 async def test_maps_interrupted():
     session = FakeSession([_msg(interrupted=True)])
     bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
@@ -231,17 +294,26 @@ async def test_pump_exception_emits_error_event():
 
 
 class WsCloseSession(FakeSession):
-    """receive() raises a raw websockets normal-close (code 1000)."""
+    """receive() yields any scripted messages, THEN raises a raw websockets
+    normal-close (code 1000) -- like the real SDK, which raises on every
+    close rather than ever returning from receive() normally."""
     async def receive(self):
+        for m in self._script:
+            yield m
         raise ConnectionClosedOK(None, None)
-        yield  # pragma: no cover - keeps this an async generator
 
 
 class ApiCloseSession(FakeSession):
-    """receive() raises the genai SDK's APIError wrapping a ws 1000 close."""
+    """receive() yields any scripted messages, THEN raises the genai SDK's
+    APIError wrapping a ws 1000 close -- like the real SDK. This is the
+    realistic shape: `AsyncSession.receive()` is `while result :=
+    await self._receive()`, and `_receive()` converts EVERY ConnectionClosed
+    -- clean 1000/1001 *and* abnormal 1006/1011 alike -- into
+    `errors.APIError.raise_error(...)`. It never returns normally."""
     async def receive(self):
+        for m in self._script:
+            yield m
         raise genai_errors.APIError(1000, {"message": "received 1000 (OK)"})
-        yield  # pragma: no cover
 
 
 async def test_normal_ws_close_emits_no_error_event():
@@ -310,3 +382,347 @@ async def test_pump_server_stops_promptly_when_session_closes_cleanly():
     await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=1)
 
     assert any(e.WhichOneof("event") == "turn_complete" for e in out)
+
+
+def test_live_config_enables_compression_and_resumption():
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck")
+    start = SimpleNamespace(voice_name="", system_prompt="", history=[], recall_context="")
+    cfg = bridge._live_config(start)
+    # sliding-window compression keeps audio-only sessions past the ~15 min cap
+    assert cfg.context_window_compression is not None
+    assert cfg.context_window_compression.sliding_window is not None
+    assert cfg.context_window_compression.trigger_tokens == 25000
+    # resumption requested with no handle on a first connect
+    assert cfg.session_resumption is not None
+    assert cfg.session_resumption.handle is None
+
+
+def test_live_config_passes_resumption_handle_on_reconnect():
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck")
+    start = SimpleNamespace(voice_name="", system_prompt="", history=[], recall_context="")
+    cfg = bridge._live_config(start, resumption_handle="abc123")
+    assert cfg.session_resumption.handle == "abc123"
+
+
+def test_live_config_omits_resumption_when_disabled():
+    bridge = LiveBridge(_factory(FakeSession([])), model="m", default_voice="Puck",
+                        resumption_enabled=False)
+    start = SimpleNamespace(voice_name="", system_prompt="", history=[], recall_context="")
+    assert bridge._live_config(start).session_resumption is None
+
+
+def _resume_msg(handle, resumable=True):
+    return SimpleNamespace(data=None, server_content=None,
+                           session_resumption_update=SimpleNamespace(
+                               new_handle=handle, resumable=resumable),
+                           go_away=None)
+
+
+def _go_away_msg(time_left="10s"):
+    return SimpleNamespace(data=None, server_content=None,
+                           session_resumption_update=None,
+                           go_away=SimpleNamespace(time_left=time_left))
+
+
+async def test_pump_server_captures_resumption_handle_and_go_away():
+    session = FakeSession([_resume_msg("h-1"), _go_away_msg("5s")])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    resume = _ResumeState()
+    out = []
+    async def emit(ev): out.append(ev)
+    task = asyncio.create_task(bridge._pump_server(session, emit, _SessionStatsForTest(), resume))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert resume.handle == "h-1"
+    assert resume.going_away is True
+    # neither is surfaced to the bot
+    assert out == []
+
+
+async def test_pump_server_ignores_non_resumable_update():
+    session = FakeSession([_resume_msg("h-x", resumable=False)])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    resume = _ResumeState()
+    async def emit(ev): pass
+    task = asyncio.create_task(bridge._pump_server(session, emit, _SessionStatsForTest(), resume))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert resume.handle is None
+
+
+class ClosingFakeSession(FakeSession):
+    """CAUTION -- NOT a realistic stand-in for the google-genai SDK. A session
+    whose receive() returns normally (StopAsyncIteration) after producing one
+    turn's worth of messages, rather than raising. The real SDK's
+    AsyncSession.receive() never does this -- see ApiCloseSession/
+    WsCloseSession above for the shape the SDK actually produces (it ALWAYS
+    raises on close, clean or abnormal). This double only exists to exercise
+    the reconnect bookkeeping (config carries the handle, no re-seeding,
+    caps) against a close shape that happens not to need `_is_session_drop`
+    at all. Do not use it to validate error/no-error classification -- use
+    the Api/WsCloseSession doubles for that. NOTE: receive() only yields the
+    script on the FIRST call; every call after that yields nothing so
+    `_pump_server`'s `if not produced: break` sees a real close instead of
+    re-yielding the same script forever (which would busy-loop the event
+    loop with no genuine await/suspension point and hang the test)."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self._served = False
+
+    async def receive(self):
+        if not self._served:
+            self._served = True
+            for m in self._script:
+                yield m
+
+
+def _flaky_open_factory(fail_count, session_after):
+    """A session_factory whose `__aenter__` (the connect itself) raises
+    RuntimeError the first `fail_count` times it is invoked, then succeeds
+    and yields `session_after`. Models a failed (re)open -- e.g. an
+    expired/consumed resumption handle or a transient GEAP 503 -- as
+    distinct from a session that opened fine and later ended (FakeSession/
+    Api|WsCloseSession above)."""
+    attempts = SimpleNamespace(count=0)
+
+    @contextlib.asynccontextmanager
+    async def make(model, config):
+        attempts.count += 1
+        if attempts.count <= fail_count:
+            raise RuntimeError(f"open failed (attempt {attempts.count})")
+        yield session_after
+    make.attempts = attempts
+    return make
+
+
+def _multi_factory(sessions):
+    """Yields a different session per `async with` -- records the configs used."""
+    seen = []
+    it = iter(sessions)
+    @contextlib.asynccontextmanager
+    async def make(model, config):
+        seen.append(config)
+        yield next(it)
+    make.configs = seen
+    return make
+
+
+async def _drive_open_ended(bridge, start):
+    """Like `_drive`, but keeps the client stream open (never sends
+    session_end) so a server-side session close is what drives the bridge's
+    reconnect decision, not the client asking to stop."""
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=start)
+        await asyncio.Event().wait()   # keep the client stream open across the reconnect
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    return out
+
+
+async def test_reconnects_with_handle_and_does_not_reseed_history():
+    s1 = ClosingFakeSession([_resume_msg("h-1")])   # gives a handle, then ends
+    s2 = FakeSession([])                             # resumed session: blocks (stays open)
+    factory = _multi_factory([s1, s2])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1", history=[
+        voice_pb2.Turn(role="user", content="earlier question")])
+    out = await _drive_open_ended(bridge, start)
+    # reconnected: two sessions opened, second carried the handle
+    assert len(factory.configs) == 2
+    assert factory.configs[0].session_resumption.handle is None
+    assert factory.configs[1].session_resumption.handle == "h-1"
+    # history seeded ONLY on the first connect
+    assert len(s1.seeded) == 1
+    assert s2.seeded == []
+    # transparent: no error surfaced to the bot
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_no_reconnect_without_a_handle():
+    s1 = ClosingFakeSession([])       # ends with no resumption handle
+    s2 = FakeSession([])
+    factory = _multi_factory([s1, s2])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    assert len(factory.configs) == 1  # gave up rather than blind-reconnecting
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_reconnects_are_capped():
+    # every session ends immediately but hands back a handle
+    sessions = [ClosingFakeSession([_resume_msg(f"h-{i}")]) for i in range(10)]
+    factory = _multi_factory(sessions)
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=2)
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    assert len(factory.configs) == 3   # initial + 2 reconnects, then stop
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_client_session_end_exits_even_with_a_resumption_handle():
+    # Invariant (d): pump_in completing (client asked to end) must exit the
+    # loop, never trigger a reconnect -- even though a resumption handle is
+    # already sitting in `resume` from a server message this same session
+    # already delivered. Client intent to stop always wins.
+    session = FakeSession([_resume_msg("h-1")])  # sets resume.handle, then blocks
+    factory = _multi_factory([session, FakeSession([])])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u1"))
+    end = voice_pb2.VoiceClientEvent(session_end=voice_pb2.SessionEnd())
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield start
+        await asyncio.sleep(0.05)  # let pump_out observe the resume handle first
+        yield end
+    await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=1)
+    assert len(factory.configs) == 1  # no reconnect, despite a handle being available
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_realistic_close_reconnects_with_handle_and_no_error_to_bot():
+    """FIX C1 regression test. Against the REAL google-genai SDK,
+    AsyncSession.receive() never returns normally on a closed connection --
+    it always RAISES (APIError wrapping the ws close code, clean 1000/1001
+    or abnormal alike). ClosingFakeSession (used by the other reconnect
+    tests above) models a close shape the SDK does not produce and so could
+    not catch this bug; ApiCloseSession is the realistic double. Before the
+    C1 fix, the blanket `for t in done: if exc: raise exc` re-raised this
+    immediately and escaped the whole reconnect loop -- only ONE session was
+    ever opened, the reconnect branch was unreachable."""
+    s1 = ApiCloseSession([_resume_msg("h-1")])  # yields a handle, THEN raises the close
+    s2 = FakeSession([])                          # resumed session stays open
+    factory = _multi_factory([s1, s2])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    # two sessions opened -- the reconnect branch was actually reached
+    assert len(factory.configs) == 2
+    assert factory.configs[0].session_resumption.handle is None
+    assert factory.configs[1].session_resumption.handle == "h-1"
+    # transparent: the drop must not surface to the bot as an ErrorEvent
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_reconnect_swap_keeps_client_stream_flowing_to_new_session():
+    """FIX C1 regression test (_SessionRef contract). After a realistic
+    (raising) server-side close-and-reconnect, client audio sent AFTER the
+    swap must land in the SECOND session, not be lost or sent to the first
+    -- proving the bot's single long-lived gRPC stream survives underneath
+    the session swap `_SessionRef` exists to support."""
+    s1 = ApiCloseSession([_resume_msg("h-1")])
+    s2 = FakeSession([])
+    factory = _multi_factory([s1, s2])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=start)
+        await asyncio.sleep(0.1)  # let s1 close and the reconnect land on s2
+        yield voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\xaa\xbb"))
+        await asyncio.Event().wait()  # keep the client stream open
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.15)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert s1.sent_audio == []
+    assert len(s2.sent_audio) == 1
+    assert s2.sent_audio[0].data == b"\xaa\xbb"
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_failed_reopen_is_retried_with_backoff_against_reconnect_budget():
+    """FIX I2 regression test. Before this fix, the `async with
+    self._session_factory(...)` at the top of the reconnect loop was outside
+    any try -- a failed (re)open (expired/consumed handle, a GEAP 503 spike)
+    escaped straight to the outer handler as a fatal ErrorEvent, and
+    `_max_reconnects` never applied to it (it only counted successful
+    opens). Now a failed open is retried, counted against the SAME budget,
+    with backoff -- and the session ultimately comes up with no error
+    surfaced to the bot."""
+    session_after = FakeSession([])  # opens fine on the 2nd attempt, then blocks
+    factory = _flaky_open_factory(fail_count=1, session_after=session_after)
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=5)
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=start)
+        await asyncio.Event().wait()  # keep the client stream open
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.8)  # >= the ~0.5s (+jitter) backoff before the retry
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert factory.attempts.count == 2  # 1 failed open + 1 successful retry
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_failed_first_open_still_seeds_context_on_successful_retry():
+    """Regression test for a bug introduced alongside I2. `resume.reconnects`
+    is the shared reconnect/retry BUDGET counter -- I2 correctly makes a
+    FAILED (re)open increment it too, so open-failures consume the budget.
+    But seeding was (wrongly) gated on that SAME counter being 0. So: first
+    __aenter__ fails -> resume.reconnects becomes 1 -> the successful retry
+    then takes the "resumed, context carried by handle" branch and seeds
+    NOTHING, even though resume.handle is None (there is no handle -- this
+    is not a real resume). History + recall_context must still be seeded on
+    the first session that actually opens, regardless of how many failed
+    open attempts preceded it."""
+    session_after = FakeSession([])  # opens fine on the 2nd attempt, then blocks
+    factory = _flaky_open_factory(fail_count=1, session_after=session_after)
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=5)
+    start = voice_pb2.SessionStart(
+        user_id="u1",
+        recall_context="MEM",
+        history=[
+            voice_pb2.Turn(role="user", content="hey"),
+            voice_pb2.Turn(role="assistant", content="hi"),
+        ],
+    )
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=start)
+        await asyncio.Event().wait()  # keep the client stream open
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(0.8)  # >= the ~0.5s (+jitter) backoff before the retry
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert factory.attempts.count == 2  # 1 failed open + 1 successful retry
+    seeded_texts = [turns.parts[0].text for turns, _turn_complete in session_after.seeded]
+    assert seeded_texts == ["hey", "hi", "MEM"]
+    assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_reopen_failure_budget_exhausted_surfaces_as_error():
+    """FIX I2 regression test (the give-up path). When every retry attempt
+    keeps failing to (re)open, the budget must still be enforced -- ending
+    the session with an ErrorEvent instead of retrying forever."""
+    factory = _flaky_open_factory(fail_count=99, session_after=FakeSession([]))
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=1)
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u1"))
+    out = []
+    async def emit(ev): out.append(ev)
+    async def req_iter():
+        yield start
+        await asyncio.Event().wait()
+    # 2 attempts total (initial + 1 retry) before the budget (max_reconnects=1)
+    # is exhausted; each retry backs off ~0.5s -- give it a couple seconds.
+    await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=3)
+    assert factory.attempts.count == 2
+    assert any(ev.WhichOneof("event") == "error" for ev in out)
