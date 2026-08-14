@@ -11,7 +11,8 @@ class VoiceSlashCommand extends BaseSlashCommand {
         .setName('voice')
         .setDescription('Talk to me in a voice channel')
         .addSubcommand((s) => s.setName('join').setDescription('Join your current voice channel'))
-        .addSubcommand((s) => s.setName('leave').setDescription('Leave the voice channel')),
+        .addSubcommand((s) => s.setName('leave').setDescription('Leave the voice channel'))
+        .addSubcommand((s) => s.setName('listen').setDescription('(admin) Listen now — no wake word, stays open until /voice leave')),
       cooldown: 5,
       // A cold-cache /voice join can trigger a slow ONNX wake-word model load
       // (see services/voice/wakeword.js) that saturates the bot's CPU limit
@@ -43,6 +44,25 @@ class VoiceSlashCommand extends BaseSlashCommand {
         await this.sendReply(interaction, { content: `Joined <#${channel.id}>. Say "${wake}" to get my attention.`, ephemeral: true });
       } catch (e) {
         await this.sendError(interaction, `Couldn't join: ${e.message}`);
+      }
+      return;
+    }
+    if (sub === 'listen') {
+      const isAdmin = context?.config ? this.isAdmin(interaction.user.id, context.config) : false;
+      if (!isAdmin) {
+        await this.sendReply(interaction, { content: 'The `/voice listen` override is admin-only.', ephemeral: true });
+        return;
+      }
+      const channel = interaction.member?.voice?.channel;
+      if (!channel) {
+        await this.sendReply(interaction, { content: 'Join a voice channel first, then run `/voice listen`.', ephemeral: true });
+        return;
+      }
+      try {
+        await this.voiceService.listen({ channel, guildId: interaction.guildId, userId: interaction.user.id });
+        await this.sendReply(interaction, { content: `Listening in <#${channel.id}> — no wake word needed. I'll keep listening until \`/voice leave\`.`, ephemeral: true });
+      } catch (e) {
+        await this.sendError(interaction, `Couldn't start listening: ${e.message}`);
       }
       return;
     }

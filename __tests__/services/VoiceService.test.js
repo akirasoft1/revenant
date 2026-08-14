@@ -15,7 +15,7 @@ function makeDeps(overrides = {}) {
     createAudioResource: jest.fn((s) => ({ s })),
     StreamType: { Raw: 'raw' },
     EndBehaviorType: { AfterSilence: 1 },
-    opusDecoderFactory: () => new EventEmitter(),
+    opusDecoderFactory: () => ({ decode: jest.fn((buf) => buf) }),
     makeWakeGate: () => ({ push: jest.fn(() => false), reset: jest.fn() }),
     now: () => 0,
     setInterval: jest.fn(() => 1),
@@ -29,7 +29,7 @@ function makeService(deps, configOverrides = {}, contextBuilder) {
   const voiceClient = {
     converse: jest.fn(() => {
       const s = new EventEmitter();
-      s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.end = jest.fn();
+      s.sendStart = jest.fn(); s.sendAudio = jest.fn(); s.sendAudioStreamEnd = jest.fn(); s.end = jest.fn();
       return s;
     }),
     isHealthy: jest.fn(() => true),
@@ -42,6 +42,81 @@ function makeService(deps, configOverrides = {}, contextBuilder) {
   return { svc: new VoiceService({ voiceClient, mongoService, config, deps, contextBuilder: builder }),
            voiceClient, mongoService, contextBuilder: builder };
 }
+
+// --- VAD-driven active-branch test harness (Task 5/6) ---
+
+// Fake VAD gate whose push() returns pre-scripted transition objects in order
+// (the last entry repeats once the sequence is exhausted).
+function fakeVadGate(sequence) {
+  let i = 0;
+  return { push: jest.fn(() => sequence[Math.min(i++, sequence.length - 1)]), reset: jest.fn(() => { i = 0; }) };
+}
+
+// 16 kHz mono s16le -> 48 kHz stereo s16le. _handleUserPcm always downsamples
+// its input back to 16k mono before anything (wake gate / VAD gate) sees it,
+// and the fake gates above ignore their input entirely -- this just needs to
+// produce a plausibly-shaped 48k-stereo buffer for the call signature.
+function to48kStereo(buf16Mono) {
+  const nSamples = Math.floor(buf16Mono.length / 2);
+  const out = Buffer.alloc(nSamples * 3 * 4);
+  let w = 0;
+  for (let i = 0; i < nSamples; i++) {
+    const s = buf16Mono.readInt16LE(i * 2);
+    for (let k = 0; k < 3; k++) { out.writeInt16LE(s, w); out.writeInt16LE(s, w + 2); w += 4; }
+  }
+  return out;
+}
+
+// Build a VoiceService already past the wake word -- a live gRPC session is
+// open and the machine is 'active' -- ready to exercise the VAD-driven active
+// branch of _handleUserPcm directly. The priming call goes through the wake
+// gate (always fires), never the VAD gate, so a caller-supplied VAD sequence
+// is untouched by it.
+async function buildActiveVoiceService(overrides = {}) {
+  const wakeGate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({
+    makeWakeGate: () => wakeGate,
+    ...(overrides.makeVadGate ? { makeVadGate: overrides.makeVadGate } : {}),
+    ...(overrides.now ? { now: overrides.now } : {}),
+  });
+  const configOverrides = {};
+  if (overrides.allowBargeIn !== undefined) configOverrides.allowBargeIn = overrides.allowBargeIn;
+  if (overrides.speechEndSilenceMs !== undefined) configOverrides.speechEndSilenceMs = overrides.speechEndSilenceMs;
+  const { svc, voiceClient } = makeService(deps, configOverrides, overrides.contextBuilder);
+  const guildId = 'g1';
+  await svc.join({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId });
+  await svc._handleUserPcm(guildId, 'primer', Buffer.alloc(48 * 4)); // wake -> active, session opens
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+  // The primer frame itself gets captured into the pre-roll and flushed via
+  // sendAudio when the session opens (see the "pre-roll" test above) -- clear
+  // that so callers see clean counts for the frames THEY send.
+  session.sendAudio.mockClear();
+  if (overrides.playing) player.state = { status: 'playing' };
+  return { svc, guildId, session, player, playerStop: player.stop, deps, voiceClient };
+}
+
+test('active turn streams ALL frames continuously once speech starts (incl. trailing silence)', async () => {
+  // gate: frame1 opens the turn, frames 2-3 are silence but still forwarded
+  const gate = fakeVadGate([
+    { speaking: true, justStarted: true, justEnded: false },
+    { speaking: false, justStarted: false, justEnded: false },
+    { speaking: false, justStarted: false, justEnded: false },
+  ]);
+  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate });
+  const frame = Buffer.alloc(320 * 2); // ~20ms @16k
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(frame));
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(frame));
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(frame));
+  expect(session.sendAudio).toHaveBeenCalledTimes(3); // NO frame dropped, incl. the 2 silent ones
+});
+
+test('no frames are forwarded before speech starts (no ambient streaming between turns)', async () => {
+  const gate = fakeVadGate([{ speaking: false, justStarted: false, justEnded: false }]);
+  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate });
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudio).not.toHaveBeenCalled();
+});
 
 test('isEnabled reflects config', () => {
   const deps = makeDeps();
@@ -111,8 +186,11 @@ test('voice start uses the shared context builder', async () => {
   await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
   const session = voiceClient.converse.mock.results[0].value;
   expect(contextBuilder).toHaveBeenCalled();
-  expect(session.sendStart).toHaveBeenCalledWith(expect.objectContaining({
-    systemPrompt: 'DYN', recallContext: 'MEM', history: [{ role: 'user', content: 'a' }] }));
+  const sent = session.sendStart.mock.calls[0][0];
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('DYN'));       // dynamic persona preserved
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('Jarvis'));    // voice-persona note appended (wake "hey jarvis")
+  expect(sent.systemPrompt).toEqual(expect.stringContaining('web search')); // proactive-search directive appended
+  expect(sent).toEqual(expect.objectContaining({ recallContext: 'MEM', history: [{ role: 'user', content: 'a' }] }));
 });
 
 test('output transcript is persisted to the message store on turnComplete', async () => {
@@ -328,8 +406,8 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
   process.on('unhandledRejection', onUnhandledRejection);
   try {
     const gate = { push: jest.fn(() => true), reset: jest.fn() }; // fire wake immediately
-    const rxStream = new EventEmitter(); rxStream.pipe = jest.fn();
-    const decoder = new EventEmitter();
+    const rxStream = new EventEmitter();
+    const decoder = { decode: jest.fn((buf) => buf) };
     const connection = new EventEmitter();
     connection.subscribe = jest.fn();
     connection.receiver = { subscribe: jest.fn(() => rxStream), speaking: new EventEmitter() };
@@ -342,19 +420,18 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
     });
     const { svc, voiceClient } = makeService(deps);
     // Force the wake path to throw synchronously inside _startSession (invoked via
-    // _apply, which _handleUserPcm awaits internally but whose *caller* -- the decoder's
-    // 'data' listener wired in join() -- does not await or catch).
+    // _apply, which _handleUserPcm awaits internally but whose *caller* -- the receive
+    // stream's 'data' listener wired in join() -- does not await or catch).
     voiceClient.converse.mockImplementation(() => { throw new Error('converse boom'); });
 
     await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
 
     // Wire up exactly as production join() does: a user starts speaking.
     connection.receiver.speaking.emit('start', 'user1');
-    expect(rxStream.pipe).toHaveBeenCalledWith(decoder);
 
-    // This is the exact call site under test: decoder 'data' -> this._handleUserPcm(...).
+    // This is the exact call site under test: stream 'data' -> decode -> this._handleUserPcm(...).
     // It must not throw synchronously and must not produce an unhandled rejection.
-    expect(() => decoder.emit('data', Buffer.alloc(1024))).not.toThrow();
+    expect(() => rxStream.emit('data', Buffer.alloc(1024))).not.toThrow();
 
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
@@ -365,4 +442,260 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
   } finally {
     process.removeListener('unhandledRejection', onUnhandledRejection);
   }
+});
+
+test('an undecodable opus frame is dropped without crashing, and later good frames still decode', async () => {
+  // Regression for the live crash: Discord sends non-Opus frames (RTP header
+  // extension / silence markers) that make the decoder throw "The compressed
+  // data passed is corrupted". Previously piped through a Transform, that throw
+  // was an unhandled stream error that crashed the whole bot process; per-packet
+  // decode must drop the bad frame and keep decoding the good ones.
+  const unhandledRejections = [];
+  const onUnhandledRejection = (err) => unhandledRejections.push(err);
+  process.on('unhandledRejection', onUnhandledRejection);
+  try {
+    const gate = { push: jest.fn(() => false), reset: jest.fn() };
+    const rxStream = new EventEmitter();
+    const decode = jest.fn()
+      .mockImplementationOnce(() => { throw new Error('The compressed data passed is corrupted'); })
+      .mockImplementationOnce((buf) => buf);
+    const decoder = { decode };
+    const connection = new EventEmitter();
+    connection.subscribe = jest.fn();
+    connection.receiver = { subscribe: jest.fn(() => rxStream), speaking: new EventEmitter() };
+    connection.destroy = jest.fn();
+
+    const deps = makeDeps({
+      makeWakeGate: () => gate,
+      joinVoiceChannel: jest.fn(() => connection),
+      opusDecoderFactory: () => decoder,
+    });
+    const { svc } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    connection.receiver.speaking.emit('start', 'user1');
+
+    // Corrupt frame: must NOT throw and must NOT reach the wake gate.
+    expect(() => rxStream.emit('data', Buffer.from([0xbe, 0xde, 0xff]))).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+    expect(gate.push).not.toHaveBeenCalled();
+
+    // A good frame after the bad one still decodes and reaches the wake gate.
+    rxStream.emit('data', Buffer.alloc(1024));
+    await new Promise((r) => setImmediate(r));
+    expect(gate.push).toHaveBeenCalledTimes(1);
+
+    expect(unhandledRejections).toHaveLength(0);
+  } finally {
+    process.removeListener('unhandledRejection', onUnhandledRejection);
+  }
+});
+
+test('repeated speaking-start for the same user does not re-subscribe until the subscription ends (no listener stacking)', async () => {
+  const rxStream = new EventEmitter();
+  const subscribe = jest.fn(() => rxStream);
+  const connection = new EventEmitter();
+  connection.subscribe = jest.fn();
+  connection.receiver = { subscribe, speaking: new EventEmitter() };
+  connection.destroy = jest.fn();
+
+  const deps = makeDeps({ joinVoiceChannel: jest.fn(() => connection) });
+  const { svc } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+  // Two starts for the same user while the subscription is still open: only the
+  // first subscribes; the second is a no-op (prevents the AudioReceiveStream
+  // listener leak observed live).
+  connection.receiver.speaking.emit('start', 'user1');
+  connection.receiver.speaking.emit('start', 'user1');
+  expect(subscribe).toHaveBeenCalledTimes(1);
+
+  // Once the subscription ends, a subsequent start re-subscribes.
+  rxStream.emit('end');
+  connection.receiver.speaking.emit('start', 'user1');
+  expect(subscribe).toHaveBeenCalledTimes(2);
+});
+
+test('audio chunks within a turn play as ONE continuous resource, not one per chunk', async () => {
+  // Regression for garbled playback: Gemini Live streams many small PCM chunks
+  // per turn. Creating a new AudioResource + player.play() per chunk made each
+  // chunk interrupt the previous one (only slivers heard -> garbled noise).
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024)); // wake -> open session
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+
+  // Three audio chunks in one turn -> exactly ONE resource and ONE play().
+  session.emit('audio', Buffer.alloc(480));
+  session.emit('audio', Buffer.alloc(480));
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  expect(deps.createAudioResource).toHaveBeenCalledTimes(1);
+  expect(player.play).toHaveBeenCalledTimes(1);
+
+  // Turn ends -> stream closed; the next turn's first chunk opens a fresh one.
+  session.emit('turnComplete');
+  await new Promise((r) => setImmediate(r));
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  expect(deps.createAudioResource).toHaveBeenCalledTimes(2);
+  expect(player.play).toHaveBeenCalledTimes(2);
+});
+
+test('barge-in (interrupted) stops playback and drops the buffered stream', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+  const session = voiceClient.converse.mock.results[0].value;
+  const player = deps.createAudioPlayer.mock.results[0].value;
+
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  session.emit('interrupted');
+  await new Promise((r) => setImmediate(r));
+  expect(player.stop).toHaveBeenCalled();
+
+  // After a barge-in, the next chunk opens a brand-new resource.
+  session.emit('audio', Buffer.alloc(480));
+  await new Promise((r) => setImmediate(r));
+  expect(deps.createAudioResource).toHaveBeenCalledTimes(2);
+});
+
+test('a second /voice join for the same guild is idempotent -- no second connection or re-wiring', async () => {
+  const joinVoiceChannel = jest.fn(() => {
+    const c = new EventEmitter();
+    c.subscribe = jest.fn();
+    c.receiver = { subscribe: jest.fn(() => new EventEmitter()), speaking: new EventEmitter() };
+    c.destroy = jest.fn();
+    return c;
+  });
+  const deps = makeDeps({ joinVoiceChannel });
+  const { svc } = makeService(deps);
+  const channel = { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } };
+
+  await svc.join({ channel, guildId: 'g1' });
+  await svc.join({ channel, guildId: 'g1' });
+
+  expect(joinVoiceChannel).toHaveBeenCalledTimes(1);
+});
+
+test('pre-roll: audio buffered before the wake is flushed into the session on open', async () => {
+  // fire the wake on the 3rd pushed frame
+  let n = 0;
+  const gate = { push: jest.fn(() => (++n === 3)), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc, voiceClient } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // pre-roll frame 1
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // pre-roll frame 2
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(48 * 4)); // frame 3 -> wake -> open + flush
+  await new Promise((r) => setImmediate(r));
+  const session = voiceClient.converse.mock.results[0].value;
+  // all three pre-roll frames (including the wake frame) are flushed to the session
+  expect(session.sendAudio).toHaveBeenCalledTimes(3);
+});
+
+test('listen() opens a session immediately with no wake word', async () => {
+  const deps = makeDeps();
+  const { svc, voiceClient } = makeService(deps);
+  const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
+  expect(engaged).toBe(true);
+  expect(voiceClient.converse).toHaveBeenCalled();        // session opened without any gate/wake
+  const session = voiceClient.converse.mock.results[0].value;
+  expect(session.sendStart).toHaveBeenCalled();
+});
+
+test('listen() when already active is a no-op (returns false)', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate });
+  const { svc } = makeService(deps);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024)); // wake -> active
+  const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
+  expect(engaged).toBe(false);
+});
+
+test('half-duplex: no user audio is streamed while the bot is playing its reply (VAD gate not even consulted)', async () => {
+  const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+  const { svc, guildId, session, player } = await buildActiveVoiceService({ makeVadGate: () => gate });
+
+  // Bot is speaking -> a would-be-speech frame is NOT forwarded (no echo/loop,
+  // no barge-in without opt-in), and the half-duplex early-return happens
+  // BEFORE the VAD gate is even consulted.
+  player.state = { status: 'playing' };
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudio).not.toHaveBeenCalled();
+  expect(gate.push).not.toHaveBeenCalled();
+
+  // Bot finishes -> input flows again.
+  player.state = { status: 'idle' };
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudio).toHaveBeenCalledTimes(1);
+  expect(gate.push).toHaveBeenCalledTimes(1);
+});
+
+test('barge-in enabled (allowBargeIn): speech IS streamed while the bot is playing', async () => {
+  const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate, allowBargeIn: true, playing: true });
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudio).toHaveBeenCalledTimes(1); // real speech interrupts
+});
+
+test('audio_stream_end fires speechEndSilenceMs after the last speaking frame and clears turnActive', async () => {
+  let t = 1000;
+  const now = () => t;
+  const gate = fakeVadGate([
+    { speaking: true, justStarted: true, justEnded: false },
+    { speaking: true, justStarted: true, justEnded: false }, // re-arm for the 2nd turn below
+  ]);
+  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate, now, speechEndSilenceMs: 800 });
+
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2))); // opens the turn, lastSpeechAt = 1000
+  expect(session.sendAudio).toHaveBeenCalledTimes(1);
+
+  // Before the window elapses, no end signal.
+  t = 1700; svc._tick(guildId);
+  expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
+
+  // After the window, exactly one end signal (idempotent until new speech), and
+  // the turn stops forwarding (turnActive clears) until the next onset.
+  t = 1900; svc._tick(guildId);
+  t = 2300; svc._tick(guildId);
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  expect(svc._guilds.get(guildId).turnActive).toBe(false);
+
+  // New speech re-arms it; another silence window sends a second signal.
+  t = 2400; await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  t = 3300; svc._tick(guildId);
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(2);
+});
+
+test('Silero justEnded fires audio_stream_end immediately as the early endpointer, without the _tick timer elapsing', async () => {
+  const gate = fakeVadGate([
+    { speaking: true, justStarted: true, justEnded: false },
+    { speaking: false, justStarted: false, justEnded: true },
+  ]);
+  const { svc, guildId, session } = await buildActiveVoiceService({ makeVadGate: () => gate });
+
+  // Frame 1: speech onset opens the turn; no end signal yet.
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudioStreamEnd).not.toHaveBeenCalled();
+
+  // Frame 2: Silero declares end-of-speech (justEnded) -- audio_stream_end
+  // fires right here, with NO _tick() call in between (i.e. not via the
+  // silence-timer backstop).
+  await svc._handleUserPcm(guildId, 'u1', to48kStereo(Buffer.alloc(320 * 2)));
+  expect(session.sendAudioStreamEnd).toHaveBeenCalledTimes(1);
+  expect(svc._guilds.get(guildId).turnActive).toBe(false);
+});
+
+test('interrupted server event flushes playback (stopPlayback)', async () => {
+  const { svc, guildId, session, playerStop } = await buildActiveVoiceService({});
+  session.emit('interrupted');
+  await new Promise((r) => setImmediate(r));
+  expect(playerStop).toHaveBeenCalled(); // _stopPlayback -> player.stop()
 });

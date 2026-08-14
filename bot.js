@@ -250,8 +250,13 @@ class DiscordBot {
         const VoiceClient = require('./services/VoiceClient');
         const VoiceService = require('./services/VoiceService');
         const dv = require('@discordjs/voice');
-        const prism = require('prism-media');
+        // Per-packet Opus decoder (@discordjs/opus) rather than prism-media's
+        // stream Transform: VoiceService decodes each received frame in a
+        // try/catch so an undecodable frame is dropped instead of throwing an
+        // unhandled stream 'error' that crashes the whole bot process.
+        const { OpusEncoder } = require('@discordjs/opus');
         const { createOpenWakeWordEngine, WakeWordGate, preloadOpenWakeWord } = require('./services/voice/wakeword');
+        const { createSileroVadEngine, VoiceActivityGate, preloadSileroVad } = require('./services/voice/SileroVad');
         // Warn (don't fail) if the wake-phrase label doesn't match the wake model
         // filename, e.g. VOICE_WAKE_WORD="alexa" but VOICE_WAKE_MODEL points at
         // hey_jarvis -> /voice would announce the wrong phrase.
@@ -275,13 +280,22 @@ class DiscordBot {
             createAudioResource: dv.createAudioResource,
             StreamType: dv.StreamType,
             EndBehaviorType: dv.EndBehaviorType,
-            opusDecoderFactory: () => new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }),
+            VoiceConnectionStatus: dv.VoiceConnectionStatus,
+            opusDecoderFactory: () => new OpusEncoder(48000, 2),
             makeWakeGate: () => new WakeWordGate(createOpenWakeWordEngine({
               wakeModelPath: config.voice.wakeModel,
               melModelPath: config.voice.melModel,
               embeddingModelPath: config.voice.embeddingModel,
               threshold: config.voice.wakeThreshold,
             })),
+            makeVadGate: () => new VoiceActivityGate(
+              createSileroVadEngine({ modelPath: config.voice.vad.modelPath }),
+              {
+                threshold: config.voice.vad.threshold,
+                minSpeechFrames: config.voice.vad.minSpeechFrames,
+                minSilenceFrames: config.voice.vad.minSilenceFrames,
+              },
+            ),
             now: () => Date.now(), setInterval, clearInterval,
             getVoiceConnection: dv.getVoiceConnection,
           },
@@ -302,6 +316,8 @@ class DiscordBot {
           embeddingModelPath: config.voice.embeddingModel,
         }).then(() => logger.info('voice: wake-word models preloaded'))
           .catch((e) => logger.warn(`voice: wake-word model preload failed (will load lazily on first join): ${e.message}`));
+        preloadSileroVad({ modelPath: config.voice.vad.modelPath }).catch((e) =>
+          logger.warn(`voice: Silero VAD preload failed: ${e.message}`));
       } catch (e) {
         logger.error(`voice init failed: ${e.message}`);
         this.voiceClient = null;

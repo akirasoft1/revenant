@@ -185,14 +185,37 @@ test('real wake IS detected when frames flow with natural event-loop spacing (no
   expect(fired).toBe(true);
 });
 
-test('busy-drop: a synchronous burst of process() schedules only ONE inference', async () => {
+test('a synchronous burst of process() queues and processes ALL frames in order (no drops)', async () => {
+  // Root-cause fix: openWakeWord needs contiguous frames. The gate delivers
+  // frames in synchronous bursts; the old drop-when-busy design ran ONE and
+  // dropped the rest, starving the wake window (verified live at ~70% dropped ->
+  // score ~0 on audio that scores ~0.99 when fed contiguously). The queue must
+  // now process every frame.
   const { backend, calls } = makeFakeBackend({ score: 0.9 });
   const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
   await engine.ready();
   for (let i = 0; i < 50; i++) engine.process(frame1280()); // no yield between calls
   await engine.whenIdle();
-  // Single in-flight + drop-when-busy: 49 frames dropped, no queue growth.
-  expect(calls.filter((c) => c.model === 'mel').length).toBe(1);
+  expect(calls.filter((c) => c.model === 'mel').length).toBe(50); // ALL processed, none dropped
+  expect(engine.frameStats().droppedBusy).toBe(0);
+});
+
+test('queue overflow drops the OLDEST frame and counts it (bounded memory)', async () => {
+  // Never-resolving inferences so the queue can only grow -> exercises the cap.
+  const backend = {
+    createSession: () => Promise.resolve({
+      inputNames: ['x'], outputNames: ['y'],
+      inputMetadata: [{ name: 'x', isTensor: true, type: 'float32', shape: [1, 16, 96] }],
+      run: () => new Promise(() => {}), // never resolves -> drainer parks on the 1st frame
+    }),
+    tensor: (t, d, dims) => ({ t, d, dims }),
+  };
+  const engine = createOpenWakeWordEngine({ ...paths, threshold: 0.5, sessionFactory: backend });
+  await engine.ready();
+  for (let i = 0; i < 300; i++) engine.process(frame1280()); // 300 > MAX_QUEUE (256)
+  const fs = engine.frameStats();
+  expect(fs.scheduled).toBe(300);
+  expect(fs.droppedBusy).toBeGreaterThan(0); // overflow shed the oldest
 });
 
 test('REGRESSION: an inference that resolves high AFTER reset() does NOT surface a spurious wake', async () => {

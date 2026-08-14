@@ -46,4 +46,5 @@ spec:
               kubernetes.io/metadata.name: dynatrace
       ports:
         - { protocol: TCP, port: 4317 }
-        - { protocol: TCP, port: 4318 }
+        - { protocol: TCP, port: 4317 }  # OTLP gRPC (tracing.py uses the gRPC exporter)
+        - { protocol: TCP, port: 4318 }  # OTLP HTTP

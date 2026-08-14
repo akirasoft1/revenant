@@ -13,13 +13,14 @@ function samples(buf) {
 }
 
 describe('downsampleTo16kMono', () => {
-  test('collapses stereo to mono and decimates 3:1', () => {
-    // 6 stereo frames (L,R) -> mono avg -> 2 output samples (6/3)
+  test('collapses stereo to mono then 3-tap low-pass averages before decimating', () => {
+    // 6 stereo frames (L,R) -> mono avg -> [150,0,0,500,0,0] -> 2 output samples,
+    // each the mean of its group of 3 mono samples (the anti-alias low-pass).
     const stereo = pcm([100, 200, 0, 0, 0, 0, 400, 600, 0, 0, 0, 0]);
     const out = samples(downsampleTo16kMono(stereo));
-    expect(out.length).toBe(2);           // 6 mono samples decimated by 3
-    expect(out[0]).toBe(150);             // avg(100,200) from first frame
-    expect(out[1]).toBe(500);             // avg(400,600) from fourth frame
+    expect(out.length).toBe(2);
+    expect(out[0]).toBe(50);              // round(mean(150,0,0))
+    expect(out[1]).toBe(167);             // round(mean(500,0,0))
   });
 
   test('output byte length is input/6', () => {

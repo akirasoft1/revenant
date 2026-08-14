@@ -16,7 +16,8 @@ function fakeInteraction({ inChannel = true, sub = 'join' } = {}) {
 describe('/voice', () => {
   let voiceService, command;
   beforeEach(() => {
-    voiceService = { isEnabled: jest.fn(() => true), join: jest.fn().mockResolvedValue(), leave: jest.fn().mockResolvedValue() };
+    voiceService = { isEnabled: jest.fn(() => true), join: jest.fn().mockResolvedValue(), leave: jest.fn().mockResolvedValue(),
+      listen: jest.fn().mockResolvedValue(true), wakeWord: jest.fn(() => 'hey jarvis') };
     command = new VoiceSlashCommand(voiceService);
   });
 
@@ -49,6 +50,29 @@ describe('/voice', () => {
 
   test('metadata', () => {
     expect(command.data.name).toBe('voice');
+  });
+
+  // --- /voice listen admin override ----------------------------------------
+  const adminCtx = { config: { discord: { adminUserIds: ['u1'] } } };
+
+  test('listen: non-admin is rejected and does not start listening', async () => {
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, { config: { discord: { adminUserIds: ['someone-else'] } } });
+    expect(voiceService.listen).not.toHaveBeenCalled();
+  });
+
+  test('listen: admin in a channel starts continuous listen', async () => {
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    expect(voiceService.listen).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: i.member.voice.channel, guildId: 'g1', userId: 'u1' })
+    );
+  });
+
+  test('listen: admin not in a channel errors, does not start listening', async () => {
+    const i = fakeInteraction({ inChannel: false, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    expect(voiceService.listen).not.toHaveBeenCalled();
   });
 
   // --- join-latency fix: /voice must auto-defer -----------------------------

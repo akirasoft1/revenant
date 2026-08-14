@@ -1,6 +1,10 @@
 import asyncio
 import contextlib
+import logging
 from types import SimpleNamespace
+
+from google.genai import errors as genai_errors
+from websockets.exceptions import ConnectionClosedOK
 
 from src import voice_pb2
 from src.live_bridge import LiveBridge
@@ -11,12 +15,16 @@ class FakeSession:
         self._script = script            # list of server msgs to yield on first receive()
         self.sent_audio = []
         self.seeded = []
+        self.stream_ends = 0
 
     async def send_client_content(self, *, turns, turn_complete):
         self.seeded.append((turns, turn_complete))
 
-    async def send_realtime_input(self, *, audio):
-        self.sent_audio.append(audio)
+    async def send_realtime_input(self, *, audio=None, audio_stream_end=None):
+        if audio is not None:
+            self.sent_audio.append(audio)
+        if audio_stream_end:
+            self.stream_ends += 1
 
     async def receive(self):
         for m in self._script:
@@ -78,6 +86,28 @@ async def test_seeds_recall_and_forwards_audio_and_transcripts():
     assert audio_out.audio.pcm == b"\x01\x02"
 
 
+async def test_logs_session_lifecycle_and_counts(caplog):
+    # Observability: a session must log START (with model/voice), the transcripts
+    # it heard/spoke, and an END summary with audio counters -- so the sidecar is
+    # not a black box during debugging.
+    session = FakeSession([
+        _msg(in_tx="what is a hornet"),
+        _msg(data=b"\x01\x02\x03\x04", out_tx="a light fighter"),
+        _msg(turn_complete=True),
+    ])
+    bridge = LiveBridge(_factory(session), model="m-test", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(
+        user_id="u1", voice_name="Kore"))
+    audio = voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\xaa\xbb"))
+    with caplog.at_level(logging.INFO):
+        await _drive(bridge, [start, audio], session)
+    text = caplog.text
+    assert "session START" in text and "m-test" in text and "Kore" in text
+    assert "user said: what is a hornet" in text
+    assert "model said: a light fighter" in text
+    assert "session END" in text and "audio_in=1" in text and "audio_out=1" in text
+
+
 async def test_seeds_history_turns_then_recall():
     session = FakeSession([_msg(turn_complete=True)])
     bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
@@ -87,6 +117,28 @@ async def test_seeds_history_turns_then_recall():
     await _drive(bridge, [start], session)
     seeded_texts = [t.parts[0].text for (t, _tc) in session.seeded]
     assert "hey" in seeded_texts and "hi" in seeded_texts and "MEM" in seeded_texts
+
+
+def test_live_config_enables_google_search():
+    # Grounding: the Live session must advertise the google_search tool so the
+    # model can answer with current web knowledge, not just training data.
+    bridge = LiveBridge(_factory(None), model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u")
+    cfg = bridge._live_config(start)
+    assert cfg.tools, "expected at least one tool configured"
+    assert any(getattr(t, "google_search", None) is not None for t in cfg.tools), \
+        "expected the google_search grounding tool"
+
+
+async def test_audio_stream_end_signals_the_session():
+    # The bot's debounced end-of-speech must reach the Live session as
+    # send_realtime_input(audio_stream_end=True) so the turn finalizes.
+    session = FakeSession([_msg(turn_complete=True)])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+    end = voice_pb2.VoiceClientEvent(audio_stream_end=voice_pb2.AudioStreamEnd())
+    await _drive(bridge, [start, end], session)
+    assert session.stream_ends >= 1
 
 
 async def test_maps_interrupted():
@@ -176,6 +228,40 @@ async def test_pump_exception_emits_error_event():
     errors = [e for e in out if e.WhichOneof("event") == "error"]
     assert errors, "expected an ErrorEvent when a pump raises"
     assert "boom" in errors[0].error.message
+
+
+class WsCloseSession(FakeSession):
+    """receive() raises a raw websockets normal-close (code 1000)."""
+    async def receive(self):
+        raise ConnectionClosedOK(None, None)
+        yield  # pragma: no cover - keeps this an async generator
+
+
+class ApiCloseSession(FakeSession):
+    """receive() raises the genai SDK's APIError wrapping a ws 1000 close."""
+    async def receive(self):
+        raise genai_errors.APIError(1000, {"message": "received 1000 (OK)"})
+        yield  # pragma: no cover
+
+
+async def test_normal_ws_close_emits_no_error_event():
+    # A clean session close (raw ConnectionClosedOK) is expected -- it must NOT
+    # surface to the bot as an ErrorEvent (which would trigger a premature
+    # endSession + error notice).
+    session = WsCloseSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+    out = await _drive(bridge, [start], session)
+    assert not any(e.WhichOneof("event") == "error" for e in out)
+
+
+async def test_api_error_normal_close_emits_no_error_event():
+    # The SDK may wrap a normal close as APIError(code=1000); still not an error.
+    session = ApiCloseSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
+    out = await _drive(bridge, [start], session)
+    assert not any(e.WhichOneof("event") == "error" for e in out)
 
 
 class MultiTurnClosingSession:

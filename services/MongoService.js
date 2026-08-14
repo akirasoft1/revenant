@@ -48,11 +48,11 @@ class MongoService {
         });
     }
 
-    async connect() {
+    async connect(attempt = 1) {
         try {
             await this.client.connect();
             this.db = this.client.db('discord');
-            logger.info('Successfully connected to MongoDB.');
+            logger.info(`Successfully connected to MongoDB${attempt > 1 ? ` (attempt ${attempt})` : ''}.`);
 
             // Ensure indexes for time-range queries
             this.db.collection('channel_messages').createIndex(
@@ -71,7 +71,15 @@ class MongoService {
               { ts: 1 }
             ).catch(err => logger.debug(`Index creation (recall_comparisons): ${err.message}`));
         } catch (error) {
-            logger.error('Error connecting to MongoDB:', error);
+            // Retry with capped exponential backoff. Without this, an outage
+            // restart that races MongoDB's own startup leaves this.db null
+            // forever (observed: voice profile / recall / history all broken
+            // until a manual restart). Retrying reconnects on its own once
+            // MongoDB is reachable again.
+            const delayMs = Math.min(30000, 1000 * 2 ** Math.min(attempt - 1, 5));
+            logger.error(`Error connecting to MongoDB (attempt ${attempt}); retrying in ${delayMs}ms: ${error.message}`);
+            const t = setTimeout(() => this.connect(attempt + 1), delayMs);
+            if (t.unref) t.unref();
         }
     }
 

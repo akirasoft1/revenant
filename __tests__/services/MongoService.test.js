@@ -5,6 +5,7 @@ const MongoService = require('../../services/MongoService');
 jest.mock('mongodb', () => {
   const mockCollection = {
     insertOne: jest.fn().mockResolvedValue({ insertedId: 'test-id' }),
+    createIndex: jest.fn().mockResolvedValue('idx'),
     aggregate: jest.fn().mockReturnValue({
       toArray: jest.fn().mockResolvedValue([])
     })
@@ -1027,5 +1028,28 @@ describe('MongoService.getRecentChannelMessages', () => {
     mockCollection.toArray.mockResolvedValueOnce([]);
     await svc.getRecentChannelMessages('chan-1', 5);
     expect(mockCollection.limit).toHaveBeenCalledWith(5);
+  });
+});
+
+describe('MongoService connect retry', () => {
+  test('retries with backoff when the initial connect fails, then sets db on success', async () => {
+    jest.useFakeTimers();
+    const { MongoClient } = require('mongodb');
+    const client = new MongoClient(); // shared mock client instance
+    client.connect.mockReset();
+    // First connect rejects (Mongo not up yet, e.g. outage restart); retry succeeds.
+    client.connect.mockRejectedValueOnce(new Error('ECONNREFUSED')).mockResolvedValue(undefined);
+
+    const svc = new MongoService('mongodb://x:27017/test');
+    await Promise.resolve(); await Promise.resolve();
+    expect(svc.db).toBeNull();                 // failed initial connect leaves db null...
+    expect(client.connect).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(1100);            // ...but a retry is scheduled (1s backoff)
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(client.connect).toHaveBeenCalledTimes(2);
+    expect(svc.db).not.toBeNull();             // reconnected on its own
+
+    jest.useRealTimers();
   });
 });
