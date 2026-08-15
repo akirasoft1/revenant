@@ -22,21 +22,30 @@ const { Readable, PassThrough } = require('stream');
 const MAX_PREROLL_FRAMES = 150;
 
 // Bound on `g.pending` -- the pre-roll captured at wake PLUS everything the
-// floor holder says while the session is still opening. ~5s of ~20ms frames:
-// the ~3s pre-roll (MAX_PREROLL_FRAMES) plus the couple of seconds a Live
-// session open costs (VM/gRPC + the awaited _contextBuilder). That is what a
-// first utterance plausibly needs; anything past it is not "the question asked
-// with the wake phrase" any more.
+// floor holder says while the session is still opening. ~10s of ~20ms frames.
 //
-// The window keeps the NEWEST frames (drop-oldest, exactly like the pre-roll
-// above) because replaying stale audio is worse than dropping it: the flush
-// goes into the Live session as ordinary user audio, so minutes of backlog --
-// which is what an unbounded buffer holds when _contextBuilder is slow -- reads
-// to the model as speech happening RIGHT NOW, and it answers a question the
-// room moved on from. This repo already made that call once, for the same
-// reason: the reconnect path drops frames arriving while no session is open
-// rather than buffering them (see the session-resumption note in CLAUDE.md).
-const MAX_PENDING_FRAMES = 250;
+// It is bounded because an UNBOUNDED buffer holds minutes of backlog when the
+// open is slow, and the flush replays all of it into the Live session as
+// ordinary user audio -- i.e. as speech happening RIGHT NOW -- so the model
+// answers a question the room moved on from. Ten seconds kills that hazard
+// exactly as dead as five did.
+//
+// It is DROP-NEWEST (stop appending once full), which is the opposite of the
+// pre-roll above, and the difference is the point. The pre-roll is a sliding
+// window over ambient audio nobody has claimed yet: its oldest frame is the
+// least interesting thing in it, so drop-oldest is right. `g.pending` is ONE
+// utterance captured from its start -- its oldest frames are the wake phrase
+// and the beginning of the question, i.e. precisely what the buffer exists to
+// preserve. Drop-oldest here truncated the head: "hey jarvis, what's the
+// population of Brazil compared to India?" arrived at the model as
+// "...compared to India?" and it answered the wrong question.
+//
+// The two policies together mean the eviction branch is unreachable for any
+// plausible first utterance (10s of continuous speech through a session open
+// that normally costs ~3s), and when it IS reached the head survives and only
+// the tail is lost -- and the tail keeps arriving live the moment the session
+// opens, because `_handleUserPcm` streams straight to `g.session` from then on.
+const MAX_PENDING_FRAMES = 500;
 
 // How long to wait before re-attempting a speaker-name resolution that came
 // back null. `lookupUser` is a CACHE-ONLY Discord lookup (bot.js), so a user
@@ -46,6 +55,28 @@ const MAX_PENDING_FRAMES = 250;
 // A timestamp compare is all the hot path pays; the resolve itself runs at
 // most once a minute per unresolved speaker.
 const SPEAKER_NAME_RETRY_MS = 60000;
+
+// Ceiling on the ONE await in the session-open path (`_contextBuilder`, which
+// reaches Mongo/Qdrant/Mem0 through RecallService).
+//
+// `sessionOpening` is cleared only in _startSession's `finally`, and _tick's
+// wedge recovery deliberately stands down while it is set. So a _contextBuilder
+// promise that never SETTLES -- a hung driver socket, not a rejection -- leaves
+// the guild `active` with no session and structurally prevents the very
+// recovery that exists for this case: deaf until /voice leave. A rejection was
+// always handled; "never answers" was not.
+//
+// On expiry the open CONTINUES with the fallback context (the configured system
+// prompt, no recall, no history) rather than aborting: a voice session that
+// answers without memory is far better than one that never opens, and the
+// operator gets the warn line. Bounding the await rather than the whole open
+// also avoids a torn-down-then-resumed race -- nothing else in _openSession
+// awaits, so this single ceiling bounds the entire opening window.
+//
+// 15s is well past a cold recall build (the slow-open test path this repo
+// already models in seconds) and well short of a Discord user concluding the
+// bot is dead.
+const CONTEXT_BUILD_TIMEOUT_MS = 15000;
 
 // Fallback: how long after the last real-speech frame to send audio_stream_end
 // (finalize the turn) when config doesn't provide one.
@@ -223,7 +254,8 @@ class VoiceService {
     const state = { connection, player, machine, session: null,
       channelId: channel.id, buffers: { in: [], out: [] }, tickTimer: null,
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
-      pending: null, lastSpeechAt: null, audioEndSent: false, turnActive: false,
+      pending: null, pendingOverflowed: false,
+      lastSpeechAt: null, audioEndSent: false, turnActive: false,
       perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null,
       ackedThisTurn: false, ackFailures: 0, ackNextAttemptAt: 0,
       // True only while _startSession is between its health gate and its
@@ -323,23 +355,33 @@ class VoiceService {
   //                                                       sidecar, or a throw
   //                                                       inside _startSession)
   // It used to return a bare `true` in every one of those cases.
+  //
+  // Every one of those also carries `joined`: true when THIS call put the bot
+  // in the channel. On the failure paths that matters -- the bot is now sitting
+  // in the voice channel (wake word live, session not) and a reply that reads
+  // as total failure is the same false-reporting defect in the other direction.
+  // We do not unwind the join: "connected, wake word required" is a perfectly
+  // useful state, and silently disconnecting a channel the admin just pulled the
+  // bot into is more surprising than saying so.
   async listen({ channel, guildId, userId }) {
+    let joined = false;
     if (!this._guilds.has(guildId)) {
       await this.join({ channel, guildId });
+      joined = this._guilds.has(guildId);
     }
     const g = this._guilds.get(guildId);
-    if (!g) return { listening: false, reason: 'session-failed' };
+    if (!g) return { listening: false, reason: 'session-failed', joined };
     // Already connected somewhere else in this guild: forceListen() would open
     // a session that streams the OTHER channel's audio while the admin is told
     // we are listening in theirs.
     if (channel && channel.id && g.channelId !== channel.id) {
       logger.info(`voice: listen requested for channel ${channel.id} but guild ${guildId} is connected to channel ${g.channelId}`);
-      return { listening: false, reason: 'other-channel', channelId: g.channelId };
+      return { listening: false, reason: 'other-channel', channelId: g.channelId, joined };
     }
     const actions = g.machine.forceListen();
     if (!actions.length) {
       logger.info(`voice: listen requested but a session is already active in guild ${guildId}`);
-      return { listening: false, reason: 'already-active' };
+      return { listening: false, reason: 'already-active', joined };
     }
     // Grant the floor to the invoking admin, same as the wake path does for
     // whoever says the wake word. Without this, _handleUserPcm's active-branch
@@ -353,12 +395,12 @@ class VoiceService {
     // is the one post-condition that covers all of them -- and it is checked
     // rather than assumed, which is the whole defect here.
     if (!g.session) {
-      logger.warn(`voice: listen requested in guild ${guildId} (user ${userId}) but no session opened — listen mode is NOT engaged`);
-      return { listening: false, reason: 'session-failed' };
+      logger.warn(`voice: listen requested in guild ${guildId} (user ${userId}) but no session opened — listen mode is NOT engaged${joined ? '; the bot DID join the channel and the wake word still works' : ''}`);
+      return { listening: false, reason: 'session-failed', joined };
     }
     g.continuousRequested = true;
     logger.info(`voice: listen mode engaged in guild ${guildId} (user ${userId}) — no wake word required`);
-    return { listening: true, channelId: g.channelId };
+    return { listening: true, channelId: g.channelId, joined };
   }
 
   // Lazily build the per-speaker gate context. Each speaker runs their OWN
@@ -419,6 +461,7 @@ class VoiceService {
         if (g.floor.grant(userId)) {
           logger.info(`voice: wake word detected in guild ${guildId} (user ${userId}) — floor granted`);
           g.pending = u.preroll.slice(); // carry THIS speaker's wake-phrase audio in
+          g.pendingOverflowed = false;   // fresh utterance, fresh overflow latch
           u.preroll = [];
           await this._apply(guildId, g.machine.onWake(), { userId });
         }
@@ -609,13 +652,18 @@ class VoiceService {
     } else {
       // Session still opening (post-wake startup): buffer so the first turn
       // isn't lost; _startSession flushes g.pending (pre-roll + these) once the
-      // session is up. Bounded exactly like the pre-roll it carries: keep the
-      // newest MAX_PENDING_FRAMES and drop the rest, because a slow session
-      // open otherwise accumulates unbounded backlog that the flush replays
-      // into the model as current speech (see MAX_PENDING_FRAMES).
+      // session is up. Bounded, but DROP-NEWEST -- unlike the pre-roll, whose
+      // oldest frame is disposable, this buffer's oldest frames are the wake
+      // phrase and the start of the question. See MAX_PENDING_FRAMES.
       const pending = g.pending || (g.pending = []);
-      pending.push(pcm16);
-      while (pending.length > MAX_PENDING_FRAMES) pending.shift();
+      if (pending.length < MAX_PENDING_FRAMES) {
+        pending.push(pcm16);
+      } else if (!g.pendingOverflowed) {
+        // Once per open, not once per frame: at 50 frames/s an un-latched log
+        // here is 50 warn lines a second for as long as the open is stuck.
+        g.pendingOverflowed = true;
+        logger.warn(`voice: the pre-session audio buffer filled (${MAX_PENDING_FRAMES} frames, ~${Math.round(MAX_PENDING_FRAMES / 50)}s) in guild ${guildId} while the session was still opening — keeping the start of the utterance and dropping the rest until the session is up`);
+      }
     }
 
     // Early client endpoint (Gemini Hybrid VAD): when Silero declares end-of-speech,
@@ -737,15 +785,37 @@ class VoiceService {
     }
   }
 
+  // Reject with `message` if `promise` has not settled within `ms`.
+  //
+  // The timer is ALWAYS cleared, including on the happy path -- an uncleared
+  // 15s timer per session open keeps the event loop alive that much longer and
+  // shows up as a leaked handle in tests. The losing promise is left to settle
+  // (or not) on its own; nothing observes it after the race.
+  //
+  // Timers come from `deps` when injected so tests can drive expiry
+  // deterministically instead of waiting out real wall-clock.
+  _withTimeout(promise, ms, message) {
+    const setT = this._deps.setTimeout || setTimeout;
+    const clearT = this._deps.clearTimeout || clearTimeout;
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = setT(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => { if (timer !== null) clearT(timer); });
+  }
+
   async _openSession(g, guildId, userId) {
     let systemPrompt = this._config.voice.systemPrompt || '';
     let recallContext = '';
     let history = [];
     try {
-      const ctx = await this._contextBuilder({
-        userId, userTag: '', channelId: g.channelId, guildId,
-        userMessage: '', personalityId: 'channel-voice',
-      });
+      const ctx = await this._withTimeout(
+        this._contextBuilder({
+          userId, userTag: '', channelId: g.channelId, guildId,
+          userMessage: '', personalityId: 'channel-voice',
+        }),
+        CONTEXT_BUILD_TIMEOUT_MS,
+        `context build timed out after ${CONTEXT_BUILD_TIMEOUT_MS}ms`);
       systemPrompt = ctx.systemPrompt || systemPrompt;
       recallContext = ctx.memoryBlock || '';
       history = ctx.historyTurns || [];
@@ -837,6 +907,7 @@ class VoiceService {
       for (const f of g.pending) session.sendAudio(f);
     }
     g.pending = null;
+    g.pendingOverflowed = false;
   }
 
   // The one definition of "put this guild back where a wake word works again".
@@ -1145,6 +1216,7 @@ class VoiceService {
     // skewed by leftover audio from the just-ended session.
     g.turnActive = false;
     g.pending = null;
+    g.pendingOverflowed = false;
     g.lastSpeechAt = null;
     g.audioEndSent = false;
     g.lastSpeakerSent = null; // a new session re-announces the speaker
@@ -1189,20 +1261,44 @@ class VoiceService {
       }
       return;
     }
-    if (g.tickTimer) this._deps.clearInterval(g.tickTimer);
-    // The map entry must go even if teardown throws. Without the finally, a
-    // throwing destroy() (or a throwing gate reset inside _endSession -- that
-    // one is not hypothetical, it has its own regression test) left the entry
-    // behind forever: join() then short-circuits on `_guilds.has(guildId)` and
-    // leave() re-enters the same throwing teardown, so voice is permanently
-    // unavailable in that guild until the pod restarts. The error still
-    // propagates -- the caller reports it -- but the guild is recoverable.
-    try {
-      this._endSession(g);
-      if (g.connection && g.connection.destroy) g.connection.destroy();
-    } finally {
-      this._guilds.delete(guildId);
-    }
+    // EVERY teardown step must run, even when an earlier one throws, and the
+    // map entry must go regardless.
+    //
+    // Two failure modes, and they pull in opposite directions:
+    //
+    //  - Leaving the entry behind wedges the guild forever: join() then
+    //    short-circuits on `_guilds.has(guildId)` and leave() re-enters the
+    //    same throwing teardown, so voice is dead there until the pod restarts.
+    //    (A throwing gate reset inside _endSession is not hypothetical -- it
+    //    has its own regression test.)
+    //
+    //  - But deleting the entry while SKIPPING connection.destroy() is worse
+    //    than either: the bot stays in the voice channel with its
+    //    `receiver.speaking.on('start')` handler still wired to the dead
+    //    closure, and the next /voice join -- no longer short-circuited --
+    //    reuses that same connection and wires a SECOND handler onto the SAME
+    //    AudioReceiveStream. Every frame then reaches _handleUserPcm twice,
+    //    which is exactly the duplicated-mel-window failure documented in
+    //    join() above: the wake word becomes undetectable.
+    //
+    // So each step is attempted independently, the first error is remembered
+    // and rethrown at the end (the caller still reports the failure), and the
+    // delete happens unconditionally in between.
+    let firstError = null;
+    const step = (what, fn) => {
+      try { fn(); } catch (e) {
+        logger.warn(`voice: ${what} failed while leaving guild ${guildId}: ${e && e.stack ? e.stack : e}`);
+        if (!firstError) firstError = e;
+      }
+    };
+    // Inside the guarded region too: a throw here used to skip both the
+    // teardown and the delete, leaking the 250ms tick timer against a guild
+    // nothing could clean up afterwards.
+    step('clearing the tick timer', () => { if (g.tickTimer) this._deps.clearInterval(g.tickTimer); });
+    step('ending the live session', () => this._endSession(g));
+    step('destroying the voice connection', () => { if (g.connection && g.connection.destroy) g.connection.destroy(); });
+    this._guilds.delete(guildId);
+    if (firstError) throw firstError;
     // Only on the way out of a teardown that actually completed -- a throw
     // above propagates instead, and the caller says so.
     logger.info(`voice: left guild ${guildId}`);

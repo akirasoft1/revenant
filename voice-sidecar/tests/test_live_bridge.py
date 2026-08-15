@@ -7,7 +7,7 @@ from google.genai import errors as genai_errors
 from websockets.exceptions import ConnectionClosedOK
 
 from src import voice_pb2
-from src.live_bridge import LiveBridge, _ResumeState, _SessionRef
+from src.live_bridge import LiveBridge, _ResumeState, _SessionRef, _is_normal_close
 from src.live_bridge import _SessionStats as _SessionStatsForTest
 
 
@@ -1032,3 +1032,64 @@ async def test_audio_sent_before_the_first_session_opens_is_not_dropped():
 
     assert [a.data for a in session.sent_audio] == [b"\x00", b"\x01", b"\x02"], (
         f"pre-roll audio was dropped while the session opened; got {session.sent_audio}")
+
+
+# --- Close-code classification: an error must never be read as a clean close ---
+#
+# `_is_normal_close` decides whether `converse` emits an ErrorEvent at all. Read
+# a genuine failure as a clean close and the bot is never told its session died:
+# no teardown, no notifyError, no reconnect -- it goes on streaming audio into a
+# dead stream. So the loose end of this check is worth pinning precisely.
+
+def test_normal_close_recognises_the_structured_close_code():
+    for code in (1000, 1001):
+        assert _is_normal_close(genai_errors.APIError(code, {"message": "bye"})), code
+    assert _is_normal_close(ConnectionClosedOK(None, None))
+
+
+def test_a_timeout_reported_in_milliseconds_is_not_a_clean_close():
+    # The regression: `"1000" in str(exc)` matched the "1000" inside "10000ms".
+    # The SDK reports this as a ServerError (a real APIError subclass), and the
+    # bot MUST hear about it.
+    exc = genai_errors.APIError(504, {"message": "deadline exceeded after 10000ms"})
+    assert not _is_normal_close(exc)
+    assert not _is_normal_close(
+        genai_errors.APIError(429, {"message": "quota of 100000 tokens exhausted"}))
+    assert not _is_normal_close(
+        genai_errors.APIError(1011, {"message": "internal error; request id req-1000-abc"}))
+
+
+def test_incidental_digits_in_a_codeless_error_are_not_a_clean_close():
+    # The message fallback exists for a wrapper that formats the close code into
+    # the text without keeping it on the instance, so it is anchored to where
+    # APIError.__str__ puts it -- the first token. Anywhere else is not a code.
+    class _CodelessApiError(genai_errors.APIError):
+        def __init__(self, message):
+            self.code = None
+            self.status = None
+            self.details = None
+            self.message = message
+            Exception.__init__(self, message)
+
+    assert not _is_normal_close(_CodelessApiError("deadline exceeded after 10000ms"))
+    assert not _is_normal_close(_CodelessApiError("closed after 21000 frames"))
+    assert _is_normal_close(_CodelessApiError("1000 OK. received 1000 (OK)"))
+
+
+async def test_a_10000ms_timeout_surfaces_to_the_bot_as_an_error():
+    # End to end, through `converse`: the misclassification's real cost is a
+    # session that dies silently, so assert the ErrorEvent actually reaches the
+    # bot rather than only unit-testing the predicate.
+    class TimeoutSession(FakeSession):
+        async def receive(self):
+            for m in self._script:
+                yield m
+            raise genai_errors.APIError(504, {"message": "deadline exceeded after 10000ms"})
+
+    session = TimeoutSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u")
+    out = await _drive_open_ended(bridge, start)
+    errs = [e for e in out if e.WhichOneof("event") == "error"]
+    assert errs, "a 10000ms timeout was silently reclassified as a clean close"
+    assert "10000ms" in errs[0].error.message

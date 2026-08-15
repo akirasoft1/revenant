@@ -157,12 +157,28 @@ describe('/voice', () => {
   });
 
   test('listen reports a failure when no session opened (unhealthy sidecar)', async () => {
-    voiceService.listen.mockResolvedValue({ listening: false, reason: 'session-failed' });
+    voiceService.listen.mockResolvedValue({ listening: false, reason: 'session-failed', joined: false });
     const i = fakeInteraction({ inChannel: true, sub: 'listen' });
     await command.execute(i, adminCtx);
     const content = i.reply.mock.calls[0][0].content;
     expect(content).toContain("Couldn't start listening");
     expect(content).not.toContain('no wake word needed');
+    expect(content).not.toContain('I did join');   // it didn't
+  });
+
+  // The other half of the truth: when listen() had to join first and only the
+  // SESSION failed, the bot is now sitting in the admin's voice channel with a
+  // live wake word. A flat "couldn't start listening" is the same false report
+  // as the one this block fixes, pointed the other way.
+  test('listen that joined but failed to open a session says the bot IS in the channel', async () => {
+    voiceService.listen.mockResolvedValue({ listening: false, reason: 'session-failed', joined: true });
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain("Couldn't start listening");
+    expect(content).toContain('I did join <#c1>');
+    expect(content).toContain('wake word still works');
+    expect(content).toContain('/voice leave');
   });
 
   // 2.5: "until /voice leave" is a promise VOICE_MAX_SESSION_SECONDS breaks
@@ -174,6 +190,25 @@ describe('/voice', () => {
     expect(content).toContain('no wake word needed');
     expect(content).toContain('/voice leave');
     expect(content).toContain('10-minute');
+  });
+
+  // Math.round(90 / 60) is 2. Quoting a 90-second cap as "2-minute" overstates
+  // the one number in this reply whose whole job is to stop the bot promising
+  // more time than it has.
+  test('a cap that is not a whole number of minutes is not rounded UP', async () => {
+    voiceService.maxSessionSeconds.mockReturnValue(90);
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain('1-minute 30-second');
+    expect(content).not.toContain('2-minute');
+  });
+
+  test('a sub-minute cap is quoted in seconds', async () => {
+    voiceService.maxSessionSeconds.mockReturnValue(45);
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    expect(i.reply.mock.calls[0][0].content).toContain('45-second');
   });
 
   test('an uncapped session (maxSessionSeconds 0) keeps the plain wording', async () => {

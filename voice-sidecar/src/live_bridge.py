@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import re
 import time
 
 from google.genai import types
@@ -33,17 +34,51 @@ except Exception:  # pragma: no cover
     _API_ERROR = ()
 
 
+# Anchored close-code match for the message FALLBACK below. `APIError.__str__`
+# is `f"{self.code} {self.status}. {self.details}"`, so a wrapped close code is
+# always the FIRST token of the message. The `\b` matters as much as the `^`:
+# without it "10000 ..." matches the "1000" prefix.
+_CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
+
+
 def _is_normal_close(exc) -> bool:
     """True if `exc` is a clean session close (ws code 1000/1001), whether raw
-    from websockets or wrapped by the genai SDK, so we don't treat it as an error."""
+    from websockets or wrapped by the genai SDK, so we don't treat it as an error.
+
+    Misclassifying here fails in the WORST direction: `converse` would set
+    `outcome = "closed"`, emit no ErrorEvent, and the bot would never learn its
+    session died -- no teardown, no notifyError, no reconnect. So the checks are
+    ordered strongest-first and the loosest one is anchored.
+
+    The structured `code` check is the real one, and against the installed
+    google-genai (2.17.0, verified by executing it, not by reading it) it is
+    sufficient on its own: every path that turns a websocket close into an
+    exception -- `AsyncSession._receive` and the one-shot connect in `live.py` --
+    calls `errors.APIError.raise_error(code, reason, None)` with the ws close
+    code (1006 when the peer sent no close frame), and `APIError.__init__`
+    assigns `self.code = code if code else self._get_code(...)`, so a truthy
+    close code is always preserved on the instance.
+
+    The message fallback is kept only for an SDK/wrapper shape that formats the
+    code into the text without carrying it on the instance, and it is anchored
+    to the position `APIError` actually formats it at. It used to be
+    `"1000" in str(exc)`, which matched incidental digits ANYWHERE: a timeout
+    reported as "10000ms", a quota message containing "100000", or a request id
+    that happened to contain "1000" all classified a genuine failure as a clean
+    close.
+    """
     if _WS_NORMAL_CLOSE and isinstance(exc, _WS_NORMAL_CLOSE):
         return True
     if _API_ERROR and isinstance(exc, _API_ERROR):
         code = getattr(exc, "code", None)
         if code in (1000, 1001):
             return True
-        msg = str(exc)
-        if "1000" in msg or "1001" in msg:
+        # A code that IS populated and is not 1000/1001 is a decided answer --
+        # don't let the text fallback second-guess it (a 1011 whose reason text
+        # quotes "1000" is not a clean close).
+        if isinstance(code, int):
+            return False
+        if _CLOSE_CODE_AT_START.match(str(exc)):
             return True
     return False
 

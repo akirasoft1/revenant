@@ -4,6 +4,18 @@
 const { SlashCommandBuilder } = require('discord.js');
 const BaseSlashCommand = require('../base/BaseSlashCommand');
 
+// Render a session cap in seconds as something a human reads correctly.
+// `Math.round(s / 60)` called a 90s cap "2-minute" -- overstating, by 33%, the
+// one number in this reply whose entire purpose is to stop the bot promising
+// more time than it has. Whole minutes stay minutes; anything else keeps its
+// remainder, and sub-minute caps stay in seconds.
+function formatCap(seconds) {
+  if (seconds < 60) return `${seconds}-second`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s === 0 ? `${m}-minute` : `${m}-minute ${s}-second`;
+}
+
 class VoiceSlashCommand extends BaseSlashCommand {
   constructor(voiceService) {
     super({
@@ -83,7 +95,14 @@ class VoiceSlashCommand extends BaseSlashCommand {
           } else if (reason === 'other-channel') {
             await this.sendError(interaction, `Couldn't start listening: I'm already in <#${result.channelId}> — run \`/voice leave\` there first.`);
           } else {
-            await this.sendError(interaction, "Couldn't start listening: no session opened (the voice sidecar is unavailable or the open failed — check the bot logs).");
+            // If this call had to join first, the bot IS in the channel now --
+            // the session is what failed. Reporting flat failure while sitting
+            // in the user's voice channel is the same false-reporting defect
+            // as the one this whole block fixes, just inverted.
+            const joinedAnyway = result && result.joined
+              ? ` I did join <#${channel.id}> though, so the wake word still works — or run \`/voice leave\`.`
+              : '';
+            await this.sendError(interaction, `Couldn't start listening: no session opened (the voice sidecar is unavailable or the open failed — check the bot logs).${joinedAnyway}`);
           }
           return;
         }
@@ -94,7 +113,7 @@ class VoiceSlashCommand extends BaseSlashCommand {
         const capSeconds = typeof this.voiceService.maxSessionSeconds === 'function'
           ? this.voiceService.maxSessionSeconds() : 0;
         const cap = capSeconds > 0
-          ? ` or the ${capSeconds >= 60 ? `${Math.round(capSeconds / 60)}-minute` : `${capSeconds}-second`} session cap, whichever comes first`
+          ? ` or the ${formatCap(capSeconds)} session cap, whichever comes first`
           : '';
         await this.sendReply(interaction, { content: `Listening in <#${channel.id}> — no wake word needed. I'll keep listening until \`/voice leave\`${cap}.`, ephemeral: true });
       } catch (e) {
