@@ -89,13 +89,38 @@ class VoiceClient {
           session.emit('interrupted');
           break;
         case 'error':
-          session.emit('error', new Error(ev.error.message || 'voice sidecar error'));
+          // Same teardown hazard as the transport-error handler below, and this
+          // is the MORE likely trigger: the sidecar reports failures over the
+          // DATA stream, not the transport one — `live_bridge.py` wraps every
+          // non-normal-close exception in a `VoiceServerEvent(error=ErrorEvent)`.
+          // `session.end()` only half-closes our write side, so the server keeps
+          // delivering until it closes its own; an ErrorEvent in flight when
+          // `_endSession` runs `removeAllListeners()` lands here with no listener.
+          if (session.listenerCount('error') > 0) {
+            session.emit('error', new Error(ev.error.message || 'voice sidecar error'));
+          } else {
+            logger.warn(`voice: sidecar error event after session teardown (no listener attached): ${(ev.error && ev.error.message) || 'voice sidecar error'}`);
+          }
           break;
         default:
           break;
       }
     });
-    call.on('error', (err) => session.emit('error', err));
+    // `EventEmitter.emit('error')` is special: with no 'error' listener attached,
+    // Node THROWS the emitted error rather than dropping it. VoiceService's
+    // `_endSession` calls `session.removeAllListeners()` and then `session.end()`,
+    // but this gRPC handler stays wired to the underlying call — so a stream error
+    // arriving in the window after teardown (sidecar rescheduled, Live connection
+    // dropped, or simply the error that CAUSED the teardown arriving late) would
+    // throw ERR_UNHANDLED_ERROR synchronously inside the gRPC callback and take
+    // the whole bot process down, not just voice.
+    call.on('error', (err) => {
+      if (session.listenerCount('error') > 0) {
+        session.emit('error', err);
+        return;
+      }
+      logger.warn(`voice: gRPC stream error after session teardown (no listener attached): ${err.message}`);
+    });
     call.on('end', () => session.emit('end'));
 
     session.sendStart = (s) =>

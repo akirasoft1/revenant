@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 
 import grpc
 from opentelemetry import trace
@@ -17,42 +18,251 @@ log = logging.getLogger(__name__)
 _BASE_PROMPT_PATH = "/app/prompt/base.txt"
 _DEFAULT_BASE_PROMPT = "You are a helpful assistant."
 
+_DEFAULT_HEALTH_FAILURE_THRESHOLD = 3
+_DEFAULT_HEALTH_COOLDOWN_SECONDS = 60.0
+
+# Hard ceiling on one Chat turn, deliberately set UNDER the bot's 600s
+# `chatDeadlineMs` (services/AgentClient.js) so the sidecar is the side that
+# gives up first: the bot then gets a real DEADLINE_EXCEEDED with a message
+# naming the bound instead of its own client-side deadline expiry, and the
+# handler unwinds normally rather than being cancelled from outside. Well
+# above any legitimate turn — the orchestrator's own per-execution deadline is
+# `wall_clock + 120` (420s by default) for a single sandbox call.
+_DEFAULT_CHAT_TIMEOUT_SECONDS = 540.0
+
+
+class ChatCircuitBreaker:
+    """Consecutive-failure circuit breaker over the Chat RPC, feeding Health.
+
+    Why this exists: the bot's AgentClient treats Health as its ONLY circuit
+    breaker for the agent path, and Health used to be a hardcoded
+    `healthy=True`. That answers "is the gRPC server accepting connections",
+    which stays true while the thing that actually matters — can this sidecar
+    complete a Chat turn — is broken (expired/revoked Vertex-GEAP credentials,
+    an IAM or billing change, Mongo unreachable). Every channel-voice message
+    then gets routed into a call guaranteed to fail, each paying up to the
+    bot's 600s chat deadline when the failure is a hang rather than a clean
+    error, and nothing ever falls back to direct OpenAI.
+
+    So health is derived from observed Chat outcomes. No I/O happens in the
+    health path (the servicer docstring's "Health stays sync (no I/O)" stays
+    true) — Health only reads state that Chat already recorded.
+
+    States (the half-open is the load-bearing part):
+      CLOSED     — healthy. Consecutive failures are counted; reaching
+                   `failure_threshold` trips to OPEN.
+      OPEN       — unhealthy. The bot sees this and STOPS sending Chat, which
+                   means no success can ever arrive on its own; a naive
+                   consecutive-failure breaker would therefore latch unhealthy
+                   forever and permanently disable the agent path. After
+                   `cooldown_seconds` the breaker moves to HALF_OPEN.
+      HALF_OPEN  — reports healthy again so the bot sends a trial Chat. One
+                   success closes the breaker; one failure goes straight back
+                   to OPEN and restarts the cooldown (it does NOT need to
+                   re-accumulate `failure_threshold` failures).
+
+    Mirrors the 60s-cooldown breaker idiom already in the repo
+    (services/LocalLlmService.js) so there is one breaker shape, not two.
+
+    `clock` is injectable so tests exercise the cooldown without real sleeps.
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = _DEFAULT_HEALTH_FAILURE_THRESHOLD,
+        cooldown_seconds: float = _DEFAULT_HEALTH_COOLDOWN_SECONDS,
+        clock=time.monotonic,
+    ) -> None:
+        self._threshold = max(1, int(failure_threshold))
+        self._cooldown = float(cooldown_seconds)
+        self._clock = clock
+        self._failures = 0
+        self._state = self.CLOSED
+        self._opened_at = 0.0
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._failures
+
+    def record_success(self) -> None:
+        """A Chat turn completed and produced a reply."""
+        if self._state != self.CLOSED or self._failures:
+            log.info(
+                "agent Chat succeeded; circuit breaker CLOSED (was state=%s after %d consecutive failures)",
+                self._state,
+                self._failures,
+            )
+        self._failures = 0
+        self._state = self.CLOSED
+
+    def record_failure(self, reason: str) -> None:
+        """A Chat turn failed. `reason` is logged verbatim (never truncated).
+
+        Every Chat failure is counted, including ones a bad user request could
+        in principle cause: we cannot cleanly tell "the backend is broken" from
+        "this particular request was rejected" at this layer, and over-counting
+        fails in the safe direction (the bot falls back to direct OpenAI and
+        keeps answering), whereas under-counting reproduces the bug this
+        breaker exists to fix.
+        """
+        self._failures += 1
+        if self._state == self.HALF_OPEN:
+            # The trial call failed — straight back to unhealthy, cooldown restarted.
+            self._trip(reason, trial=True)
+        elif self._failures >= self._threshold:
+            self._trip(reason, trial=False)
+        else:
+            log.warning(
+                "agent Chat failed (%d/%d consecutive; circuit breaker still CLOSED): %s",
+                self._failures,
+                self._threshold,
+                reason,
+            )
+
+    def _trip(self, reason: str, *, trial: bool) -> None:
+        self._state = self.OPEN
+        self._opened_at = self._clock()
+        log.error(
+            "agent Chat circuit breaker OPEN (%s; %d consecutive failures): reporting healthy=false "
+            "for the next %.0fs so the bot falls back to direct OpenAI instead of routing turns into "
+            "a call that cannot succeed. Cause: %s",
+            "trial call after cooldown failed" if trial else f"threshold {self._threshold} reached",
+            self._failures,
+            self._cooldown,
+            reason,
+        )
+
+    def healthy(self) -> bool:
+        """What the Health RPC reports. Read-only apart from the OPEN ->
+        HALF_OPEN cooldown transition, which has to happen somewhere and can
+        only happen here: while OPEN, Health is the sole thing still being
+        called."""
+        if self._state in (self.CLOSED, self.HALF_OPEN):
+            return True
+        if self._clock() - self._opened_at >= self._cooldown:
+            self._state = self.HALF_OPEN
+            log.warning(
+                "agent Chat circuit breaker HALF-OPEN after the %.0fs cooldown: reporting healthy=true "
+                "to admit a trial Chat. A success closes the breaker; a failure re-opens it immediately.",
+                self._cooldown,
+            )
+            return True
+        return False
+
 
 class AgentServicer(agent_pb2_grpc.AgentServicer):
     """gRPC servicer. Health stays sync (no I/O); Chat is async and delegates
     to the injected ChannelVoiceAgent. The agent dependency is optional so the
-    Health endpoint can be served before agent assembly is wired in."""
+    Health endpoint can be served before agent assembly is wired in.
 
-    def __init__(self, channel_voice_agent=None, observability_agent=None, config=None) -> None:
+    Health is not a liveness rubber-stamp: it reports the ChatCircuitBreaker's
+    view of whether Chat is currently working (see ChatCircuitBreaker)."""
+
+    def __init__(
+        self, channel_voice_agent=None, observability_agent=None, config=None, breaker=None,
+        chat_timeout_seconds=None,
+    ) -> None:
         self._agent = channel_voice_agent
         self._obs_agent = observability_agent
         self._config = config
+        self._chat_timeout = (
+            chat_timeout_seconds
+            if chat_timeout_seconds is not None
+            else getattr(config, "agent_chat_timeout_seconds", _DEFAULT_CHAT_TIMEOUT_SECONDS)
+        )
+        self._breaker = breaker or ChatCircuitBreaker(
+            failure_threshold=getattr(
+                config, "agent_health_failure_threshold", _DEFAULT_HEALTH_FAILURE_THRESHOLD,
+            ),
+            cooldown_seconds=getattr(
+                config, "agent_health_cooldown_seconds", _DEFAULT_HEALTH_COOLDOWN_SECONDS,
+            ),
+        )
 
     async def Health(self, request, context):  # noqa: N802
-        return agent_pb2.HealthResponse(healthy=True)
+        return agent_pb2.HealthResponse(healthy=self._breaker.healthy())
 
     async def Chat(self, request, context):  # noqa: N802
         if self._agent is None:
+            # Not a transient blip: this sidecar cannot serve Chat at all, so it
+            # must stop advertising itself as healthy rather than absorbing every
+            # channel-voice turn into an UNIMPLEMENTED.
+            self._breaker.record_failure("Chat agent not configured")
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, "Chat agent not configured")
             return agent_pb2.ChatResponse()
-        with trace.get_tracer(__name__).start_as_current_span("agent.chat") as span:
-            try:
-                result = await self._agent.process_chat(
-                    user_id=request.user_id,
-                    user_message=request.user_message,
-                    system_prompt=request.system_prompt,
-                    memory_context=request.memory_context,
-                    history=[{"role": t.role, "content": t.content} for t in request.history],
-                )
-            except Exception as e:  # noqa: BLE001
-                log.exception("Chat handler failed")
-                await context.abort(grpc.StatusCode.INTERNAL, str(e))
-                return agent_pb2.ChatResponse()
-            # Surface the sandbox-invocation decision for Dynatrace so the
-            # per-turn invocation rate is queryable (sandbox-invocation tuning).
-            n = len(result.execution_ids)
-            span.set_attribute("sandbox.invoked", n > 0)
-            span.set_attribute("sandbox.call_count", n)
+        # asyncio.CancelledError inherits from BaseException, NOT Exception, so
+        # the `except Exception` below can never see it — and grpc.aio delivers
+        # exactly that into the handler when the CLIENT's deadline expires.
+        # That is the single most expensive failure mode this breaker exists
+        # for: a backend that accepts the connection and goes silent burns the
+        # bot's full 600s chatDeadlineMs on every channel-voice message and,
+        # without this, records nothing, so Health stays true and it repeats
+        # indefinitely. Count it and re-raise (never swallow a cancellation).
+        # A cancel here is either the client's deadline or sidecar shutdown;
+        # both are honest "the agent path is not serving right now" signals,
+        # and over-counting is already this breaker's ruled policy.
+        try:
+            with trace.get_tracer(__name__).start_as_current_span("agent.chat") as span:
+                try:
+                    result = await asyncio.wait_for(
+                        self._agent.process_chat(
+                            user_id=request.user_id,
+                            user_message=request.user_message,
+                            system_prompt=request.system_prompt,
+                            memory_context=request.memory_context,
+                            history=[
+                                {"role": t.role, "content": t.content} for t in request.history
+                            ],
+                        ),
+                        timeout=self._chat_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    # Deliberately distinct from the client-cancel path: here the
+                    # sidecar gave up first, which is the intended ordering.
+                    reason = (
+                        f"agent turn exceeded the sidecar's {self._chat_timeout:.0f}s chat timeout "
+                        f"(AGENT_CHAT_TIMEOUT_SECONDS); abandoning it so the bot gets a real error "
+                        f"instead of waiting out its own 600s chat deadline"
+                    )
+                    log.error(reason)
+                    self._breaker.record_failure(reason)
+                    await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, reason)
+                    return agent_pb2.ChatResponse()
+                except Exception as e:  # noqa: BLE001
+                    log.exception("Chat handler failed")
+                    self._breaker.record_failure(f"{type(e).__name__}: {e}")
+                    await context.abort(grpc.StatusCode.INTERNAL, str(e))
+                    return agent_pb2.ChatResponse()
+                # Surface the sandbox-invocation decision for Dynatrace so the
+                # per-turn invocation rate is queryable (sandbox-invocation tuning).
+                n = len(result.execution_ids)
+                span.set_attribute("sandbox.invoked", n > 0)
+                span.set_attribute("sandbox.call_count", n)
+        except asyncio.CancelledError:
+            self._breaker.record_failure(
+                "Chat cancelled before it produced a reply — the client's deadline expired "
+                "(the bot waited out its full chatDeadlineMs on a turn that never came back) "
+                "or the sidecar is shutting down"
+            )
+            raise
+
+        # A turn that returns no text is a failed turn, not a successful one:
+        # the bot already rejects it and falls through to direct OpenAI
+        # (ChatService.chat), so if it happens persistently the agent path is
+        # broken from the user's point of view and health must say so.
+        if not (result.message_text or "").strip():
+            self._breaker.record_failure("agent turn produced no text (empty message_text)")
+        else:
+            self._breaker.record_success()
 
         summary = agent_pb2.ExecutionSummary(
             execution_count=len(result.execution_ids),
@@ -62,7 +272,12 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
         return agent_pb2.ChatResponse(
             message_text=result.message_text,
             summary=summary,
-            fallback_occurred=False,
+            # Was this reply degraded? True when the turn ran on the sidecar's
+            # generic base prompt because the bot supplied no system_prompt —
+            # no learned channel-voice personality, and (in the case that
+            # causes it) no memory or history either. The bot renders a notice
+            # from this instead of pretending the reply was normal.
+            fallback_occurred=result.fallback_occurred,
         )
 
     async def Observe(self, request, context):  # noqa: N802

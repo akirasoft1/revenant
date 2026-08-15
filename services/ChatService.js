@@ -646,6 +646,7 @@ ${context}`;
     // Route channel-voice through the agent sidecar when available and healthy.
     // On agent failure or unhealthy state, fall through to the existing direct
     // OpenAI path so the bot keeps working when the sidecar is down.
+    let agentFallback = null;
     if (
       personalityId === 'channel-voice'
       && this.agentClient
@@ -653,6 +654,13 @@ ${context}`;
       && process.env.AGENT_ENABLED !== 'false'
     ) {
       try {
+        // If buildTurnContext throws, the turn still runs — but with NO system
+        // prompt (so the sidecar uses its generic base.txt instead of the
+        // learned channel-voice personality), NO memory context and NO history.
+        // That is a bot that has abruptly forgotten who it is and everything it
+        // knew, so it gets logged loudly and reported to the user rather than
+        // swallowed. Degraded-but-working is the right behaviour; silent is not.
+        let contextDegraded = false;
         const turnCtx = await this.buildTurnContext({
           userId: user.id,
           userTag: user.tag || user.username || '',
@@ -660,7 +668,11 @@ ${context}`;
           guildId: guildId || '',
           userMessage,
           personalityId,
-        }).catch(() => ({ systemPrompt: '', memoryBlock: '', historyTurns: [] }));
+        }).catch((ctxErr) => {
+          contextDegraded = true;
+          logger.error(`buildTurnContext failed for user ${user.id} in channel ${channelId || 'unknown'}; this channel-voice turn runs with NO system prompt (generic base prompt instead of the learned channel-voice personality), NO memory context and NO history: ${ctxErr && ctxErr.stack ? ctxErr.stack : ctxErr}`);
+          return { systemPrompt: '', memoryBlock: '', historyTurns: [] };
+        });
         const agentResp = await this.agentClient.chat({
           userId: user.id,
           userTag: user.tag || user.username || '',
@@ -673,6 +685,24 @@ ${context}`;
           memoryContext: turnCtx.memoryBlock,
           history: turnCtx.historyTurns,
         });
+        // An agent turn can legitimately finish with no text: the sidecar builds
+        // message_text by accumulating streamed ADK events, so a turn whose last
+        // event is a bare tool call, a blocked continuation, or a MAX_TOKENS
+        // cutoff yields "" and RETURNS SUCCESSFULLY. Nothing downstream checked
+        // it, so the empty string reached message.reply(), which discord.js
+        // rejects client-side ("Cannot send an empty message"). Treat it as a
+        // failed agent turn instead, so the existing catch below falls through
+        // to direct OpenAI and the user gets an answer rather than silence.
+        if (!agentResp.messageText || !agentResp.messageText.trim()) {
+          // Tagged so the catch below can tell the user the truth: the agent
+          // was AVAILABLE and answered, it just produced no text. Reporting
+          // that as "Agent unavailable" sends anyone reading the logs or the
+          // notice looking for a sidecar outage that never happened.
+          const emptyTurn = new Error('agent returned an empty message (no text part in the final turn)');
+          emptyTurn.agentEmptyTurn = true;
+          throw emptyTurn;
+        }
+
         const cvPersonality = personalityManager.get('channel-voice') || {
           id: 'channel-voice',
           name: 'Channel Voice',
@@ -688,13 +718,72 @@ ${context}`;
           },
           tokens: { input: 0, output: 0, total: 0 },
           executionSummary: agentResp.summary,
-          fallback: agentResp.fallbackOccurred ? { occurred: true, reason: 'agent fallback' } : undefined,
+          // The sidecar sets fallback_occurred when the turn ran on its generic
+          // base prompt; contextDegraded is the bot-side view of the same event.
+          // Either way the reply is missing the channel's learned voice, so say so.
+          fallback: (agentResp.fallbackOccurred || contextDegraded)
+            ? {
+              occurred: true,
+              reason: 'agent ran without the channel-voice personality or memory context',
+              notice: 'Memory and channel personality unavailable — answered without them',
+            }
+            : undefined,
         };
       } catch (err) {
-        logger.warn(`Agent call failed; falling through to direct-OpenAI: ${err.message}`);
+        // The user is about to get an answer from a DIFFERENT MODEL ON A
+        // DIFFERENT PROVIDER (direct OpenAI instead of Gemini via the agent
+        // sidecar). This repo has been bitten by silent model substitution
+        // before, so both the log and the user-visible notice name what
+        // actually answered.
+        const directModel = (this.config && this.config.openai && this.config.openai.model) || 'gpt-5.1';
+        const emptyTurn = err && err.agentEmptyTurn === true;
+        if (emptyTurn) {
+          logger.warn(`Agent returned an empty turn (${err.message}) — the sidecar was reachable and the call succeeded, it simply produced no text; falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
+        } else {
+          logger.warn(`Agent call failed (${err && err.stack ? err.stack : err}); falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
+        }
+        agentFallback = {
+          occurred: true,
+          reason: emptyTurn
+            ? 'agent returned an empty response (the sidecar answered, but with no text)'
+            : `agent sidecar unavailable: ${err.message}`,
+          notice: emptyTurn
+            ? `Agent returned an empty response — answered with ${directModel} instead`
+            : `Agent unavailable — answered with ${directModel} instead`,
+        };
       }
     }
 
+    const result = await this._directChat(personalityId, userMessage, user, channelId, guildId, imageUrl);
+    if (agentFallback && result) {
+      if (result.success) {
+        // Surface the agent -> direct-OpenAI swap on whatever the direct path
+        // returned, unless that path already reported its own fallback (the
+        // local-LLM redirect), which is more specific.
+        if (!result.fallback) {
+          result.fallback = agentFallback;
+        }
+      } else {
+        // Double outage. Without this the user (and the log) sees only the
+        // direct path's bare "Failed to generate response: ..." with no hint
+        // that the agent path was tried first and failed for a DIFFERENT
+        // reason — which is usually the more diagnostic half of the story.
+        const directError = result.error || 'Failed to generate response';
+        logger.error(`Both chat paths failed for user ${user.id} in channel ${channelId || 'unknown'}: agent path — ${agentFallback.reason}; direct path — ${directError}`);
+        result.fallback = result.fallback || agentFallback;
+        result.error = `${directError} (the agent sidecar was tried first and failed differently: ${agentFallback.reason})`;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * The direct (non-agent) chat path: OpenAI or local LLM, with conversation
+   * history from Mongo. Split out of chat() so the agent path can attach a
+   * user-visible notice to whatever this returns when it fell through.
+   * @private
+   */
+  async _directChat(personalityId, userMessage, user, channelId = null, guildId = null, imageUrl = null) {
     const personality = personalityManager.get(personalityId);
 
     if (!personality) {
@@ -713,7 +802,8 @@ ${context}`;
               result.fallback = {
                 occurred: true,
                 originalPersonality: personalityId,
-                reason: 'Local LLM unavailable'
+                reason: 'Local LLM unavailable',
+                notice: 'Local LLM unavailable — responded with cloud fallback instead'
               };
             }
             return result;
@@ -1027,7 +1117,8 @@ ${context}`;
         result.fallback = {
           occurred: true,
           originalPersonality: personalityId,
-          reason: 'Local LLM unavailable'
+          reason: 'Local LLM unavailable',
+          notice: 'Local LLM unavailable — responded with cloud fallback instead'
         };
       }
 

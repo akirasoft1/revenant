@@ -145,7 +145,9 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Per-Turn Tool Budget**: Configurable cap on `run_in_sandbox` calls per agent turn (default 8) so a single message cannot loop infinitely.
 - **Reaction Reveal**: React to a bot reply with 🔍 / 📜 / 🐛 to attach the source code, stdout (+stderr if non-empty), or stderr-only of the latest sandbox call.
 - **Trace Storage**: Every execution lands in MongoDB `sandbox_executions` with full code/stdout/stderr/egress events. Retention loop demotes traces older than the most recent N per user (default 50) to a thin audit-only form.
-- **Graceful Fallback**: When the sidecar is unhealthy or `AGENT_ENABLED=false`, the bot transparently uses the existing direct-OpenAI path. No restart needed to flip.
+- **Graceful Fallback**: When the sidecar is unhealthy or `AGENT_ENABLED=false`, the bot uses the existing direct-OpenAI path. No restart needed to flip.
+- **Honest Health**: The sidecar's `Health` RPC reports whether `Chat` is actually working, not merely whether the gRPC port is open — a consecutive-failure circuit breaker (default 3) trips it, and after a cooldown (default 60s) it reports healthy again to admit one trial call, so a recovered backend re-enables the agent path without a restart.
+- **Visible Degradation**: A fallback is announced rather than silent, on every chat surface (mention chat, `/chat`, `/chatthread`). Falling through to direct OpenAI names the model that answered instead, an agent turn that came back empty says so rather than claiming the agent was unavailable, and a turn that ran without the channel-voice personality or memory context says that too — in the reply and in the logs. When both the agent and the direct path fail, the error names both.
 
 ### Voice Channel Conversation
 - **Live Voice Sessions**: `/voice join` puts the bot in your current voice channel; it listens for a wake phrase ("hey jarvis" by default) and replies out loud via a dedicated Gemini Live session

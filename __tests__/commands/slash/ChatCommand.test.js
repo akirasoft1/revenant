@@ -150,6 +150,34 @@ describe('ChatSlashCommand', () => {
       expect(response).toBe('**Prompt:** What is the meaning of life?\n\nHello! How can I help you today?');
     });
 
+    it('should announce a degraded reply the way mention chat does', async () => {
+      // This surface rendered result.message and never read result.fallback,
+      // so a /chat user was handed a substitute model with no notice at all.
+      mockChatService.chat.mockResolvedValue({
+        success: true,
+        message: 'Hello! How can I help you today?',
+        personality: { id: 'channel-voice', name: 'Channel Voice', emoji: '🗣️' },
+        tokens: { input: 1, output: 1, total: 2 },
+        fallback: {
+          occurred: true,
+          reason: 'agent sidecar unavailable: boom',
+          notice: 'Agent unavailable — answered with gpt-9-distinctive instead',
+        },
+      });
+
+      await command.execute(mockInteraction, {});
+
+      const response = mockInteraction.editReply.mock.calls[0][0].content;
+      expect(response).toContain('Agent unavailable — answered with gpt-9-distinctive instead');
+      expect(response).toContain('Hello! How can I help you today?');
+    });
+
+    it('should not announce anything when the reply was not degraded', async () => {
+      await command.execute(mockInteraction, {});
+      const response = mockInteraction.editReply.mock.calls[0][0].content;
+      expect(response).not.toContain('⚠️');
+    });
+
     it('should not include prompt line in error responses', async () => {
       mockChatService.chat.mockResolvedValue({
         success: false,

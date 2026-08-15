@@ -15,6 +15,13 @@ class AgentClient {
     protoPath,
     healthIntervalMs = 5000,
     unhealthyThresholdMs = 30000,
+    // LOCKSTEP with the sidecar's AGENT_CHAT_TIMEOUT_SECONDS (540s in
+    // k8s/sandbox/configmap-sandbox.yaml). That value MUST stay below this one
+    // so the sidecar abandons a stuck turn and returns a real error before this
+    // deadline fires. If the bot times out first, the sidecar keeps working on a
+    // turn nobody is waiting for AND its health breaker never learns the turn
+    // failed — which is the invisible-degradation failure this pair was added to
+    // close. Change both in the same commit.
     chatDeadlineMs = 600000,
     healthDeadlineMs = 2000,
   }) {

@@ -1,6 +1,7 @@
 """SandboxOrchestrator — drives Job lifecycle for one execution."""
 import asyncio
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from .concurrency import ConcurrencyGate, GateAcquireError
 from .egress_scraper import EgressScraper
 from .job_template import build_job_spec
 from .log_partition import partition_logs
+
+log = logging.getLogger(__name__)
 
 
 class K8sClient(Protocol):
@@ -69,6 +72,8 @@ class SandboxOrchestrator:
         cpu_limit: str,
         memory_limit: str,
         stdout_storage_cap_bytes: int = 256 * 1024,
+        overall_deadline_s: int | None = None,
+        cleanup_deadline_s: float = 30.0,
     ) -> None:
         self._k8s = k8s
         self._gate = gate
@@ -79,6 +84,20 @@ class SandboxOrchestrator:
         self._cpu = cpu_limit
         self._memory = memory_limit
         self._cap = stdout_storage_cap_bytes
+        # Hard ceiling on one execution, measured while the concurrency permit
+        # is held. The per-call `_request_timeout` in LiveK8sClient is the real
+        # fix for a hung API server; this is the backstop for anything that
+        # stalls without raising, so a permit can never be held indefinitely.
+        # Generous by design: it must not fire before the pod's own
+        # activeDeadlineSeconds (== wall_clock) has produced a real result.
+        self._overall_deadline = (
+            overall_deadline_s if overall_deadline_s is not None else wall_clock_seconds + 120
+        )
+        # ...and a second bound on the cleanup that runs in `_do_run`'s finally.
+        # `asyncio.wait_for` cancels the task and then WAITS for that finally to
+        # finish before raising, so a slow `delete_job` extends the permit hold
+        # past `overall_deadline_s` — the deadline alone does not bound the hold.
+        self._cleanup_deadline = cleanup_deadline_s
 
     async def run(
         self,
@@ -91,8 +110,32 @@ class SandboxOrchestrator:
     ) -> OrchestratorResult:
         execution_id = uuid.uuid4().hex
         try:
+            # ConcurrencyGate.acquire releases the permit in a `finally`, so an
+            # exception can never leak one; the remaining leak was a call that
+            # never returns at all, which `wait_for` now bounds. On timeout the
+            # permit is released, the model gets a real (failed) result instead
+            # of the bot's 600s chat deadline, and the orphaned Job cleans
+            # itself up via activeDeadlineSeconds + ttlSecondsAfterFinished.
             async with self._gate.acquire(user_id=user_id, wait=False):
-                return await self._do_run(execution_id, user_id, language, code, stdin, env)
+                try:
+                    return await asyncio.wait_for(
+                        self._do_run(execution_id, user_id, language, code, stdin, env),
+                        timeout=self._overall_deadline,
+                    )
+                except asyncio.TimeoutError:
+                    log.error(
+                        "sandbox execution %s for user %s exceeded the %ds orchestrator deadline; "
+                        "abandoning it and releasing the concurrency permit",
+                        execution_id, user_id, self._overall_deadline,
+                    )
+                    return OrchestratorResult(
+                        execution_id=execution_id, exit_code=-1, stdout="", stderr="",
+                        stdout_truncated=False, stderr_truncated=False,
+                        duration_ms=self._overall_deadline * 1000,
+                        schedule_wait_ms=0, timed_out=True, oom_killed=False,
+                        orchestrator_error="orchestrator_timeout",
+                        egress_events=[], pod_name="", node_name=None,
+                    )
         except GateAcquireError as e:
             if e.scope == "user":
                 raise UserConcurrencyCap from e
@@ -174,6 +217,20 @@ class SandboxOrchestrator:
             )
         finally:
             try:
-                await self._k8s.delete_job(job_name)
+                # Bounded: this finally runs while the task is being cancelled by
+                # the overall deadline, and the permit is still held until it
+                # returns. An abandoned Job cleans itself up anyway via
+                # activeDeadlineSeconds + ttlSecondsAfterFinished, so giving up
+                # on the delete is cheaper than holding a global permit.
+                await asyncio.wait_for(
+                    self._k8s.delete_job(job_name), timeout=self._cleanup_deadline,
+                )
+            except asyncio.TimeoutError:
+                log.error(
+                    "deleting sandbox Job %s exceeded the %ss cleanup deadline; abandoning the "
+                    "delete and releasing the concurrency permit. The Job self-cleans via "
+                    "activeDeadlineSeconds + ttlSecondsAfterFinished.",
+                    job_name, self._cleanup_deadline,
+                )
             except Exception:
                 pass  # cleanup best-effort

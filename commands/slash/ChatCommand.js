@@ -71,8 +71,13 @@ class ChatSlashCommand extends BaseSlashCommand {
       return;
     }
 
+    // A degraded reply says so here too. This surface used to render
+    // `result.message` and ignore `result.fallback` entirely, so a /chat user
+    // got a substitute model (or a reply with no memory and no channel
+    // personality) with no notice at all — while the same degradation was
+    // announced in mention chat.
     const response = TextUtils.wrapUrls(
-      `**Prompt:** ${userMessage}\n\n${result.message}`
+      `${TextUtils.fallbackNotice(result.fallback)}**Prompt:** ${userMessage}\n\n${result.message}`
     );
 
     // Convert any generated images to Discord attachments
