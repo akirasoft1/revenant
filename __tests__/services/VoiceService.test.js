@@ -197,29 +197,77 @@ test('join creates a voice connection and a wake gate', async () => {
   expect(deps.joinVoiceChannel).toHaveBeenCalledWith(expect.objectContaining({ channelId: 'c1', guildId: 'g1' }));
 });
 
-// --- join-latency fix: guild state must be recorded before slow gate setup ---
+// --- join-latency fix: guild state must be recorded before ANY later setup ---
 //
-// Root cause of a ~90s window where `/voice leave` was a no-op: the wake-word
-// gate factory can trigger a long ONNX model load (see services/voice/wakeword.js)
-// that saturates the CPU limit. `_guilds.set()` must happen as soon as the
-// connection exists, BEFORE `deps.makeWakeGate()` runs, so a `/voice leave`
-// racing that slow setup still finds the connection.
-test('join records _guilds state (with connection) before the (lazy, per-speaker) wake-gate factory ever runs', async () => {
-  const deps = makeDeps();
-  let sawStateWhenGateFactoryRan = null;
-  deps.makeWakeGate = jest.fn(() => {
-    const g = svc._guilds.get('g1');
-    sawStateWhenGateFactoryRan = !!(g && g.connection);
-    return { push: jest.fn(() => false), reset: jest.fn() };
-  });
-  const { svc } = makeService(deps);
+// Root cause of a ~90s window where `/voice leave` was a no-op (9fd8039): the
+// wake-word gate factory triggered a cold ONNX model load
+// (services/voice/wakeword.js) that saturated the bot's 0.5-CPU limit, and it
+// ran BEFORE `_guilds.set()` -- so for the whole load there was no entry for
+// the guild and `/voice leave` silently no-opped while the bot sat in the VC.
+//
+// The fix is an ORDERING guarantee: `_guilds.set()` runs the moment a live
+// connection exists, and everything else `join()` does happens after it.
+//
+// This test used to assert `sawStateWhenGateFactoryRan === true` after driving
+// one frame through `_handleUserPcm`. That could not fail: the factory is now
+// lazy (`_perUser`), its only call site is reached from `_handleUserPcm` after
+// `_guilds.get(guildId)` has ALREADY returned a guild, and the variable was
+// overwritten by every call -- so `true` was the only value it could ever
+// hold, regression present or not. The rewrite below instead probes each seam
+// `join()` touches and requires that every one of them already saw the state,
+// which is exactly the invariant and is false the moment `_guilds.set()` moves
+// later or eager work is put in front of it.
+//
+// What breaks it (verified by mutation):
+//   * moving `this._guilds.set(guildId, state)` below the receiver wiring
+//     -> receiverWiring probe records false;
+//   * moving it below `d.setInterval(...)` (the pre-9fd8039 shape, at the end
+//     of join) -> both the receiverWiring and timerSetup probes record false;
+//   * reintroducing an eager `d.makeWakeGate()` before the set (the literal
+//     regression) -> the gate-factory probe records false.
+test('join records _guilds state (with the live connection) before every later step of join()', async () => {
+  let svc = null;
+  const probe = () => {
+    const g = svc && svc._guilds.get('g1');
+    return !!(g && g.connection);
+  };
+  // Every observation is kept, not just the last one, so a single early call
+  // that misses the state cannot be masked by a later call that sees it.
+  const seen = { gateFactory: [], receiverWiring: [], timerSetup: [] };
+
+  const base = makeDeps();
+  const deps = {
+    ...base,
+    joinVoiceChannel: jest.fn((...args) => {
+      const connection = base.joinVoiceChannel(...args);
+      // Instrument the first seam join() uses AFTER the guarantee point.
+      const speaking = connection.receiver.speaking;
+      const origOn = speaking.on.bind(speaking);
+      speaking.on = (...onArgs) => { seen.receiverWiring.push(probe()); return origOn(...onArgs); };
+      return connection;
+    }),
+    makeWakeGate: jest.fn(() => {
+      seen.gateFactory.push(probe());
+      return { push: jest.fn(() => false), reset: jest.fn() };
+    }),
+    setInterval: jest.fn(() => { seen.timerSetup.push(probe()); return 1; }),
+  };
+  ({ svc } = makeService(deps));
   await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
-  // The wake-gate factory is now lazy (per-speaker, via `_perUser`) -- it only
-  // runs once someone actually speaks, not eagerly during join(). Drive that
-  // first contact and confirm the same guarantee still holds: `_guilds` state
-  // (with the live connection) was already in place before the factory ran.
+
+  // The receiver wiring and the tick timer are set up after `_guilds.set()`.
+  // Both must have found the state, with the live connection, already there.
+  expect(seen.receiverWiring).toEqual([true]);
+  expect(seen.timerSetup).toEqual([true]);
+  // Conditional half of the invariant: join() is free NOT to build gates (they
+  // are lazy today), but if it ever builds one it must do so after the set.
+  expect(seen.gateFactory).not.toContain(false);
+
+  // And the lazy path keeps the guarantee: first contact from a speaker builds
+  // the per-speaker gate, and it too sees the recorded state.
   await svc._handleUserPcm('g1', 'user1', Buffer.alloc(48 * 4));
-  expect(sawStateWhenGateFactoryRan).toBe(true);
+  expect(seen.gateFactory.length).toBeGreaterThan(0);
+  expect(seen.gateFactory).not.toContain(false);
 });
 
 test('leave destroys the connection and cleans up the tick timer', async () => {

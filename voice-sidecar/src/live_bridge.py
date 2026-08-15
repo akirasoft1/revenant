@@ -578,8 +578,38 @@ class LiveBridge:
 
     async def _pump_server(self, session, emit, stats, resume) -> None:
         # receive() ends per-turn on turn_complete; loop to span the whole session.
-        # When the session is closed, receive() yields nothing immediately —
-        # that's the signal to stop, otherwise this would busy-spin forever.
+        #
+        # How this loop REALLY terminates, verified against the installed
+        # google-genai 2.17.0 (requirements.txt pins >=; re-check on a bump):
+        # `AsyncSession.receive()` (live.py:445-449) is
+        # `while result := await self._receive():` over a `LiveServerMessage`.
+        # That is a pydantic model with no `__bool__` and no `__len__`, so it
+        # is ALWAYS truthy and the walrus condition can never end the loop.
+        # `receive()` therefore has exactly two exits: the explicit `break`
+        # after a message carrying `server_content.turn_complete`, or an
+        # exception. And EVERY connection close arrives as an exception --
+        # clean 1000/1001 and abnormal 1006/1011 alike -- because `_receive()`
+        # (live.py:530-537) funnels every `ConnectionClosed` into
+        # `errors.APIError.raise_error(...)`.
+        #
+        # So against the SDK this generator NEVER completes without producing
+        # at least one message: a closed session raises out of the `async for`
+        # below, `converse` catches it, `_is_session_drop` classifies it, and
+        # that is what makes the reconnect decision reachable at all.
+        #
+        # Which makes the `if not produced: break` guard at the bottom
+        # UNREACHABLE in production. It is kept deliberately, and only as a
+        # hot-spin fuse: this `while True` contains no await outside the
+        # `async for`, so a `receive()` that returns without yielding would
+        # spin with no suspension point and peg the event loop -- taking down
+        # every session in the sidecar, not just this one. That is a much
+        # worse failure than an early exit, and the guard costs one branch.
+        #
+        # What would make it reachable: google-genai changing `receive()` to
+        # swallow `ConnectionClosed` and return (its own `_receive_loop` at
+        # live.py:505-520 already does exactly that for its internal loop), or
+        # `LiveServerMessage` gaining a falsy `__bool__`/`__len__`. Either is
+        # a silent behaviour change, which is why the branch logs at WARNING.
         while True:
             produced = False
             async for msg in session.receive():
@@ -621,5 +651,15 @@ class LiveBridge:
                                 stats.turns, stats.audio_out_chunks, stats.audio_out_bytes)
                     await emit(voice_pb2.VoiceServerEvent(turn_complete=voice_pb2.TurnComplete()))
             if not produced:
-                logger.debug("voice: session receive() closed; ending server pump")
+                # Unreachable against google-genai's AsyncSession (see the long
+                # note at the top of this method). WARNING, not DEBUG: if this
+                # ever fires, the SDK close contract this whole bridge is built
+                # on has changed, and the reconnect path -- which only runs off
+                # a RAISED close -- has stopped being reachable.
+                logger.warning(
+                    "voice: session receive() returned without producing a message; the "
+                    "google-genai close contract has changed (a close must always raise, "
+                    "never return) -- ending the server pump instead of spinning. "
+                    "Session resumption/reconnect is driven by the raised close and is "
+                    "NOT reachable on this path.")
                 break
