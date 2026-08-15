@@ -7,7 +7,7 @@ from google.genai import errors as genai_errors
 from websockets.exceptions import ConnectionClosedOK
 
 from src import voice_pb2
-from src.live_bridge import LiveBridge, _ResumeState, _SessionRef
+from src.live_bridge import LiveBridge, _ResumeState, _SessionRef, _is_normal_close
 from src.live_bridge import _SessionStats as _SessionStatsForTest
 
 
@@ -316,6 +316,23 @@ class ApiCloseSession(FakeSession):
         raise genai_errors.APIError(1000, {"message": "received 1000 (OK)"})
 
 
+class AbnormalCloseSession(FakeSession):
+    """receive() yields any scripted messages, THEN raises the genai SDK's
+    APIError for an ABNORMAL ws close (1006) -- the dropped-connection case
+    session resumption exists to paper over.
+
+    Same mechanism as ApiCloseSession (`_receive()` funnels every
+    ConnectionClosed into `errors.APIError.raise_error(code, reason, None)`),
+    but with a code `_is_normal_close` does NOT whitelist. That distinction is
+    load-bearing: a clean 1000/1001 drop that cannot be resumed ends the
+    session quietly, while an abnormal drop that cannot be resumed is
+    surfaced to the bot as an ErrorEvent."""
+    async def receive(self):
+        for m in self._script:
+            yield m
+        raise genai_errors.APIError(1006, {"message": "connection closed abnormally"})
+
+
 async def test_normal_ws_close_emits_no_error_event():
     # A clean session close (raw ConnectionClosedOK) is expected -- it must NOT
     # surface to the bot as an ErrorEvent (which would trigger a premature
@@ -336,10 +353,32 @@ async def test_api_error_normal_close_emits_no_error_event():
     assert not any(e.WhichOneof("event") == "error" for e in out)
 
 
-class MultiTurnClosingSession:
-    """A session whose receive() spans multiple calls: yields one turn's
-    messages, then on the next call yields nothing at all (immediate
-    StopAsyncIteration) -- simulating a cleanly-closed session."""
+class NonConformingSession:
+    """NOT a stand-in for the google-genai SDK -- deliberately the ONE shape
+    the SDK cannot produce. receive() yields one turn's messages, then on the
+    next call returns normally (immediate StopAsyncIteration) instead of
+    raising.
+
+    The real `AsyncSession.receive()` NEVER does this: a closed connection
+    always surfaces as a raised APIError (clean 1000/1001 and abnormal
+    1006/1011 alike -- `_receive()` funnels every ConnectionClosed through
+    `errors.APIError.raise_error`). This double exists for exactly one test,
+    `test_pump_server_guard_stops_a_session_that_returns_without_producing`,
+    which pins `_pump_server`'s unreachable-in-production hot-spin fuse.
+
+    Do NOT use it for anything else, and above all never to assert
+    error/no-error classification: a close modelled this way produces no
+    exception, so it skips `_is_session_drop` and every reconnect/outcome
+    branch hanging off it -- the exact trap that made two reconnect tests
+    assert the opposite of production. Use ApiCloseSession (clean),
+    AbnormalCloseSession (dropped) or WsCloseSession for that.
+
+    The `await asyncio.sleep(0)` is a test-safety measure, not part of the
+    modelled shape: `_pump_server`'s `while True` has no await outside its
+    `async for`, so DELETING the guard under test would turn this into a pure
+    busy-spin that starves the event loop and hangs the whole suite forever
+    rather than failing. The yield point makes that failure a bounded
+    `wait_for` timeout instead."""
 
     def __init__(self, turns):
         self._turns = turns
@@ -352,20 +391,31 @@ class MultiTurnClosingSession:
         pass
 
     async def receive(self):
+        await asyncio.sleep(0)   # see the docstring: keeps a guard-less spin bounded
         turn = self._turns[self._call_count] if self._call_count < len(self._turns) else []
         self._call_count += 1
         for m in turn:
             yield m
 
 
-async def test_pump_server_stops_promptly_when_session_closes_cleanly():
-    """Finding 1: when receive() yields nothing on a call (session closed),
-    _pump_server must break out of its outer while-loop instead of
-    busy-spinning. Wrapped in wait_for to prove converse() returns promptly
-    rather than hanging/spinning."""
-    session = MultiTurnClosingSession([
+async def test_pump_server_guard_stops_a_session_that_returns_without_producing(caplog):
+    """`_pump_server`'s `if not produced: break` is UNREACHABLE against
+    google-genai (verified against the installed 2.17.0: `receive()` loops
+    `while result := await self._receive():` over an always-truthy pydantic
+    `LiveServerMessage`, and `_receive()` converts every ConnectionClosed
+    into a raised APIError -- so it can only exit via turn_complete or by
+    raising, never by yielding nothing).
+
+    It is kept anyway as a hot-spin fuse, so pin BOTH halves of that:
+      * the pump must terminate rather than spin -- delete the guard and this
+        hangs until the wait_for fires;
+      * it must say loudly that the SDK contract changed, because reaching
+        this branch means closes stopped raising, and the reconnect path is
+        driven entirely by the raised close.
+    """
+    session = NonConformingSession([
         [_msg(turn_complete=True)],  # one turn of messages
-        [],                          # then: session closed, nothing more
+        [],                          # then: returns without producing
     ])
     bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
     start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(user_id="u"))
@@ -379,9 +429,13 @@ async def test_pump_server_stops_promptly_when_session_closes_cleanly():
         await asyncio.Event().wait()  # client stream stays open; only the session closes
         yield  # pragma: no cover - unreachable
 
-    await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=1)
+    with caplog.at_level(logging.WARNING):
+        await asyncio.wait_for(bridge.converse(req_iter(), emit), timeout=1)
 
     assert any(e.WhichOneof("event") == "turn_complete" for e in out)
+    assert "close contract has changed" in caplog.text, (
+        "the fuse must announce itself; a DEBUG-level 'session closed' line reads as "
+        f"routine and hides an SDK contract break. Logs: {caplog.text!r}")
 
 
 def test_live_config_enables_compression_and_resumption():
@@ -454,33 +508,6 @@ async def test_pump_server_ignores_non_resumable_update():
     assert resume.handle is None
 
 
-class ClosingFakeSession(FakeSession):
-    """CAUTION -- NOT a realistic stand-in for the google-genai SDK. A session
-    whose receive() returns normally (StopAsyncIteration) after producing one
-    turn's worth of messages, rather than raising. The real SDK's
-    AsyncSession.receive() never does this -- see ApiCloseSession/
-    WsCloseSession above for the shape the SDK actually produces (it ALWAYS
-    raises on close, clean or abnormal). This double only exists to exercise
-    the reconnect bookkeeping (config carries the handle, no re-seeding,
-    caps) against a close shape that happens not to need `_is_session_drop`
-    at all. Do not use it to validate error/no-error classification -- use
-    the Api/WsCloseSession doubles for that. NOTE: receive() only yields the
-    script on the FIRST call; every call after that yields nothing so
-    `_pump_server`'s `if not produced: break` sees a real close instead of
-    re-yielding the same script forever (which would busy-loop the event
-    loop with no genuine await/suspension point and hang the test)."""
-
-    def __init__(self, script):
-        super().__init__(script)
-        self._served = False
-
-    async def receive(self):
-        if not self._served:
-            self._served = True
-            for m in self._script:
-                yield m
-
-
 def _flaky_open_factory(fail_count, session_after):
     """A session_factory whose `__aenter__` (the connect itself) raises
     RuntimeError the first `fail_count` times it is invoked, then succeeds
@@ -530,8 +557,12 @@ async def _drive_open_ended(bridge, start):
 
 
 async def test_reconnects_with_handle_and_does_not_reseed_history():
-    s1 = ClosingFakeSession([_resume_msg("h-1")])   # gives a handle, then ends
-    s2 = FakeSession([])                             # resumed session: blocks (stays open)
+    # Realistic close: the SDK RAISES on every close, so a drop reaches the
+    # reconnect decision through `_is_session_drop`, not by receive() quietly
+    # running dry. (This used to use a double that returned instead -- a shape
+    # google-genai cannot produce, which skipped that classification entirely.)
+    s1 = ApiCloseSession([_resume_msg("h-1")])   # gives a handle, then closes
+    s2 = FakeSession([])                          # resumed session: blocks (stays open)
     factory = _multi_factory([s1, s2])
     bridge = LiveBridge(factory, model="m", default_voice="Puck")
     start = voice_pb2.SessionStart(user_id="u1", history=[
@@ -544,14 +575,30 @@ async def test_reconnects_with_handle_and_does_not_reseed_history():
     # history seeded ONLY on the first connect
     assert len(s1.seeded) == 1
     assert s2.seeded == []
-    # transparent: no error surfaced to the bot
+    # a drop we DID resume is transparent: nothing surfaces to the bot
     assert not any(ev.WhichOneof("event") == "error" for ev in out)
 
 
-async def test_no_reconnect_without_a_handle():
-    s1 = ClosingFakeSession([])       # ends with no resumption handle
-    s2 = FakeSession([])
-    factory = _multi_factory([s1, s2])
+# --- What a session that CANNOT be resumed does to the bot ---------------
+#
+# These two pairs replace four assertions that were true only of the double.
+# They used `ClosingFakeSession`, whose receive() returned instead of raising
+# -- so `server_exc` was always None, every `raise server_exc` in `converse`
+# was skipped, and "no error surfaced" was a property of the fake, not of
+# production. The fixture's own docstring said not to use it for exactly this.
+#
+# Against the real SDK a close always raises, so `server_exc` is always set on
+# these paths and `converse` re-raises it. What the bot then sees is decided by
+# `_is_normal_close`, so each scenario is pinned twice:
+#   clean (ws 1000)    -> outcome "closed", nothing surfaced;
+#   abnormal (ws 1006) -> outcome "error", an ErrorEvent so the bot can tear
+#                         its guild session down instead of talking to a dead
+#                         stream (the bot's `'error'` handler is the only
+#                         teardown trigger it has -- there is no `'end'` one).
+
+async def test_no_reconnect_without_a_handle_clean_close_is_silent():
+    s1 = ApiCloseSession([])          # closes cleanly, never handed us a handle
+    factory = _multi_factory([s1, FakeSession([])])
     bridge = LiveBridge(factory, model="m", default_voice="Puck")
     start = voice_pb2.SessionStart(user_id="u1")
     out = await _drive_open_ended(bridge, start)
@@ -559,15 +606,43 @@ async def test_no_reconnect_without_a_handle():
     assert not any(ev.WhichOneof("event") == "error" for ev in out)
 
 
-async def test_reconnects_are_capped():
-    # every session ends immediately but hands back a handle
-    sessions = [ClosingFakeSession([_resume_msg(f"h-{i}")]) for i in range(10)]
+async def test_no_reconnect_without_a_handle_abnormal_close_surfaces_an_error():
+    s1 = AbnormalCloseSession([])     # dropped mid-session, no handle to resume with
+    factory = _multi_factory([s1, FakeSession([])])
+    bridge = LiveBridge(factory, model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    assert len(factory.configs) == 1  # still no blind reconnect
+    errs = [ev for ev in out if ev.WhichOneof("event") == "error"]
+    assert errs, (
+        "an unresumable ABNORMAL drop must reach the bot: swallowing it leaves the bot "
+        "streaming audio into a session that no longer exists")
+    assert "1006" in errs[0].error.message
+
+
+async def test_reconnects_are_capped_clean_close_is_silent():
+    # every session closes immediately but hands back a handle
+    sessions = [ApiCloseSession([_resume_msg(f"h-{i}")]) for i in range(10)]
     factory = _multi_factory(sessions)
     bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=2)
     start = voice_pb2.SessionStart(user_id="u1")
     out = await _drive_open_ended(bridge, start)
     assert len(factory.configs) == 3   # initial + 2 reconnects, then stop
     assert not any(ev.WhichOneof("event") == "error" for ev in out)
+
+
+async def test_reconnects_are_capped_abnormal_close_surfaces_an_error():
+    sessions = [AbnormalCloseSession([_resume_msg(f"h-{i}")]) for i in range(10)]
+    factory = _multi_factory(sessions)
+    bridge = LiveBridge(factory, model="m", default_voice="Puck", max_reconnects=2)
+    start = voice_pb2.SessionStart(user_id="u1")
+    out = await _drive_open_ended(bridge, start)
+    assert len(factory.configs) == 3   # budget still enforced
+    errs = [ev for ev in out if ev.WhichOneof("event") == "error"]
+    assert errs, (
+        "exhausting the reconnect budget on a flapping connection must end the session "
+        "visibly, not look to the bot like a session that is still alive")
+    assert "1006" in errs[0].error.message
 
 
 async def test_client_session_end_exits_even_with_a_resumption_handle():
@@ -595,9 +670,10 @@ async def test_realistic_close_reconnects_with_handle_and_no_error_to_bot():
     """FIX C1 regression test. Against the REAL google-genai SDK,
     AsyncSession.receive() never returns normally on a closed connection --
     it always RAISES (APIError wrapping the ws close code, clean 1000/1001
-    or abnormal alike). ClosingFakeSession (used by the other reconnect
-    tests above) models a close shape the SDK does not produce and so could
-    not catch this bug; ApiCloseSession is the realistic double. Before the
+    or abnormal alike), so ApiCloseSession is the realistic double. The
+    reconnect tests above once used a double that RETURNED on close instead
+    -- a shape the SDK does not produce, which could not catch this bug --
+    and have since been moved onto Api/AbnormalCloseSession. Before the
     C1 fix, the blanket `for t in done: if exc: raise exc` re-raised this
     immediately and escaped the whole reconnect loop -- only ONE session was
     ever opened, the reconnect branch was unreachable."""
@@ -956,3 +1032,64 @@ async def test_audio_sent_before_the_first_session_opens_is_not_dropped():
 
     assert [a.data for a in session.sent_audio] == [b"\x00", b"\x01", b"\x02"], (
         f"pre-roll audio was dropped while the session opened; got {session.sent_audio}")
+
+
+# --- Close-code classification: an error must never be read as a clean close ---
+#
+# `_is_normal_close` decides whether `converse` emits an ErrorEvent at all. Read
+# a genuine failure as a clean close and the bot is never told its session died:
+# no teardown, no notifyError, no reconnect -- it goes on streaming audio into a
+# dead stream. So the loose end of this check is worth pinning precisely.
+
+def test_normal_close_recognises_the_structured_close_code():
+    for code in (1000, 1001):
+        assert _is_normal_close(genai_errors.APIError(code, {"message": "bye"})), code
+    assert _is_normal_close(ConnectionClosedOK(None, None))
+
+
+def test_a_timeout_reported_in_milliseconds_is_not_a_clean_close():
+    # The regression: `"1000" in str(exc)` matched the "1000" inside "10000ms".
+    # The SDK reports this as a ServerError (a real APIError subclass), and the
+    # bot MUST hear about it.
+    exc = genai_errors.APIError(504, {"message": "deadline exceeded after 10000ms"})
+    assert not _is_normal_close(exc)
+    assert not _is_normal_close(
+        genai_errors.APIError(429, {"message": "quota of 100000 tokens exhausted"}))
+    assert not _is_normal_close(
+        genai_errors.APIError(1011, {"message": "internal error; request id req-1000-abc"}))
+
+
+def test_incidental_digits_in_a_codeless_error_are_not_a_clean_close():
+    # The message fallback exists for a wrapper that formats the close code into
+    # the text without keeping it on the instance, so it is anchored to where
+    # APIError.__str__ puts it -- the first token. Anywhere else is not a code.
+    class _CodelessApiError(genai_errors.APIError):
+        def __init__(self, message):
+            self.code = None
+            self.status = None
+            self.details = None
+            self.message = message
+            Exception.__init__(self, message)
+
+    assert not _is_normal_close(_CodelessApiError("deadline exceeded after 10000ms"))
+    assert not _is_normal_close(_CodelessApiError("closed after 21000 frames"))
+    assert _is_normal_close(_CodelessApiError("1000 OK. received 1000 (OK)"))
+
+
+async def test_a_10000ms_timeout_surfaces_to_the_bot_as_an_error():
+    # End to end, through `converse`: the misclassification's real cost is a
+    # session that dies silently, so assert the ErrorEvent actually reaches the
+    # bot rather than only unit-testing the predicate.
+    class TimeoutSession(FakeSession):
+        async def receive(self):
+            for m in self._script:
+                yield m
+            raise genai_errors.APIError(504, {"message": "deadline exceeded after 10000ms"})
+
+    session = TimeoutSession([])
+    bridge = LiveBridge(_factory(session), model="m", default_voice="Puck")
+    start = voice_pb2.SessionStart(user_id="u")
+    out = await _drive_open_ended(bridge, start)
+    errs = [e for e in out if e.WhichOneof("event") == "error"]
+    assert errs, "a 10000ms timeout was silently reclassified as a clean close"
+    assert "10000ms" in errs[0].error.message

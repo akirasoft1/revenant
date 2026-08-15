@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+import re
 import time
 
 from google.genai import types
@@ -33,17 +34,51 @@ except Exception:  # pragma: no cover
     _API_ERROR = ()
 
 
+# Anchored close-code match for the message FALLBACK below. `APIError.__str__`
+# is `f"{self.code} {self.status}. {self.details}"`, so a wrapped close code is
+# always the FIRST token of the message. The `\b` matters as much as the `^`:
+# without it "10000 ..." matches the "1000" prefix.
+_CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
+
+
 def _is_normal_close(exc) -> bool:
     """True if `exc` is a clean session close (ws code 1000/1001), whether raw
-    from websockets or wrapped by the genai SDK, so we don't treat it as an error."""
+    from websockets or wrapped by the genai SDK, so we don't treat it as an error.
+
+    Misclassifying here fails in the WORST direction: `converse` would set
+    `outcome = "closed"`, emit no ErrorEvent, and the bot would never learn its
+    session died -- no teardown, no notifyError, no reconnect. So the checks are
+    ordered strongest-first and the loosest one is anchored.
+
+    The structured `code` check is the real one, and against the installed
+    google-genai (2.17.0, verified by executing it, not by reading it) it is
+    sufficient on its own: every path that turns a websocket close into an
+    exception -- `AsyncSession._receive` and the one-shot connect in `live.py` --
+    calls `errors.APIError.raise_error(code, reason, None)` with the ws close
+    code (1006 when the peer sent no close frame), and `APIError.__init__`
+    assigns `self.code = code if code else self._get_code(...)`, so a truthy
+    close code is always preserved on the instance.
+
+    The message fallback is kept only for an SDK/wrapper shape that formats the
+    code into the text without carrying it on the instance, and it is anchored
+    to the position `APIError` actually formats it at. It used to be
+    `"1000" in str(exc)`, which matched incidental digits ANYWHERE: a timeout
+    reported as "10000ms", a quota message containing "100000", or a request id
+    that happened to contain "1000" all classified a genuine failure as a clean
+    close.
+    """
     if _WS_NORMAL_CLOSE and isinstance(exc, _WS_NORMAL_CLOSE):
         return True
     if _API_ERROR and isinstance(exc, _API_ERROR):
         code = getattr(exc, "code", None)
         if code in (1000, 1001):
             return True
-        msg = str(exc)
-        if "1000" in msg or "1001" in msg:
+        # A code that IS populated and is not 1000/1001 is a decided answer --
+        # don't let the text fallback second-guess it (a 1011 whose reason text
+        # quotes "1000" is not a clean close).
+        if isinstance(code, int):
+            return False
+        if _CLOSE_CODE_AT_START.match(str(exc)):
             return True
     return False
 
@@ -578,8 +613,38 @@ class LiveBridge:
 
     async def _pump_server(self, session, emit, stats, resume) -> None:
         # receive() ends per-turn on turn_complete; loop to span the whole session.
-        # When the session is closed, receive() yields nothing immediately —
-        # that's the signal to stop, otherwise this would busy-spin forever.
+        #
+        # How this loop REALLY terminates, verified against the installed
+        # google-genai 2.17.0 (requirements.txt pins >=; re-check on a bump):
+        # `AsyncSession.receive()` (live.py:445-449) is
+        # `while result := await self._receive():` over a `LiveServerMessage`.
+        # That is a pydantic model with no `__bool__` and no `__len__`, so it
+        # is ALWAYS truthy and the walrus condition can never end the loop.
+        # `receive()` therefore has exactly two exits: the explicit `break`
+        # after a message carrying `server_content.turn_complete`, or an
+        # exception. And EVERY connection close arrives as an exception --
+        # clean 1000/1001 and abnormal 1006/1011 alike -- because `_receive()`
+        # (live.py:530-537) funnels every `ConnectionClosed` into
+        # `errors.APIError.raise_error(...)`.
+        #
+        # So against the SDK this generator NEVER completes without producing
+        # at least one message: a closed session raises out of the `async for`
+        # below, `converse` catches it, `_is_session_drop` classifies it, and
+        # that is what makes the reconnect decision reachable at all.
+        #
+        # Which makes the `if not produced: break` guard at the bottom
+        # UNREACHABLE in production. It is kept deliberately, and only as a
+        # hot-spin fuse: this `while True` contains no await outside the
+        # `async for`, so a `receive()` that returns without yielding would
+        # spin with no suspension point and peg the event loop -- taking down
+        # every session in the sidecar, not just this one. That is a much
+        # worse failure than an early exit, and the guard costs one branch.
+        #
+        # What would make it reachable: google-genai changing `receive()` to
+        # swallow `ConnectionClosed` and return (its own `_receive_loop` at
+        # live.py:505-520 already does exactly that for its internal loop), or
+        # `LiveServerMessage` gaining a falsy `__bool__`/`__len__`. Either is
+        # a silent behaviour change, which is why the branch logs at WARNING.
         while True:
             produced = False
             async for msg in session.receive():
@@ -621,5 +686,15 @@ class LiveBridge:
                                 stats.turns, stats.audio_out_chunks, stats.audio_out_bytes)
                     await emit(voice_pb2.VoiceServerEvent(turn_complete=voice_pb2.TurnComplete()))
             if not produced:
-                logger.debug("voice: session receive() closed; ending server pump")
+                # Unreachable against google-genai's AsyncSession (see the long
+                # note at the top of this method). WARNING, not DEBUG: if this
+                # ever fires, the SDK close contract this whole bridge is built
+                # on has changed, and the reconnect path -- which only runs off
+                # a RAISED close -- has stopped being reachable.
+                logger.warning(
+                    "voice: session receive() returned without producing a message; the "
+                    "google-genai close contract has changed (a close must always raise, "
+                    "never return) -- ending the server pump instead of spinning. "
+                    "Session resumption/reconnect is driven by the raised close and is "
+                    "NOT reachable on this path.")
                 break
