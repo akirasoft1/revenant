@@ -476,7 +476,12 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
   const onUnhandledRejection = (err) => unhandledRejections.push(err);
   process.on('unhandledRejection', onUnhandledRejection);
   try {
-    const gate = { push: jest.fn(() => true), reset: jest.fn() }; // fire wake immediately
+    // The gate itself throws on push. _startSession's own failures are now
+    // caught and recovered from inside the service (see the session-open
+    // recovery tests below), so a gate throw -- which happens in
+    // _handleUserPcm's own body, before any of that -- is what still exercises
+    // the floating-promise guard at the 'data' call site.
+    const gate = { push: jest.fn(() => { throw new Error('gate push boom'); }), reset: jest.fn() };
     const rxStream = new EventEmitter();
     const decoder = { decode: jest.fn((buf) => buf) };
     const connection = new EventEmitter();
@@ -489,11 +494,10 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
       joinVoiceChannel: jest.fn(() => connection),
       opusDecoderFactory: () => decoder,
     });
-    const { svc, voiceClient } = makeService(deps);
-    // Force the wake path to throw synchronously inside _startSession (invoked via
-    // _apply, which _handleUserPcm awaits internally but whose *caller* -- the receive
-    // stream's 'data' listener wired in join() -- does not await or catch).
-    voiceClient.converse.mockImplementation(() => { throw new Error('converse boom'); });
+    const { svc } = makeService(deps);
+    // The wake path throws synchronously inside _handleUserPcm, whose *caller*
+    // -- the receive stream's 'data' listener wired in join() -- does not await
+    // or catch.
 
     await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
 
@@ -508,7 +512,7 @@ test('a rejection in the PCM decoder path is caught and logged, not left as an u
     await new Promise((r) => setImmediate(r));
 
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('voice: pcm handling failed'));
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('converse boom'));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('gate push boom'));
     expect(unhandledRejections).toHaveLength(0);
   } finally {
     process.removeListener('unhandledRejection', onUnhandledRejection);
@@ -674,20 +678,20 @@ test('listen() opens a session immediately with no wake word', async () => {
   const deps = makeDeps();
   const { svc, voiceClient } = makeService(deps);
   const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
-  expect(engaged).toBe(true);
+  expect(engaged).toEqual({ listening: true, channelId: 'c1' });
   expect(voiceClient.converse).toHaveBeenCalled();        // session opened without any gate/wake
   const session = voiceClient.converse.mock.results[0].value;
   expect(session.sendStart).toHaveBeenCalled();
 });
 
-test('listen() when already active is a no-op (returns false)', async () => {
+test('listen() when already active is a no-op (reports the refusal)', async () => {
   const gate = { push: jest.fn(() => true), reset: jest.fn() };
   const deps = makeDeps({ makeWakeGate: () => gate });
   const { svc } = makeService(deps);
   await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
   await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024)); // wake -> active
   const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'u1' });
-  expect(engaged).toBe(false);
+  expect(engaged).toEqual({ listening: false, reason: 'already-active' });
 });
 
 // --- Bug fix: listen() must grant the floor, or the active-branch's floor
@@ -700,7 +704,7 @@ test('listen() grants the floor to the invoking user so their audio is actually 
   const { svc, voiceClient } = makeService(deps);
   const guildId = 'g1';
   const engaged = await svc.listen({ channel: { id: 'c1', guild: { id: guildId, voiceAdapterCreator: {} } }, guildId, userId: 'admin1' });
-  expect(engaged).toBe(true);
+  expect(engaged).toEqual({ listening: true, channelId: 'c1' });
 
   const g = svc._guilds.get(guildId);
   expect(g.floor.holder()).toBe('admin1'); // listen() must make the invoker the floor holder
@@ -1964,5 +1968,345 @@ describe('deferral: persona clause kill switch', () => {
     const { svc } = makeService(makeDeps(), { deferralEnabled: true });
     const text = svc._appendVoicePersona('BASE');
     expect(text).toContain('[SYSTEM:');
+  });
+});
+
+// ===========================================================================
+// Audit group 2a — session lifecycle, false success, and the paths no test
+// reached. Every test below covers code that the audit proved was untested:
+// deleting VoiceService's session-error handler outright left the whole suite
+// green.
+// ===========================================================================
+
+// A 48k-stereo frame whose every sample is `v`, so it survives
+// downsampleTo16kMono (stereo average + 3-tap mean of equal values) with its
+// identity intact and can be recognised again on the far side of a buffer.
+function taggedFrame(v, nSamples = 320) {
+  const mono = Buffer.alloc(nSamples * 2);
+  for (let i = 0; i < nSamples; i++) mono.writeInt16LE(v, i * 2);
+  return to48kStereo(mono);
+}
+
+describe('2.1 — a session open that fails must leave the guild recoverable', () => {
+  // The reachable trigger (TRIAGE 2.1): sendStart on a duplex grpc-js has
+  // already destroyed. Everything after the health gate used to be unguarded,
+  // so the throw escaped _startSession with the machine left in 'active' —
+  // and every route back to idle is predicated on a session existing.
+  test('a throw after the health gate leaves the machine idle, not wedged in active', async () => {
+    const gate = { push: jest.fn(() => true), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc, voiceClient } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    voiceClient.converse.mockImplementationOnce(() => {
+      const s = new EventEmitter();
+      s.sendStart = jest.fn(() => { throw new Error('write after end'); });
+      s.sendAudio = jest.fn(); s.sendAudioStreamEnd = jest.fn(); s.sendSpeaker = jest.fn(); s.end = jest.fn();
+      return s;
+    });
+
+    await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+
+    const g = svc._guilds.get('g1');
+    expect(g.machine.state).toBe('idle');   // NOT 'active' with no session
+    expect(g.session).toBeNull();
+    expect(g.floor.holder()).toBeNull();    // no phantom holder left behind
+    expect(g.pending).toBeNull();
+    expect(g.sessionOpening).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('session open failed'));
+  });
+
+  test('and the very next wake opens a session normally (the guild is not deaf)', async () => {
+    const gate = { push: jest.fn(() => true), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc, voiceClient } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    voiceClient.converse.mockImplementationOnce(() => { throw new Error('converse boom'); });
+
+    await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024)); // fails
+    await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024)); // must still work
+
+    expect(voiceClient.converse).toHaveBeenCalledTimes(2);
+    const g = svc._guilds.get('g1');
+    expect(g.session).not.toBeNull();
+    expect(g.machine.state).toBe('active');
+  });
+
+  // The recovery must not be gated on `g.session` — that is the very thing a
+  // failed open never sets. This drives the wedge state directly (machine
+  // advanced with no session behind it) and asserts _tick, the only thing
+  // still running for that guild, gets it back.
+  test('_tick recovers a guild left non-idle with no session', async () => {
+    const deps = makeDeps();
+    const { svc } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    const g = svc._guilds.get('g1');
+    g.machine.onWake();                 // machine -> 'active', no session opened
+    expect(g.machine.state).toBe('active');
+    expect(g.session).toBeNull();
+
+    svc._tick('g1');
+
+    expect(g.machine.state).toBe('idle');
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('a session open must have failed'));
+  });
+
+  // ...and it must NOT mistake a slow open for a wedge. _contextBuilder is
+  // awaited with no timeout and can take seconds; a recovery that could not
+  // tell the two apart would tear down every session while it was opening.
+  test('_tick leaves a session that is merely slow to open alone', async () => {
+    let release;
+    const contextBuilder = jest.fn(() => new Promise((r) => { release = r; }));
+    const gate = { push: jest.fn(() => true), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc, voiceClient } = makeService(deps, {}, contextBuilder);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+    const opening = svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024)); // suspends in _contextBuilder
+    await new Promise((r) => setImmediate(r));
+    const g = svc._guilds.get('g1');
+    expect(g.sessionOpening).toBe(true);
+
+    svc._tick('g1');
+    svc._tick('g1');
+    expect(g.machine.state).toBe('active'); // untouched while opening
+
+    release({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
+    await opening;
+    expect(voiceClient.converse).toHaveBeenCalledTimes(1);
+    expect(g.session).not.toBeNull();
+    expect(g.sessionOpening).toBe(false);
+  });
+});
+
+describe('2.2 — the pre-roll/pending buffer is bounded', () => {
+  test('a slow session open flushes only the newest ~5s, not every frame it buffered', async () => {
+    let release;
+    const contextBuilder = jest.fn(() => new Promise((r) => { release = r; }));
+    const deps = makeDeps({
+      makeWakeGate: () => fakeWakeGate('nextPushWakes'),
+      makeVadGate: () => fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]),
+    });
+    const { svc, voiceClient } = makeService(deps, {}, contextBuilder);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+    // Frame 0 wakes; the open then blocks in _contextBuilder.
+    const opening = svc._handleUserPcm('g1', 'u1', taggedFrame(0));
+    await new Promise((r) => setImmediate(r));
+
+    // The speaker keeps talking for 400 frames (~8s) while the open is stuck.
+    for (let i = 1; i <= 400; i++) await svc._handleUserPcm('g1', 'u1', taggedFrame(i));
+    const g = svc._guilds.get('g1');
+    expect(g.pending.length).toBe(250); // MAX_PENDING_FRAMES, not 401
+
+    release({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
+    await opening;
+
+    const session = voiceClient.converse.mock.results[0].value;
+    expect(session.sendAudio).toHaveBeenCalledTimes(250);
+    // Drop-oldest: the surviving window is the NEWEST audio (151..400), because
+    // replaying the stale head as current speech is the actual hazard.
+    expect(session.sendAudio.mock.calls[0][0].readInt16LE(0)).toBe(151);
+    expect(session.sendAudio.mock.calls[249][0].readInt16LE(0)).toBe(400);
+  });
+});
+
+describe("2.3 — a clean 'end' from the sidecar is noticed", () => {
+  test('a clean stream close tears the session down and the next wake opens a new one', async () => {
+    const gate = { push: jest.fn(() => true), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc, voiceClient } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+    const session = voiceClient.converse.mock.results[0].value;
+    const g = svc._guilds.get('g1');
+    expect(g.session).toBe(session);
+
+    // The sidecar closes the Converse stream cleanly (no ErrorEvent — its
+    // no-resumption-handle and outcome="closed" paths both exit silently).
+    session.emit('end');
+
+    expect(g.session).toBeNull();
+    expect(g.machine.state).toBe('idle');
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('closed the Converse stream'));
+
+    await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+    expect(voiceClient.converse).toHaveBeenCalledTimes(2);
+    expect(svc._guilds.get('g1').session).not.toBeNull();
+  });
+
+  test("a late 'end' from a superseded session does not touch the live one", async () => {
+    const gate = { push: jest.fn(() => true), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc, voiceClient } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+    const first = voiceClient.converse.mock.results[0].value;
+    first.emit('end');                                   // session 1 gone
+    await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024)); // session 2 opens
+    const g = svc._guilds.get('g1');
+    const live = g.session;
+    expect(live).not.toBeNull();
+
+    first.emit('end'); // in-flight duplicate from the dead stream
+
+    expect(g.session).toBe(live);
+    expect(g.machine.state).toBe('active');
+  });
+});
+
+describe('2.4 / 2.5 — listen() reports what actually happened', () => {
+  test('an unhealthy sidecar is reported as a failure, not as engaged listen mode', async () => {
+    const deps = makeDeps();
+    const { svc, voiceClient } = makeService(deps);
+    voiceClient.isHealthy.mockReturnValue(false);
+
+    const res = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+
+    expect(res).toEqual({ listening: false, reason: 'session-failed' });
+    expect(voiceClient.converse).not.toHaveBeenCalled();
+    // ...and the guild is left idle, so a retry once the sidecar recovers works.
+    const g = svc._guilds.get('g1');
+    expect(g.machine.state).toBe('idle');
+    voiceClient.isHealthy.mockReturnValue(true);
+    const retry = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+    expect(retry).toEqual({ listening: true, channelId: 'c1' });
+  });
+
+  test('a session open that throws is reported as a failure', async () => {
+    const deps = makeDeps();
+    const { svc, voiceClient } = makeService(deps);
+    voiceClient.converse.mockImplementationOnce(() => { throw new Error('converse boom'); });
+
+    const res = await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+
+    expect(res).toEqual({ listening: false, reason: 'session-failed' });
+  });
+
+  test('listening from a channel the bot is not in is refused, not silently redirected', async () => {
+    const deps = makeDeps();
+    const { svc, voiceClient } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+    const res = await svc.listen({ channel: { id: 'c2', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+
+    expect(res).toEqual({ listening: false, reason: 'other-channel', channelId: 'c1' });
+    expect(voiceClient.converse).not.toHaveBeenCalled();
+  });
+
+  // 2.5: the admin is told listen mode lasts "until /voice leave". The 600s cap
+  // (not overridden in the deployed overlay) ends it ~10 minutes in. We do not
+  // silently re-engage — the cap is a cost control — so the log must say so.
+  test('the maxSessionSeconds cap logs that continuous listen mode has ended', async () => {
+    let currentTime = 0;
+    const deps = makeDeps({ now: () => currentTime });
+    const { svc } = makeService(deps, { maxSessionSeconds: 600 });
+    await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+    expect(svc._guilds.get('g1').continuousRequested).toBe(true);
+
+    currentTime = 600001;
+    svc._tick('g1');
+    await new Promise((r) => setImmediate(r));
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('continuous listen mode (/voice listen) ended'));
+    expect(svc._guilds.get('g1').continuousRequested).toBe(false);
+  });
+
+  test('maxSessionSeconds() exposes the cap the reply quotes', () => {
+    const { svc } = makeService(makeDeps(), { maxSessionSeconds: 600 });
+    expect(svc.maxSessionSeconds()).toBe(600);
+  });
+});
+
+describe('2.6 — join() reports what actually happened', () => {
+  test('a first join reports the channel it joined', async () => {
+    const { svc } = makeService(makeDeps());
+    const res = await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    expect(res).toEqual({ joined: true, channelId: 'c1' });
+  });
+
+  test('a duplicate join reports the channel the bot is ACTUALLY in, not the one asked for', async () => {
+    const { svc } = makeService(makeDeps());
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    const res = await svc.join({ channel: { id: 'c2', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    expect(res).toEqual({ joined: false, reason: 'already-connected', channelId: 'c1' });
+  });
+});
+
+describe('2.7 — a speaker name that missed the cache is retried', () => {
+  test('a name that resolved to null at first contact is re-resolved later in the same join', async () => {
+    let cached = false;
+    const speakerNames = { resolve: jest.fn(() => (cached ? 'Mike' : null)) };
+    let currentTime = 0;
+    const { svc, guildId, session } = await buildActiveVoiceService({
+      now: () => currentTime,
+      makeVadGate: () => fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]),
+      speakerNames,
+    });
+
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+    expect(session.sendSpeaker).not.toHaveBeenCalled();  // nothing to assert yet
+
+    // Discord's user cache fills in (a member the bot had not seen before).
+    cached = true;
+    // Still inside the retry window: the hot path must not re-resolve.
+    const callsBefore = speakerNames.resolve.mock.calls.length;
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+    expect(speakerNames.resolve).toHaveBeenCalledTimes(callsBefore);
+    expect(session.sendSpeaker).not.toHaveBeenCalled();
+
+    currentTime = 60001; // past SPEAKER_NAME_RETRY_MS
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+
+    expect(session.sendSpeaker).toHaveBeenCalledWith({ userId: 'u1', displayName: 'Mike' });
+  });
+
+  test('a name that resolved is never re-resolved (the hot path stays cheap)', async () => {
+    const speakerNames = { resolve: jest.fn(() => 'Mike') };
+    let currentTime = 0;
+    const { svc, guildId } = await buildActiveVoiceService({
+      now: () => currentTime,
+      makeVadGate: () => fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]),
+      speakerNames,
+    });
+    const callsAfterOpen = speakerNames.resolve.mock.calls.length;
+    expect(callsAfterOpen).toBe(1);
+
+    for (let i = 0; i < 5; i++) {
+      currentTime += 60001;
+      await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+    }
+
+    expect(speakerNames.resolve).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('2.8 — leave() always releases the guild', () => {
+  test('a throwing connection destroy still deletes the guild entry, so voice recovers', async () => {
+    const deps = makeDeps();
+    const { svc } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    const connection = deps.joinVoiceChannel.mock.results[0].value;
+    connection.destroy.mockImplementation(() => { throw new Error('destroy boom'); });
+
+    await expect(svc.leave('g1')).rejects.toThrow('destroy boom');
+
+    expect(svc._guilds.has('g1')).toBe(false);
+    // ...and a fresh join is possible again (before the fix, join() short-
+    // circuited on the stale entry forever).
+    connection.destroy.mockImplementation(() => {});
+    const res = await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    expect(res).toEqual({ joined: true, channelId: 'c1' });
+  });
+
+  test('a throwing session teardown also releases the guild entry', async () => {
+    const gate = { push: jest.fn(() => true), reset: jest.fn(() => { throw new Error('gate reset boom'); }) };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc } = makeService(deps);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024)); // materialise the gate
+
+    await expect(svc.leave('g1')).rejects.toThrow('gate reset boom');
+
+    expect(svc._guilds.has('g1')).toBe(false);
   });
 });

@@ -1,11 +1,11 @@
 // __tests__/commands/slash/voice.test.js
 const VoiceSlashCommand = require('../../../commands/slash/voice');
 
-function fakeInteraction({ inChannel = true, sub = 'join' } = {}) {
+function fakeInteraction({ inChannel = true, sub = 'join', channelId = 'c1' } = {}) {
   return {
     user: { id: 'u1', tag: 'u#1' },
     guildId: 'g1',
-    member: { voice: { channel: inChannel ? { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } } : null } },
+    member: { voice: { channel: inChannel ? { id: channelId, guild: { id: 'g1', voiceAdapterCreator: {} } } : null } },
     options: { getSubcommand: () => sub },
     deferred: false, replied: false,
     reply: jest.fn().mockResolvedValue({}), editReply: jest.fn().mockResolvedValue({}),
@@ -16,8 +16,16 @@ function fakeInteraction({ inChannel = true, sub = 'join' } = {}) {
 describe('/voice', () => {
   let voiceService, command;
   beforeEach(() => {
-    voiceService = { isEnabled: jest.fn(() => true), join: jest.fn().mockResolvedValue(), leave: jest.fn().mockResolvedValue(),
-      listen: jest.fn().mockResolvedValue(true), wakeWord: jest.fn(() => 'hey jarvis') };
+    // The service reports what actually happened; these mocks mirror the real
+    // return shapes (a bare `true`/undefined is what the false-success bug was).
+    voiceService = {
+      isEnabled: jest.fn(() => true),
+      join: jest.fn().mockResolvedValue({ joined: true, channelId: 'c1' }),
+      leave: jest.fn().mockResolvedValue(),
+      listen: jest.fn().mockResolvedValue({ listening: true, channelId: 'c1' }),
+      wakeWord: jest.fn(() => 'hey jarvis'),
+      maxSessionSeconds: jest.fn(() => 600),
+    };
     command = new VoiceSlashCommand(voiceService);
   });
 
@@ -109,5 +117,80 @@ describe('/voice', () => {
     await command.execute(i, {});
     expect(i.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('boom') }));
     expect(i.reply).not.toHaveBeenCalled();
+  });
+  // --- audit group 2a: the command must say what actually happened ----------
+
+  test('join when already connected to the SAME channel does not claim a fresh join', async () => {
+    voiceService.join.mockResolvedValue({ joined: false, reason: 'already-connected', channelId: 'c1' });
+    const i = fakeInteraction({ inChannel: true, sub: 'join' });
+    await command.execute(i, {});
+    expect(i.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Already in <#c1>') }));
+    expect(i.reply).not.toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Joined') }));
+  });
+
+  test('join while sitting in a DIFFERENT channel reports the refusal and names that channel', async () => {
+    voiceService.join.mockResolvedValue({ joined: false, reason: 'already-connected', channelId: 'c9' });
+    const i = fakeInteraction({ inChannel: true, sub: 'join', channelId: 'c1' });
+    await command.execute(i, {});
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain("Couldn't join");
+    expect(content).toContain('<#c9>');          // where the bot ACTUALLY is
+    expect(content).not.toContain('Joined <#c1>');
+  });
+
+  test('listen reports a refusal when a session is already active', async () => {
+    voiceService.listen.mockResolvedValue({ listening: false, reason: 'already-active' });
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain("Couldn't start listening");
+    expect(content).not.toContain('no wake word needed');
+  });
+
+  test('listen reports a refusal when the bot is in another channel', async () => {
+    voiceService.listen.mockResolvedValue({ listening: false, reason: 'other-channel', channelId: 'c9' });
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain("Couldn't start listening");
+    expect(content).toContain('<#c9>');
+  });
+
+  test('listen reports a failure when no session opened (unhealthy sidecar)', async () => {
+    voiceService.listen.mockResolvedValue({ listening: false, reason: 'session-failed' });
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain("Couldn't start listening");
+    expect(content).not.toContain('no wake word needed');
+  });
+
+  // 2.5: "until /voice leave" is a promise VOICE_MAX_SESSION_SECONDS breaks
+  // ~10 minutes in, so the reply has to name the cap.
+  test('a successful listen tells the admin about the session cap, not just /voice leave', async () => {
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain('no wake word needed');
+    expect(content).toContain('/voice leave');
+    expect(content).toContain('10-minute');
+  });
+
+  test('an uncapped session (maxSessionSeconds 0) keeps the plain wording', async () => {
+    voiceService.maxSessionSeconds.mockReturnValue(0);
+    const i = fakeInteraction({ inChannel: true, sub: 'listen' });
+    await command.execute(i, adminCtx);
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain('/voice leave');
+    expect(content).not.toContain('cap');
+  });
+
+  test('leave that throws reports the failure instead of "Left the voice channel"', async () => {
+    voiceService.leave.mockRejectedValue(new Error('destroy boom'));
+    const i = fakeInteraction({ sub: 'leave' });
+    await command.execute(i, {});
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toContain('destroy boom');
+    expect(content).not.toContain('Left the voice channel');
   });
 });
