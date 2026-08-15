@@ -122,10 +122,12 @@ class VoiceSlashCommand extends BaseSlashCommand {
       return;
     }
     // leave
-    // A throwing teardown still deletes the guild entry (VoiceService.leave's
-    // finally), so voice is usable again — but it did not necessarily leave the
-    // channel, and saying "Left the voice channel" when the connection destroy
-    // threw is the same false-success this command had for join/listen.
+    // A throwing teardown still deletes the guild entry and still attempts the
+    // disconnect (VoiceService.leave runs each step independently and deletes
+    // unconditionally), so voice is usable again and the bot has most likely
+    // left. But "most likely" is not "did", and claiming "Left the voice
+    // channel" when a teardown step threw is the same false-success this
+    // command had for join/listen -- hence the hedged wording below.
     try {
       await this.voiceService.leave(interaction.guildId);
     } catch (e) {

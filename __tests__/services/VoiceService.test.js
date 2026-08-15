@@ -2098,9 +2098,10 @@ describe('2.1 — a session open that fails must leave the guild recoverable', (
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('a session open must have failed'));
   });
 
-  // ...and it must NOT mistake a slow open for a wedge. _contextBuilder is
-  // awaited with no timeout and can take seconds; a recovery that could not
-  // tell the two apart would tear down every session while it was opening.
+  // ...and it must NOT mistake a slow open for a wedge. _contextBuilder can
+  // take seconds (it is now bounded by CONTEXT_BUILD_TIMEOUT_MS, but that
+  // ceiling is 15s -- far longer than the 250ms tick), so a recovery that could
+  // not tell a slow open from a wedge would tear down every session mid-open.
   test('_tick leaves a session that is merely slow to open alone', async () => {
     let release;
     const contextBuilder = jest.fn(() => new Promise((r) => { release = r; }));
@@ -2123,6 +2124,37 @@ describe('2.1 — a session open that fails must leave the guild recoverable', (
     expect(voiceClient.converse).toHaveBeenCalledTimes(1);
     expect(g.session).not.toBeNull();
     expect(g.sessionOpening).toBe(false);
+  });
+
+  // `/voice leave` landing DURING the context build is the one window where a
+  // session can be opened for a guild that no longer exists. `_openSession`
+  // captured `g` before the await, so without a re-check afterwards it goes on
+  // to call converse() and creates a real, billed Gemini Live session that
+  // nothing holds a reference to -- it survives until the sidecar's own cap.
+  // The 15s context ceiling made this window bounded but also guaranteed, so
+  // the guard matters more than it did when a hung builder simply never
+  // reached converse() at all.
+  test('a leave during the context build abandons the open instead of orphaning a Live session', async () => {
+    let release;
+    const contextBuilder = jest.fn(() => new Promise((r) => { release = r; }));
+    const gate = { push: jest.fn(() => true), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate });
+    const { svc, voiceClient } = makeService(deps, {}, contextBuilder);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+
+    const opening = svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024)); // suspends in _contextBuilder
+    await new Promise((r) => setImmediate(r));
+    expect(svc._guilds.get('g1').sessionOpening).toBe(true);
+
+    await svc.leave('g1');
+    expect(svc._guilds.has('g1')).toBe(false);
+
+    // The builder resolves AFTER the guild is gone.
+    release({ systemPrompt: '', memoryBlock: '', historyTurns: [] });
+    await opening;
+
+    expect(voiceClient.converse).not.toHaveBeenCalled();
+    expect(svc._guilds.has('g1')).toBe(false);
   });
 });
 

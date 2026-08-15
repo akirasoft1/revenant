@@ -821,6 +821,19 @@ class VoiceService {
       history = ctx.historyTurns || [];
     } catch (e) { logger.warn(`voice: context build failed: ${e.message}`); }
 
+    // `g` was captured before the await above, and `/voice leave` can land during
+    // it — deleting the guild entry while this open is still in flight. Without
+    // this re-check we would go on to call `converse()` and create a REAL Gemini
+    // Live session against a guild that no longer exists: nothing holds a
+    // reference to end it, so it bills until the sidecar's own session cap
+    // expires. The context-build ceiling widened this window from "however long
+    // the builder takes" to a guaranteed-terminating 15s, which makes the race
+    // easier to hit, not harder.
+    if (this._guilds.get(guildId) !== g) {
+      logger.info(`voice: abandoning session open for guild ${guildId} — the guild was released while the context was building`);
+      return;
+    }
+
     // Voice-only persona note: people summon the bot by its wake phrase, so they
     // address it by that name. Without this the model replies "I'm not Jarvis".
     systemPrompt = this._appendVoicePersona(systemPrompt);
