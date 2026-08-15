@@ -995,7 +995,17 @@ class DiscordBot {
       // Persist this channel-voice reply as an assistant turn in channel_messages
       // (ChatService.buildTurnContext maps isBot -> assistant), carrying any
       // sandbox executionIds so a later 🔍/📜/🐛 reaction can resolve them.
-      await this._recordBotReply(lastReply, response, channelId, guildId, executionIds);
+      //
+      // Store `result.message` (the raw model output), NOT `response` (the
+      // Discord payload). `response` carries two display-only transformations:
+      // the ⚠️ fallback blockquote and wrapUrls' <https://…> embed-suppression
+      // syntax. Both get replayed to the model as its OWN previous turn on the
+      // next message, so it reads an apology it never wrote and URL syntax no
+      // model emits. This matters more now that the fallback notice fires on
+      // every agent RPC failure, empty turn, and context-degraded turn: a
+      // sidecar outage would stamp the banner into every stored assistant turn,
+      // and channel_messages is deliberately retained forever.
+      await this._recordBotReply(lastReply, result.message, channelId, guildId, executionIds);
     });
   }
 

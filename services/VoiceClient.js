@@ -89,7 +89,18 @@ class VoiceClient {
           session.emit('interrupted');
           break;
         case 'error':
-          session.emit('error', new Error(ev.error.message || 'voice sidecar error'));
+          // Same teardown hazard as the transport-error handler below, and this
+          // is the MORE likely trigger: the sidecar reports failures over the
+          // DATA stream, not the transport one — `live_bridge.py` wraps every
+          // non-normal-close exception in a `VoiceServerEvent(error=ErrorEvent)`.
+          // `session.end()` only half-closes our write side, so the server keeps
+          // delivering until it closes its own; an ErrorEvent in flight when
+          // `_endSession` runs `removeAllListeners()` lands here with no listener.
+          if (session.listenerCount('error') > 0) {
+            session.emit('error', new Error(ev.error.message || 'voice sidecar error'));
+          } else {
+            logger.warn(`voice: sidecar error event after session teardown (no listener attached): ${(ev.error && ev.error.message) || 'voice sidecar error'}`);
+          }
           break;
         default:
           break;

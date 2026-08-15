@@ -281,4 +281,42 @@ describe('VoiceClient', () => {
 
     c.close();
   });
+
+  test('a sidecar ErrorEvent on the DATA stream after teardown does not throw either', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.on('error', () => {});
+    session.removeAllListeners();
+
+    // The transport-error guard above is only half the hazard, and this is the
+    // MORE likely half: the sidecar reports failures over the DATA stream
+    // (live_bridge.py wraps every non-normal-close exception in an ErrorEvent),
+    // and session.end() only half-closes our write side, so the server keeps
+    // delivering until it closes its own. Guarding only call.on('error') left
+    // the Critical unfixed for the common trigger.
+    expect(() => {
+      fakeCall.emit('data', { event: 'error', error: { message: 'live bridge blew up' } });
+    }).not.toThrow();
+
+    c.close();
+  });
+
+  test('a sidecar ErrorEvent on the DATA stream still reaches an attached listener', (done) => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    session.on('error', (err) => {
+      // Guard must not swallow the live path — this is what drives VoiceService's
+      // session teardown + notifyError.
+      expect(err.message).toBe('live bridge blew up');
+      c.close();
+      done();
+    });
+    fakeCall.emit('data', { event: 'error', error: { message: 'live bridge blew up' } });
+  });
 });
