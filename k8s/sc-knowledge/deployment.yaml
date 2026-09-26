@@ -21,17 +21,20 @@ spec:
         app: sc-knowledge
     spec:
       automountServiceAccountToken: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        capabilities:
-          drop: ["ALL"]
       containers:
         - name: sc-knowledge
           image: mvilliger/sc-knowledge:REPLACE_WITH_SHA
           imagePullPolicy: IfNotPresent
+          # allowPrivilegeEscalation / readOnlyRootFilesystem / capabilities
+          # are container-level-only fields (PodSecurityContext has no such
+          # fields) -- they belong here, not on spec.template.spec.securityContext.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
               name: http
@@ -42,12 +45,18 @@ spec:
               value: "sc-knowledge"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://telemetry-ingest.dynatrace.svc.cluster.local:4317"
+            - name: SC_GUIDES_DIR
+              value: "/guides"
             - name: UEXCORP_BEARER
               valueFrom:
                 secretKeyRef:
                   name: sc-knowledge-secrets
                   key: UEXCORP_BEARER
                   optional: true
+          volumeMounts:
+            - name: org-guides
+              mountPath: /guides
+              readOnly: true
           resources:
             requests:
               cpu: "50m"
@@ -63,3 +72,12 @@ spec:
             httpGet:
               path: /healthz
               port: 8080
+      volumes:
+        # Populated by scripts/sync-org-guides.sh from the private, never-committed
+        # repo-root OrgGuides/ PDFs. `optional: true` so the pod still starts (and
+        # sc_org_guides degrades to "no org guides loaded") before the ConfigMap
+        # has ever been synced.
+        - name: org-guides
+          configMap:
+            name: sc-org-guides
+            optional: true

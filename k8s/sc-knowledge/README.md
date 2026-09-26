@@ -43,10 +43,14 @@ out) to run against UEX's unauthenticated rate limits.
 ## Apply order
 
 1. Create/update the `sc-knowledge-secrets` Secret (above), if not already present.
-2. Sync org guides into the `sc-knowledge-guides` ConfigMap: `scripts/sync-org-guides.sh`
-   (reads the private PDFs under repo-root `OrgGuides/`, never committed -- see that
-   script's header). Skipping this is fine; `sc_org_guides` degrades to
-   `{"sections": [], "note": "no org guides loaded"}` rather than failing.
+2. **Before applying the deployment**, sync org guides into the `sc-org-guides`
+   ConfigMap that `deployment.yaml` mounts read-only at `/guides`:
+   `scripts/sync-org-guides.sh` (reads the private PDFs under repo-root
+   `OrgGuides/`, never committed -- see that script's header). The ConfigMap
+   reference on the Deployment is `optional: true`, so skipping this step is
+   fine and the pod still starts -- `sc_org_guides` just degrades to
+   `{"sections": [], "note": "no org guides loaded"}` rather than failing --
+   but run it first when guides should actually be available at startup.
 3. Apply the **deployed overlay**, never these tracked placeholders:
    ```bash
    kubectl apply -f k8s/overlays/deployed/sc-knowledge-deployment.yaml \

@@ -26,7 +26,6 @@ from . import tracing
 from .cache import TTLCache
 from .config import Config, load
 from .envelope import error
-from .http import UpstreamError
 from .tools_guides import GuideStore, GuideTools
 from .tools_items import ItemTools
 from .tools_missions import MissionTools
@@ -74,11 +73,19 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     guide_tools = GuideTools(GuideStore(guides_dir or config.guides_dir))
 
     async def _live_game_version() -> str | None:
+        # Broad `except Exception` deliberately, not just UpstreamError: this
+        # feeds both the patch-note merge inside `_guarded` (which must never
+        # let a tool call escape the MCP boundary) and `/healthz` (which must
+        # never go non-200 over upstream data, or k8s restart-loops the pod).
+        # A malformed-but-200 upstream response (e.g. `data` coming back as a
+        # list instead of a dict) raises AttributeError on `.get`, not
+        # UpstreamError -- that must be swallowed here too. `CancelledError`
+        # is a BaseException, not an Exception, so it still propagates.
         try:
             res = await cache.get_or_fetch("uex:game_versions", _GAME_VERSIONS_TTL, uex.game_versions)
             return (res.value or {}).get("live")
-        except UpstreamError as e:
-            logger.warning("game_versions lookup failed: %s", e)
+        except Exception:
+            logger.warning("game_versions lookup failed", exc_info=True)
             return None
 
     async def _guarded(name: str, call) -> dict:
