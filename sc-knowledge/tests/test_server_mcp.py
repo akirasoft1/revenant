@@ -285,3 +285,71 @@ async def test_healthz_is_not_host_guarded(server_url):
     async with httpx.AsyncClient() as c:
         r = await c.get(f"{server_url}/healthz", headers={"Host": "10.42.0.17:8080"})
     assert r.status_code == 200
+
+
+# --- I1: /healthz and the patch note never wait on UEX -----------------------------
+
+def _hanging_game_versions_transport(hits: list | None = None) -> httpx.MockTransport:
+    """UEX `/2.0/game_versions` accepts and never answers (a MockTransport is
+    not subject to httpx timeouts, so this hangs until cancelled) -- the
+    worst-case upstream for a liveness probe. Everything else 404s."""
+    async def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.startswith("/2.0/game_versions"):
+            if hits is not None:
+                hits.append(req.url.path)
+            await asyncio.Event().wait()
+        return httpx.Response(404, json={"status": "not_found"})
+    return httpx.MockTransport(handler)
+
+
+async def test_healthz_returns_fast_when_game_versions_hangs():
+    hits: list = []
+    app = build_app(load(), uex_transport=_hanging_game_versions_transport(hits),
+                    guides_dir=GUIDES_DIR)
+    async with _running(app) as url:
+        async with httpx.AsyncClient() as c:
+            loop = asyncio.get_running_loop()
+            t0 = loop.time()
+            responses = [await c.get(f"{url}/healthz", timeout=2.0) for _ in range(5)]
+            elapsed = loop.time() - t0
+        await asyncio.sleep(0.1)
+    assert all(r.status_code == 200 for r in responses)
+    assert all(r.json()["game_version"] is None for r in responses)
+    assert elapsed < 1.0
+    # five probes, ONE background refresh in flight -- not five
+    assert len(hits) == 1
+
+
+async def test_healthz_reports_cached_game_version_after_background_refresh(server_url):
+    async with httpx.AsyncClient() as c:
+        first = await c.get(f"{server_url}/healthz")
+        assert first.status_code == 200
+        for _ in range(40):
+            r = await c.get(f"{server_url}/healthz")
+            if r.json()["game_version"]:
+                break
+            await asyncio.sleep(0.05)
+    assert r.json()["game_version"]
+
+
+async def test_tool_call_returns_fast_without_note_patch_when_game_versions_hangs():
+    app = build_app(load(),
+        uex_transport=_hanging_game_versions_transport(),
+        wiki_transport=fixture_transport({"/api/v2/items/V801-12": "wiki_item_v801_12.json"}),
+        guides_dir=GUIDES_DIR)
+    async with _running(app) as url:
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        async with streamable_http_client(f"{url}/mcp") as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                loop = asyncio.get_running_loop()
+                t0 = loop.time()
+                res = await s.call_tool("sc_find_item", {"name": "V801-12"})
+                elapsed = loop.time() - t0
+    assert not res.is_error
+    data = res.structured_content or json.loads(res.content[0].text)
+    data = data.get("result", data)
+    assert "note_patch" not in data
+    assert data["where_to_buy"][0]["price_auec"] == 352000
+    assert elapsed < 1.2

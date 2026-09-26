@@ -32,11 +32,33 @@ sections each carry their own `version` instead) a top-level `game_version`.
 When a tool result's game version differs from the live game version (UEX
 `game_versions()["live"]`), the response gets an extra `note_patch` field
 flagging that the data may be stale relative to the current patch -- this
-never fails the call, even if UEX itself is unreachable.
+never fails the call, even if UEX itself is unreachable. The live-version
+lookup for that note is bounded at 0.5s: on a cold cache or a slow UEX the
+call returns without `note_patch` rather than waiting (a Wiki-only answer
+never waits on UEX), and the lookup keeps running in the background to warm
+the cache for the next call.
 
 Also exposed: `GET /healthz` -> `200 {"ok": true, "version": ..., "game_version": ...}`.
 Health means "process serving requests" -- an unreachable upstream is
-reported per tool call, never as an unhealthy pod.
+reported per tool call, never as an unhealthy pod. `/healthz` NEVER fetches
+upstream: `game_version` is the cached value (`null` on a cold cache) and a
+missing/expired value triggers one single-flight background refresh. It is
+also not subject to the Host allow-list below (kubelet probes send the pod
+IP as Host).
+
+**Host allow-list (DNS-rebinding protection):** `/mcp` rejects any request
+whose `Host` header is not in `SC_ALLOWED_HOSTS` with `421 Invalid Host
+header`. mcp 2.x enables this protection with a loopback-only list by
+default, so the in-cluster Service names must be allowed explicitly -- the
+default list covers every in-cluster spelling of the Service
+(`sc-knowledge`, `sc-knowledge.discord-article-bot`, `...svc`,
+`...svc.cluster.local`) plus `localhost`/`127.0.0.1`/`[::1]`, any port. If
+the Service is renamed or reached through another name, extend the env var or
+every call will 421.
+
+**Upstream failure backoff:** after a failed fetch the cache does not retry
+that key for 30s -- it serves the stale entry (or re-raises the failure)
+immediately, so an outage does not cost every caller the full retry budget.
 
 ## Environment variables
 
@@ -49,6 +71,7 @@ reported per tool call, never as an unhealthy pod.
 | `UEXCORP_BEARER` | unset | Optional UEX bearer token (higher rate limits); omitted -> unauthenticated requests. |
 | `SC_KNOWLEDGE_VERSION` | `dev` | Sent as `User-Agent: revenant-discord-bot/<version>` and `X-Client-Version: revenant-sc-knowledge/<version>`; also the `/healthz` `version` field. Set to the deployed image's git short-SHA. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint for traces; unset -> tracing is a no-op. |
+| `SC_ALLOWED_HOSTS` | the in-cluster Service names + loopback, each `:*` | Comma-separated `Host` header allow-list for `/mcp` (`name:*` = any port, otherwise exact match). Anything else gets `421`. |
 | `SC_GUIDES_DIR` | `/guides` | Directory of `*.txt` org guides (mounted ConfigMap in-cluster). Missing/empty -> `sc_org_guides` returns `{"sections": [], "note": "no org guides loaded"}`, never an error. |
 
 ## Cache TTLs (seconds)

@@ -38,6 +38,11 @@ logger = logging.getLogger("sc_knowledge.server")
 _tracer = trace.get_tracer("sc-knowledge")
 
 _GAME_VERSIONS_TTL = 21600
+_GAME_VERSIONS_KEY = "uex:game_versions"
+# Upper bound a tool call waits on the live-game-version lookup for its
+# patch note. The note is advisory; a Wiki-only answer must never wait on UEX
+# (the voice sidecar bounds a whole tool call at 6s).
+_PATCH_NOTE_WAIT_S = 0.5
 _VERSION_PREFIX_RE = re.compile(r"(\d+\.\d+\.\d+)")
 
 
@@ -75,19 +80,69 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
 
     async def _live_game_version() -> str | None:
         # Broad `except Exception` deliberately, not just UpstreamError: this
-        # feeds both the patch-note merge inside `_guarded` (which must never
-        # let a tool call escape the MCP boundary) and `/healthz` (which must
-        # never go non-200 over upstream data, or k8s restart-loops the pod).
-        # A malformed-but-200 upstream response (e.g. `data` coming back as a
-        # list instead of a dict) raises AttributeError on `.get`, not
-        # UpstreamError -- that must be swallowed here too. `CancelledError`
-        # is a BaseException, not an Exception, so it still propagates.
+        # feeds the patch-note merge inside `_guarded` (which must never let a
+        # tool call escape the MCP boundary) and the /healthz background
+        # refresh. A malformed-but-200 upstream response (e.g. `data` coming
+        # back as a list instead of a dict) raises AttributeError on `.get`,
+        # not UpstreamError -- that must be swallowed here too.
+        # `CancelledError` is a BaseException, not an Exception, so it still
+        # propagates.
         try:
-            res = await cache.get_or_fetch("uex:game_versions", _GAME_VERSIONS_TTL, uex.game_versions)
+            res = await cache.get_or_fetch(_GAME_VERSIONS_KEY, _GAME_VERSIONS_TTL, uex.game_versions)
             return (res.value or {}).get("live")
         except Exception:
             logger.warning("game_versions lookup failed", exc_info=True)
             return None
+
+    def _cached_game_version() -> tuple[str | None, bool]:
+        """(cached live version or None, is_fresh). Never fetches."""
+        peeked = cache.peek(_GAME_VERSIONS_KEY, _GAME_VERSIONS_TTL)
+        if peeked is None:
+            return None, False
+        try:
+            return (peeked.value or {}).get("live"), peeked.status == "hit"
+        except Exception:  # malformed cached payload -- treat as unknown
+            return None, peeked.status == "hit"
+
+    # asyncio only holds a *weak* reference to a task scheduled via
+    # create_task -- without a strong reference kept somewhere a background
+    # task can be garbage-collected mid-flight. Keep them here; each task's
+    # done-callback drops it, and the lifespan cancels any left at shutdown.
+    _background_tasks: set[asyncio.Task] = set()
+    _version_refresh: dict[str, asyncio.Task | None] = {"task": None}
+
+    def _spawn(coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return task
+
+    def _game_version_refresh() -> asyncio.Task:
+        """The single in-flight game-version refresh (started if none is).
+        Single-flight so a burst of probes/tool calls during a UEX outage
+        starts ONE upstream fetch, not one per caller."""
+        task = _version_refresh["task"]
+        if task is None or task.done():
+            task = _spawn(_live_game_version())
+            _version_refresh["task"] = task
+        return task
+
+    async def _live_game_version_bounded() -> str | None:
+        """Live version for the patch note, waiting at most
+        _PATCH_NOTE_WAIT_S. A fresh cached value is used directly; otherwise
+        the shared refresh is awaited under `shield`, so a timeout abandons
+        the WAIT, not the fetch -- the refresh completes in the background
+        and populates the cache for the next call."""
+        cached, fresh = _cached_game_version()
+        if fresh:
+            return cached
+        try:
+            return await asyncio.wait_for(asyncio.shield(_game_version_refresh()),
+                                          _PATCH_NOTE_WAIT_S)
+        except TimeoutError:
+            return cached  # last known value (possibly None) -- never fail the call
+        except Exception:
+            return cached
 
     async def _guarded(name: str, call) -> dict:
         with _tracer.start_as_current_span("sc.tool") as span:
@@ -107,7 +162,7 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
             else:
                 span.set_attribute("sc.result", "ok")
                 if "game_version" in result:
-                    live = await _live_game_version()
+                    live = await _live_game_version_bounded()
                     note = _patch_note(result.get("game_version"), live)
                     if note:
                         result = {**result, **note}
@@ -202,7 +257,13 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     async def healthz(request: Request) -> JSONResponse:
         # Health means "process serving"; upstream outages are reported per
         # tool call, not here -- a down UEX must never flip readiness/liveness.
-        game_version = await _live_game_version()
+        # So /healthz NEVER fetches: it reports the cached game version (None
+        # when cold) and, if that is missing or expired, kicks off one
+        # background refresh. Awaiting UEX here (3 attempts x 8s read) blew
+        # the kubelet probe timeout during a UEX outage -> restart loop.
+        game_version, fresh = _cached_game_version()
+        if not fresh:
+            _game_version_refresh()
         return JSONResponse({"ok": True, "version": config.version, "game_version": game_version})
 
     # mcp 2.2's streamable_http_app defaults `host="127.0.0.1"`, which enables
@@ -221,11 +282,6 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
                                        transport_security=transport_security)
 
     mcp_lifespan = base_app.router.lifespan_context
-    # asyncio only holds a *weak* reference to a task scheduled via
-    # create_task -- without a strong reference kept somewhere the warmup
-    # task can be garbage-collected mid-flight. Keep it alive here and let
-    # its done-callback drop it once it finishes.
-    _background_tasks: set[asyncio.Task] = set()
 
     async def _warmup() -> None:
         for label, coro in (
@@ -241,10 +297,14 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     @asynccontextmanager
     async def _lifespan(app):
         async with mcp_lifespan(app):
-            task = asyncio.create_task(_warmup())
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-            yield
+            _spawn(_warmup())
+            try:
+                yield
+            finally:
+                for task in list(_background_tasks):
+                    task.cancel()
+                if _background_tasks:
+                    await asyncio.gather(*_background_tasks, return_exceptions=True)
 
     base_app.router.lifespan_context = _lifespan
     return base_app
