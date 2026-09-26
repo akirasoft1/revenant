@@ -71,28 +71,121 @@ COMPONENT_TYPES: dict[str, dict] = {
                "stats": {"max_health": "max_health", "regen_rate": "regen_rate",
                          "regen_delay_damage_s": "regen_delay.damage"},
                "default_rank": "max_health", "tiebreak": "regen_rate",
-               "lower_is_better": {"regen_delay_damage_s"}},
+               "lower_is_better": {"regen_delay_damage_s"},
+               "rank_synonyms": {
+                   "hp": "max_health", "health": "max_health", "shield_hp": "max_health",
+                   "strength": "max_health", "capacity": "max_health", "max_hp": "max_health",
+                   "pool": "max_health", "most_powerful": "max_health", "power": "max_health",
+                   "regen": "regen_rate", "regeneration": "regen_rate", "recharge": "regen_rate",
+                   "delay": "regen_delay_damage_s"}},
     "power_plant": {"wiki_type": "PowerPlant", "stat_key": "power_plant",
                      "stats": {"power_segment_generation": "power_segment_generation"},
-                     "default_rank": "power_segment_generation"},
+                     "default_rank": "power_segment_generation",
+                     "rank_synonyms": {
+                         "power": "power_segment_generation", "output": "power_segment_generation",
+                         "generation": "power_segment_generation", "segments": "power_segment_generation",
+                         "most_powerful": "power_segment_generation"}},
     "cooler": {"wiki_type": "Cooler", "stat_key": "cooler",
                "stats": {"coolant_segment_generation": "coolant_segment_generation"},
-               "default_rank": "coolant_segment_generation"},
+               "default_rank": "coolant_segment_generation",
+               "rank_synonyms": {
+                   "cooling": "coolant_segment_generation", "coolant": "coolant_segment_generation",
+                   "segments": "coolant_segment_generation", "most_powerful": "coolant_segment_generation"}},
     "quantum_drive": {"wiki_type": "QuantumDrive", "stat_key": "quantum_drive",
                        "stats": {"speed": "standard_jump.drive_speed", "fuel_rate": "fuel_rate"},
-                       "default_rank": "speed", "lower_is_better": {"fuel_rate"}},
+                       "default_rank": "speed", "lower_is_better": {"fuel_rate"},
+                       "rank_synonyms": {
+                           "fastest": "speed", "quickest": "speed", "jump_speed": "speed",
+                           "drive_speed": "speed", "most_powerful": "speed",
+                           "fuel": "fuel_rate", "efficiency": "fuel_rate", "fuel_efficiency": "fuel_rate",
+                           "fuel_burn": "fuel_rate"}},
     "radar": {"wiki_type": "Radar", "stat_key": "radar",
               "stats": {"assignment_range_max": "aim_assist.distance_max_assignment",
                         "detection_lifetime": "detection_lifetime"},
-              "default_rank": "assignment_range_max"},
+              "default_rank": "assignment_range_max",
+              "rank_synonyms": {
+                  "range": "assignment_range_max", "distance": "assignment_range_max",
+                  "max_range": "assignment_range_max", "most_powerful": "assignment_range_max",
+                  "lifetime": "detection_lifetime", "detection": "detection_lifetime"}},
     "weapon": {"wiki_type": "WeaponGun", "stat_key": "vehicle_weapon",
                "stats": {"dps": "damage.burst", "sustained_dps_60s": "damage.sustained_60s",
                          "range": "range"},
-               "default_rank": "dps"},
+               "default_rank": "dps",
+               "rank_synonyms": {
+                   "damage": "dps", "power": "dps", "most_powerful": "dps",
+                   "sustained": "sustained_dps_60s", "sustained_dps": "sustained_dps_60s",
+                   "dps_60s": "sustained_dps_60s", "distance": "range"}},
     "missile": {"wiki_type": "Missile", "stat_key": "missile",
                 "stats": {"damage": "damage_total", "speed": "speed"},
-                "default_rank": "damage"},
+                "default_rank": "damage",
+                "rank_synonyms": {
+                    "power": "damage", "most_powerful": "damage", "damage_total": "damage",
+                    "fastest": "speed"}},
 }
+
+# compare_components' `type` param accepts these spoken/typed synonyms
+# (case/space/hyphen-insensitive, see _normalise_token) in place of a
+# COMPONENT_TYPES key -- task-15: Gemini Live's voice path hears phrases like
+# "shield generator" or "power" rather than the canonical "shield"/
+# "power_plant" keys. Entries that already normalise to a literal
+# COMPONENT_TYPES key (e.g. "shields" -> not needed, "power plant" ->
+# "power_plant" already matches) are omitted; only genuinely different
+# spellings need a mapping.
+_TYPE_SYNONYMS: dict[str, str] = {
+    "shields": "shield", "shield_generator": "shield", "shield_generators": "shield",
+    "powerplant": "power_plant", "power": "power_plant",
+    "coolers": "cooler", "cooling": "cooler",
+    "quantum": "quantum_drive", "qd": "quantum_drive", "qt_drive": "quantum_drive",
+    "radars": "radar", "scanner": "radar",
+    "weapons": "weapon", "gun": "weapon", "guns": "weapon", "cannon": "weapon", "repeater": "weapon",
+    "missiles": "missile",
+}
+
+_ASR_CATEGORY_WORDS = ("shield generator", "power plant", "quantum drive", "radar", "shield",
+                       "cooler", "drive", "gun", "cannon", "missile", "ship")
+_O_DIGIT_RE = re.compile(r"(?<=\d)[oO]|[oO](?=\d)")
+
+
+def _normalise_token(s: str) -> str:
+    """Lowercase and collapse spaces/hyphens to underscores, for matching
+    against COMPONENT_TYPES keys, _TYPE_SYNONYMS and each type's
+    rank_synonyms -- voice/ASR input arrives as phrases ("shield generator",
+    "most powerful") rather than the canonical snake_case keys."""
+    return re.sub(r"[\s-]+", "_", (s or "").strip().lower())
+
+
+def _strip_category_word(name: str) -> str:
+    """Strip one trailing generic category word/phrase (task-15 variant 2):
+    a model transcribing a spoken item lookup sometimes tacks on a category
+    word that isn't part of the item's real name (e.g. "V801-12 radar").
+    Checked longest-phrase-first so "quantum drive" strips as a whole phrase
+    rather than leaving "quantum" behind via the standalone "drive" entry.
+    Only strips on a real word boundary (a preceding space) -- never returns
+    an empty/no-op result silently."""
+    stripped = name.rstrip()
+    lower = stripped.lower()
+    for word in _ASR_CATEGORY_WORDS:
+        suffix = " " + word
+        if lower.endswith(suffix):
+            return stripped[: -len(suffix)].rstrip()
+    return name
+
+
+def _asr_variants(name: str) -> list[str]:
+    """ASR-tolerant retry variants for a Wiki item name that failed to
+    resolve (task-15), tried in order until one resolves: (1) a stray letter
+    o/O sitting next to a digit, almost always a misheard '0' (e.g.
+    "v8o1-12"); (2) a trailing generic category word the model added that
+    isn't part of the real item name ("V801-12 radar"); (3) both together.
+    No-op transforms (and duplicate variants) are skipped."""
+    letter_fixed = _O_DIGIT_RE.sub("0", name)
+    stripped = _strip_category_word(name)
+    both = _O_DIGIT_RE.sub("0", stripped)
+    variants: list[str] = []
+    for v in (letter_fixed, stripped, both):
+        if v != name and v not in variants:
+            variants.append(v)
+    return variants
 
 
 def _get(d, path: str):
@@ -321,6 +414,14 @@ class ItemTools:
         if vehicle_ambiguous is not None and wiki_result.get("error") == "not_found":
             return error("ambiguous", f"'{name}' matches several vehicles",
                          candidates=vehicle_ambiguous)
+        if wiki_result.get("error") == "not_found" and vehicle_ambiguous is None:
+            # Task-15: the vehicle path found nothing at all either, so this
+            # is a genuine miss, not a real ambiguity -- worth one retry pass
+            # with ASR-normalised variants before giving up.
+            for variant in _asr_variants(name):
+                retried = await self._find_wiki_item(variant)
+                if "error" not in retried:
+                    return {**retried, "note": f"Interpreted '{name}' as '{variant}'."}
         return wiki_result
 
     async def _find_wiki_item(self, name: str) -> dict:
@@ -354,12 +455,31 @@ class ItemTools:
     async def compare_components(self, type: str, size: int, rank_by: str | None = None,
                                  grade: str | None = None, class_: str | None = None,
                                  limit: int = 5) -> dict:
-        ct = COMPONENT_TYPES.get((type or "").lower().replace(" ", "_"))
+        norm_type = _normalise_token(type)
+        ct = COMPONENT_TYPES.get(_TYPE_SYNONYMS.get(norm_type, norm_type))
         if ct is None:
             return error("bad_request", f"unknown component type '{type}'; use one of {sorted(COMPONENT_TYPES)}")
-        rank = rank_by or ct["default_rank"]
-        if rank not in ct["stats"]:
-            return error("bad_request", f"rank_by must be one of {sorted(ct['stats'])}")
+        rank_note: str | None = None
+        if rank_by is None:
+            rank = ct["default_rank"]
+        else:
+            norm_rank = _normalise_token(rank_by)
+            if norm_rank in ct["stats"]:
+                rank = norm_rank
+            else:
+                synonym = ct.get("rank_synonyms", {}).get(norm_rank)
+                if synonym is not None:
+                    rank = synonym
+                    rank_note = f"rank_by '{rank_by}' interpreted as '{rank}'."
+                else:
+                    # Task-15: an unrecognised rank_by NEVER errors -- rank by
+                    # the type's default and explain the substitution, rather
+                    # than bad_request'ing a voice/ASR guess (e.g. the model
+                    # guessing rank_by="shield_hp" or worse for "most
+                    # powerful shield").
+                    rank = ct["default_rank"]
+                    rank_note = (f"rank_by '{rank_by}' not recognised; ranked by {rank}. "
+                                f"Options: {sorted(ct['stats'])}")
         try:
             res = await self._cache.get_or_fetch(f"wiki:vi:{ct['wiki_type']}:{size}", _TTL,
                                                  lambda: self._wiki.vehicle_items(ct["wiki_type"], size))
@@ -406,4 +526,6 @@ class ItemTools:
                "results": rows[:max(1, min(limit, 20))], **freshness(res)}
         if excluded_missing_stat:
             out["excluded_missing_stat"] = excluded_missing_stat
+        if rank_note:
+            out["note"] = rank_note
         return out

@@ -178,10 +178,13 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         name (fuzzy match on partial or slightly-misspelled names, e.g.
         "V801-12", "greatsword cannon", or a ship like "Scorpius") and return
         its stats plus every player-reported shop/dealer selling it, cheapest
-        first, with location and report date. Numbers (prices, stats) are
-        pre-computed from live game data -- prefer this over memory, and
-        mention the data's age; the game changes every patch. Do NOT compute
-        this yourself or use the sandbox."""
+        first, with location and report date. Tolerant of voice/ASR noise: a
+        misheard letter next to a digit (e.g. "v8o1-12") or a trailing
+        category word tacked onto the name (e.g. "V801-12 radar") is retried
+        automatically, and the result notes when this happened. Numbers
+        (prices, stats) are pre-computed from live game data -- prefer this
+        over memory, and mention the data's age; the game changes every
+        patch. Do NOT compute this yourself or use the sandbox."""
         return await _guarded("sc_find_item", lambda: item_tools.find_item(name))
 
     @mcp.tool(name="sc_compare_components")
@@ -192,7 +195,11 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         power_plant, cooler, quantum_drive, radar, weapon, missile) against
         each other by their real in-game stats, best first, optionally
         filtered by grade (A/B/C) and class (e.g. "Military", "Competition")
-        and ranked by a specific stat via rank_by. Returns each component's
+        and ranked by a specific stat via rank_by. Both type and rank_by
+        tolerate spoken/typed synonyms (e.g. type="shield generator",
+        rank_by="most powerful" or "shield_hp") -- an unrecognised rank_by
+        never fails the call, it falls back to the type's default stat and
+        the result explains the substitution. Returns each component's
         key stats and cheapest known shop price. Numbers are pre-computed
         from live game data -- prefer this over memory; component balance
         changes every patch. Do NOT compute rankings yourself or use the

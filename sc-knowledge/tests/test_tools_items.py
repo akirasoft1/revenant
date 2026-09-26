@@ -486,3 +486,131 @@ async def test_compare_missiles_ranked_by_damage():
     assert r["ranked_by"] == "damage"
     assert len(names) == len(set(names)) == expected
     assert r["results"][0]["stats"]["damage"] is not None
+
+
+# --- Task 15: voice-tolerant tool inputs -------------------------------------
+
+async def test_compare_components_type_synonym_shield_generator():
+    """'shield generator' (a spoken phrase, space/hyphen/case-insensitive) must
+    resolve to the "shield" component type."""
+    r = await _tools().compare_components("shield generator", 2, limit=5)
+    assert "error" not in r
+    assert r["results"]
+
+
+async def test_compare_components_rank_by_synonym_shield_hp_ranks_by_max_health():
+    """Live voice smoke-test regression: the model guessed rank_by="shield_hp"
+    for "most powerful Size 2 shield" and got bad_request. "shield_hp" must
+    now resolve to the real stat key "max_health", carry an explanatory note,
+    and rank identically to an explicit rank_by="max_health" (FR-76 first,
+    tied with SecureShield on health but ahead on regen)."""
+    r = await _tools().compare_components("shield generator", 2, rank_by="shield_hp", limit=5)
+    assert "error" not in r
+    assert r["ranked_by"] == "max_health"
+    assert r["results"][0]["name"] == "FR-76"
+    assert "note" in r and "shield_hp" in r["note"] and "max_health" in r["note"]
+
+
+async def test_compare_components_rank_by_most_powerful_phrase_normalised():
+    """A spoken phrase like "most powerful" (space, not underscore) must be
+    normalised (lowercase, space/hyphen -> underscore) before the synonym
+    lookup."""
+    r = await _tools().compare_components("shield", 2, rank_by="most powerful", limit=5)
+    assert "error" not in r
+    assert r["ranked_by"] == "max_health"
+    assert "note" in r
+
+
+async def test_compare_components_rank_by_unknown_never_errors_falls_back_to_default():
+    """An unrecognised rank_by (not a canonical stat key or a known synonym)
+    must never bad_request -- it ranks by the type's default and explains why
+    via a note listing the valid options."""
+    r = await _tools().compare_components("shield", 2, rank_by="bogus_stat", limit=5)
+    assert "error" not in r
+    assert r["ranked_by"] == "max_health"  # shield's default_rank
+    assert "note" in r
+    assert "bogus_stat" in r["note"] and "not recognised" in r["note"]
+    assert "max_health" in r["note"]
+
+
+async def test_compare_components_rank_by_literal_canonical_key_no_note():
+    """Existing behaviour preserved: an already-canonical rank_by (e.g.
+    "regen_rate") must not produce a note."""
+    r = await _tools().compare_components("shield", 2, rank_by="regen_rate", limit=3)
+    assert r["results"][0]["name"] == "FR-76"
+    assert "note" not in r
+
+
+async def test_compare_components_no_rank_by_no_note():
+    """Existing behaviour preserved: omitting rank_by entirely uses the
+    type's default with no note."""
+    r = await _tools().compare_components("shield", 2, limit=5)
+    assert "note" not in r
+
+
+async def test_find_item_asr_letter_o_adjacent_to_digit_retried_as_zero():
+    """Gemini Live's ASR heard "V801-12" as "v8o1-12" (or, matching a
+    real-world mixed-case transcript and the fixture's exact casing,
+    "V8O1-12"): the stray letter O sitting between two digits is retried as
+    a literal 0 and the real V801-12 radar is returned with an interpretation
+    note. A dedicated exact-path transport is used (not the shared
+    longest-prefix fixture_transport) because "V801-12" is a literal string
+    prefix of "V8O1-12"'s two possible normalisations, and prefix-based
+    routing would otherwise mask whether the retry path actually ran."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path == "/api/v2/items/V801-12":
+            return httpx.Response(200, json=load_fixture("wiki_item_v801_12.json"))
+        if path == "/api/v2/items":
+            return httpx.Response(200, json=load_fixture("wiki_items_search_empty.json"))
+        return httpx.Response(404, json={"status": "not_found"})
+
+    wiki = build_wiki(load(), transport=httpx.MockTransport(handler))
+    r = await ItemTools(wiki, TTLCache()).find_item("V8O1-12")
+    assert "error" not in r
+    assert r["item"]["name"] == "V801-12" and r["item"]["type"] == "Radar"
+    assert r["note"] == "Interpreted 'V8O1-12' as 'V801-12'."
+
+
+async def test_find_item_trailing_category_word_stripped_and_retried():
+    """"V801-12 radar" (the model adding a generic category word that isn't
+    part of the real item name) is retried with that trailing word stripped.
+    Same dedicated exact-path transport rationale as above: "V801-12" is a
+    literal prefix of "V801-12 radar", so the shared prefix-based
+    fixture_transport would accidentally satisfy the direct (unstripped)
+    lookup and never exercise the retry path at all."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path == "/api/v2/items/V801-12":
+            return httpx.Response(200, json=load_fixture("wiki_item_v801_12.json"))
+        if path == "/api/v2/items":
+            return httpx.Response(200, json=load_fixture("wiki_items_search_empty.json"))
+        return httpx.Response(404, json={"status": "not_found"})
+
+    wiki = build_wiki(load(), transport=httpx.MockTransport(handler))
+    r = await ItemTools(wiki, TTLCache()).find_item("V801-12 radar")
+    assert "error" not in r
+    assert r["item"]["name"] == "V801-12" and r["item"]["type"] == "Radar"
+    assert r["note"] == "Interpreted 'V801-12 radar' as 'V801-12'."
+
+
+async def test_find_item_asr_retry_gives_up_cleanly_when_nothing_resolves():
+    """When none of the ASR-normalised variants resolve either, the original
+    not_found is returned unchanged (no note, no crash) -- existing
+    not_found behaviour for genuinely unknown names must be unaffected."""
+    r = await _tools_with_uex(wiki_routes=_EMPTY_WIKI_ROUTES).find_item("totally unknown zzz radar")
+    assert r.get("error") == "not_found"
+    assert "note" not in r
+
+
+async def test_find_item_asr_retry_not_attempted_when_vehicle_ambiguous():
+    """The retry-with-variants path only kicks in when the vehicle path also
+    found nothing at all; a genuine ambiguous-vehicle result must still win
+    over any Wiki-side variant retry."""
+    uex_routes = {"/2.0/vehicles": "uex_vehicles_ambiguous_pair.json"}
+    r = await _tools_with_uex(wiki_routes={
+        "/api/v2/items/Freelancer": "wiki_items_search_empty.json",
+        "/api/v2/items": "wiki_items_search_empty.json",
+    }, uex_routes=uex_routes).find_item("Freelancer")
+    assert r["error"] == "ambiguous"
+    assert set(r["candidates"]) == {"Freelancer MAX", "Freelancer MIS"}
