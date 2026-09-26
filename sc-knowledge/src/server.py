@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 import httpx
 import uvicorn
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -204,8 +205,20 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         game_version = await _live_game_version()
         return JSONResponse({"ok": True, "version": config.version, "game_version": game_version})
 
+    # mcp 2.2's streamable_http_app defaults `host="127.0.0.1"`, which enables
+    # DNS-rebinding protection with a loopback-only Host allow-list -- every
+    # in-cluster call (Host `sc-knowledge.discord-article-bot.svc...:8080`)
+    # was rejected with `421 Invalid Host header`. Keep the protection on,
+    # but allow the Service's in-cluster names (SC_ALLOWED_HOSTS overrides).
+    # allowed_origins stays empty: server-to-server MCP clients send no
+    # Origin header, and an absent Origin always passes.
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(config.allowed_hosts),
+    )
     base_app = mcp.streamable_http_app(streamable_http_path="/mcp", json_response=True,
-                                       stateless_http=True)
+                                       stateless_http=True,
+                                       transport_security=transport_security)
 
     mcp_lifespan = base_app.router.lifespan_context
     # asyncio only holds a *weak* reference to a task scheduled via

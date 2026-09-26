@@ -2,6 +2,25 @@
 import os
 from dataclasses import dataclass
 
+# Host headers the MCP endpoint accepts (mcp's DNS-rebinding protection).
+# Every in-cluster spelling of the Service, plus loopback for local runs and
+# port-forwards. `name:*` means "that host, any port" (mcp's own syntax).
+DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (
+    "sc-knowledge:*",
+    "sc-knowledge.discord-article-bot:*",
+    "sc-knowledge.discord-article-bot.svc:*",
+    "sc-knowledge.discord-article-bot.svc.cluster.local:*",
+    "localhost:*",
+    "127.0.0.1:*",
+    "[::1]:*",
+)
+
+
+def _allowed_hosts(raw: str | None) -> tuple[str, ...]:
+    if not raw or not raw.strip():
+        return DEFAULT_ALLOWED_HOSTS
+    return tuple(h.strip() for h in raw.split(",") if h.strip())
+
 
 @dataclass(frozen=True)
 class Config:
@@ -13,6 +32,7 @@ class Config:
     version: str
     otlp_endpoint: str | None
     guides_dir: str
+    allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS
 
 
 def load() -> Config:
@@ -25,4 +45,5 @@ def load() -> Config:
         version=os.environ.get("SC_KNOWLEDGE_VERSION", "dev"),
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
         guides_dir=os.environ.get("SC_GUIDES_DIR", "/guides"),
+        allowed_hosts=_allowed_hosts(os.environ.get("SC_ALLOWED_HOSTS")),
     )

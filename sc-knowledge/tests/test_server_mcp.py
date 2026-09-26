@@ -228,3 +228,60 @@ def test_patch_note_unknown_live_version_returns_empty():
 
 def test_patch_note_both_unknown_returns_empty():
     assert _patch_note(None, None) == {}
+
+
+# --- C1: DNS-rebinding Host allow-list ------------------------------------------
+
+_INIT_BODY = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                         "clientInfo": {"name": "host-test", "version": "0"}}}
+_MCP_HEADERS = {"Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream"}
+
+
+async def _post_initialize(url: str, host: str) -> httpx.Response:
+    async with httpx.AsyncClient() as c:
+        return await c.post(f"{url}/mcp", json=_INIT_BODY,
+                            headers={**_MCP_HEADERS, "Host": host})
+
+
+@pytest.mark.parametrize("host", [
+    "sc-knowledge.discord-article-bot.svc.cluster.local:8080",
+    "sc-knowledge.discord-article-bot.svc:8080",
+    "sc-knowledge.discord-article-bot:8080",
+    "sc-knowledge:8080",
+    "localhost:8080",
+    "127.0.0.1:8080",
+])
+async def test_in_cluster_host_headers_are_accepted(server_url, host):
+    """mcp 2.2's streamable_http_app defaults host="127.0.0.1", which turns on
+    DNS-rebinding protection allowing only localhost Host headers -- every
+    in-cluster call got `421 Invalid Host header`."""
+    r = await _post_initialize(server_url, host)
+    assert r.status_code == 200, r.text
+    assert r.json()["result"]["serverInfo"]["name"] == "sc-knowledge"
+
+
+async def test_foreign_host_header_is_rejected(server_url):
+    r = await _post_initialize(server_url, "evil.example:8080")
+    assert r.status_code == 421
+
+
+async def test_allowed_hosts_configurable_via_env(monkeypatch):
+    monkeypatch.setenv("SC_ALLOWED_HOSTS", "custom.example:*, other.example:9000")
+    app = build_app(load(), uex_transport=_connect_error_transport(), guides_dir=GUIDES_DIR)
+    async with _running(app) as url:
+        ok = await _post_initialize(url, "custom.example:8080")
+        exact = await _post_initialize(url, "other.example:9000")
+        default_gone = await _post_initialize(url, "sc-knowledge:8080")
+    assert ok.status_code == 200
+    assert exact.status_code == 200
+    assert default_gone.status_code == 421
+
+
+async def test_healthz_is_not_host_guarded(server_url):
+    """kubelet probes send Host `<podIP>:8080` -- the allow-list only guards
+    /mcp, never the liveness/readiness endpoint."""
+    async with httpx.AsyncClient() as c:
+        r = await c.get(f"{server_url}/healthz", headers={"Host": "10.42.0.17:8080"})
+    assert r.status_code == 200
