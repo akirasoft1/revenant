@@ -210,8 +210,22 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
         # A cancel here is either the client's deadline or sidecar shutdown;
         # both are honest "the agent path is not serving right now" signals,
         # and over-counting is already this breaker's ruled policy.
+        # Resolve the Star Citizen tools state BEFORE dispatching the turn (a
+        # cheap, TTL-cached read — see ScToolsProvider) so it can be recorded
+        # on the agent.chat span for every outcome: success, timeout,
+        # exception, or a client-cancelled call, not only a successful turn.
+        # `self._agent` may be a bare mock/fake in tests with no such method.
+        sc_state = "off"
+        sc_state_resolver = getattr(self._agent, "sc_tools_state", None)
+        if callable(sc_state_resolver):
+            try:
+                sc_state = await sc_state_resolver()
+            except Exception:  # noqa: BLE001
+                log.debug("sc_tools_state() failed while preparing the chat span", exc_info=True)
+
         try:
             with trace.get_tracer(__name__).start_as_current_span("agent.chat") as span:
+                span.set_attribute("sc.tools.available", sc_state == "available")
                 try:
                     result = await asyncio.wait_for(
                         self._agent.process_chat(
@@ -247,11 +261,16 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
                 n = len(result.execution_ids)
                 span.set_attribute("sandbox.invoked", n > 0)
                 span.set_attribute("sandbox.call_count", n)
-                # Star Citizen toolset observability: was it attached this
-                # turn, how many sc_* calls were made, and which ones.
-                sc_state = getattr(result, "sc_state", "off")
+                # Star Citizen toolset observability: how many sc_* calls were
+                # made, and which ones. Re-derive sc.tools.available from the
+                # turn's actual recorded state too (normally identical to the
+                # pre-turn probe above; this is the more authoritative value
+                # when they ever disagree, e.g. the probe's TTL expired
+                # mid-turn) — this is the "empty message_text" case's
+                # attribute too, since that's still a successful `result`.
+                result_sc_state = getattr(result, "sc_state", sc_state)
                 sc_tool_names = getattr(result, "sc_tool_names", None) or []
-                span.set_attribute("sc.tools.available", sc_state == "available")
+                span.set_attribute("sc.tools.available", result_sc_state == "available")
                 span.set_attribute("sc.tool.calls", len(sc_tool_names))
                 span.set_attribute("sc.tool.names", ",".join(sc_tool_names))
         except asyncio.CancelledError:
@@ -436,6 +455,17 @@ def serve() -> None:
                 await retention_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            # Close the sc-knowledge toolset(s) exactly once, here, at process
+            # shutdown. Every Chat turn deliberately builds a
+            # _PerTurnToolsetProxy around the SAME shared toolset instance
+            # precisely so that ADK's per-turn Runner.close() never closes it
+            # (see _PerTurnToolsetProxy in agent.py); this is the one place
+            # the real toolset's own close() is allowed to run.
+            for toolset in sc_tools.toolsets:
+                try:
+                    await asyncio.wait_for(toolset.close(), timeout=10.0)
+                except Exception:  # noqa: BLE001
+                    log.warning("error closing sc-knowledge toolset %s", type(toolset).__name__, exc_info=True)
             await server.stop(grace=10)
 
     asyncio.run(_run())

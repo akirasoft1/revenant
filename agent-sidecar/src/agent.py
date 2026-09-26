@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from google.adk.agents import Agent
 from google.adk.models import Gemini
 from google.adk.runners import InMemoryRunner
+from google.adk.tools.base_toolset import BaseToolset
 from google.genai import types
 
 from .config import Config
@@ -23,6 +24,45 @@ from .tools import RunInSandboxTool, ToolBudgetExceeded
 log = logging.getLogger(__name__)
 
 _APP_NAME = "discord-article-bot"
+
+
+class _PerTurnToolsetProxy(BaseToolset):
+    """Stands in for a shared, build-once MCP toolset inside one turn's
+    Agent.tools list, so ADK's per-turn cleanup can never close it.
+
+    google.adk.runners.Runner.close() (called from our own `finally` below)
+    walks `Agent.tools` for every `BaseToolset` instance and awaits
+    `.close()` on each of them (Runner._collect_toolset /
+    _cleanup_toolsets) — that's real McpToolset.close() behavior: it clears
+    the toolset's tool cache and closes its pooled MCP session
+    (mcp_toolset.py). ScToolsProvider builds its McpToolset ONCE at process
+    startup and hands the SAME instance to every turn; grpc.aio runs `Chat`
+    calls concurrently, so without this proxy, turn A finishing (and
+    closing the runner) tears down turn B's in-flight sc_* MCP session.
+
+    This proxy is what actually goes into Agent.tools instead of the real
+    toolset. `get_tools`/`process_llm_request`/`get_auth_config` delegate to
+    the real, shared toolset (so tool listing/caching/session pooling on the
+    real toolset keeps working exactly as before), while `close()` is left
+    at BaseToolset's inherited no-op — so a fresh proxy is thrown away every
+    turn without ever touching the real toolset. The real toolset is closed
+    exactly once, at process shutdown (see server.serve()).
+    """
+
+    def __init__(self, real: BaseToolset) -> None:
+        super().__init__()
+        self._real = real
+
+    async def get_tools(self, readonly_context=None):
+        return await self._real.get_tools(readonly_context)
+
+    async def process_llm_request(self, *, tool_context, llm_request):
+        return await self._real.process_llm_request(
+            tool_context=tool_context, llm_request=llm_request,
+        )
+
+    def get_auth_config(self):
+        return self._real.get_auth_config()
 
 
 def active_genai_backend() -> str:
@@ -301,6 +341,20 @@ class ChannelVoiceAgent:
             parts.append("## Recent conversation\n" + "\n".join(lines))
         return "\n\n".join(parts)
 
+    async def sc_tools_state(self) -> str:
+        """This turn's Star Citizen tools state, derived from the provider's
+        cached health probe (never a fresh network call on the hot path —
+        see ScToolsProvider): "off" when sc tools are disabled/not wired at
+        all, else "available"/"unavailable" from the cached probe result.
+
+        Exposed as its own method (rather than inlined in process_chat) so
+        the gRPC servicer can call it BEFORE dispatching a turn and record
+        the state on the agent.chat span for every Chat outcome — success,
+        timeout, exception, or cancellation — not only a successful turn."""
+        if not self._sc_tools.enabled:
+            return "off"
+        return "available" if await self._sc_tools.available() else "unavailable"
+
     async def process_chat(
         self,
         *,
@@ -316,15 +370,9 @@ class ChannelVoiceAgent:
             call_budget=self._config.sandbox_agent_turn_call_budget,
         )
 
-        # Determine this turn's Star Citizen tools state from the provider's
-        # cached health probe (never a fresh network call on the hot path —
-        # see ScToolsProvider). "off" when sc tools are disabled/not wired at
-        # all, so an sc-knowledge outage can never fail Chat: the toolset is
-        # simply left off the Agent for this turn.
-        if self._sc_tools.enabled:
-            sc_state = "available" if await self._sc_tools.available() else "unavailable"
-        else:
-            sc_state = "off"
+        # An sc-knowledge outage can never fail Chat: when unavailable, the
+        # toolset is simply left off the Agent for this turn.
+        sc_state = await self.sc_tools_state()
         if sc_state == "unavailable":
             log.info("sc_tools=unavailable (probe failed); turn runs without Star Citizen tools")
 
@@ -357,7 +405,10 @@ class ChannelVoiceAgent:
             except ToolBudgetExceeded:
                 return {"exit_code": -3, "error": "turn_call_budget_exceeded"}
 
-        tools = [run_in_sandbox] + (list(self._sc_tools.toolsets) if sc_state == "available" else [])
+        tools = [run_in_sandbox] + (
+            [_PerTurnToolsetProxy(ts) for ts in self._sc_tools.toolsets]
+            if sc_state == "available" else []
+        )
         agent = Agent(
             name="channel_voice",
             description="Discord channel-voice agent with sandboxed execution capabilities.",

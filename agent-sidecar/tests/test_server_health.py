@@ -327,17 +327,14 @@ async def test_chat_succeeds_and_breaker_records_success_when_sc_tools_unavailab
     # cached probe says unavailable, the turn still runs (on run_in_sandbox
     # alone) and succeeds, and the breaker must record that as a success —
     # not silently swallow it, and not fail it.
-    import os
-
     import src.agent as A
     from src.agent import ChannelVoiceAgent
     from src.config import load
     from src.sc_tools import ScToolsProvider
 
-    for k, v in {
-        "MONGO_URI": "mongodb://x", "SANDBOX_BASE_IMAGE": "img", "AGENT_MODEL": "gemini-3.8-flash",
-    }.items():
-        os.environ.setdefault(k, v)
+    monkeypatch.setenv("MONGO_URI", "mongodb://x")
+    monkeypatch.setenv("SANDBOX_BASE_IMAGE", "img")
+    monkeypatch.setenv("AGENT_MODEL", "gemini-3.8-flash")
 
     class _FakePart:
         def __init__(self, text):
