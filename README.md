@@ -372,6 +372,16 @@ Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWa
 | `VOICE_MAX_SESSION_SECONDS` | `600` | Hard cap on a single voice session's length (cost guard) |
 | `VOICE_SYSTEM_PROMPT` | `` | Overrides the system prompt passed to the Live session (defaults to the channel-voice personality prompt) |
 
+### Star Citizen Knowledge Configuration
+
+Backs channel-voice text chat and voice sessions with live Star Citizen data (items, ships/vehicles, factions/missions, trade routes, commodity prices, and the org's own curated guides) via a dedicated `sc-knowledge` MCP service. Set independently on the agent sidecar (text chat) and the voice sidecar (voice sessions) — see `CLAUDE.md`'s "Star Citizen Knowledge (sc-knowledge)" section for full details.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SC_KNOWLEDGE_ENABLED` | `false` | Enable Star Citizen knowledge tools (set on the agent sidecar and/or the voice sidecar) |
+| `SC_KNOWLEDGE_URL` | `http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp` | Address of the sc-knowledge MCP service |
+| `UEXCORP_BEARER` | `` | Optional UEX Corp API bearer token (raises UEX rate limits); stored in Secret `sc-knowledge-secrets` |
+
 ## Commands
 
 All commands use Discord's native slash command system. Type `/` to see available commands with autocomplete.
