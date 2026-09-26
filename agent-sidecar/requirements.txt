@@ -1,11 +1,13 @@
 google-adk[extensions]>=2.10.0
 grpcio>=1.84.0
 # grpcio-tools / protobuf are held below their latest (1.84.0 / 7.x) by a
-# transitive cap, not by choice: google-adk 2.10.0 pins
+# transitive cap, not by choice: google-adk >=2.8.0 (incl. 2.10.0) pins
 # opentelemetry-sdk<=1.42.1, whose opentelemetry-proto 1.42.1 requires
-# protobuf<7, and grpcio-tools>=1.82 requires protobuf>=7. Raise all three
-# together once google-adk lifts its OTel ceiling, then regenerate the stubs
-# (`make protoc`) so gencode <= runtime.
+# protobuf<7, and grpcio-tools>=1.82 requires protobuf>=7. (adk 2.7.0 allowed
+# OTel <=1.43, so the previous image resolved protobuf 7.x -- taking adk 2.10
+# is a deliberate protobuf 7 -> 6.33 step back.) Raise all three together once
+# google-adk lifts its OTel ceiling, then regenerate the stubs (`make protoc`)
+# so gencode <= runtime.
 grpcio-tools>=1.81.1
 protobuf>=6.33.6
 # mcp 2.x: dql_runner uses streamable_http_client + an httpx2.AsyncClient
