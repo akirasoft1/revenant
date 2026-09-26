@@ -20,8 +20,9 @@ jest.mock('@opentelemetry/exporter-trace-otlp-proto', () => ({
   OTLPTraceExporter: jest.fn().mockImplementation(() => ({}))
 }));
 
+// OTel JS 2.x removed the `Resource` class in favour of `resourceFromAttributes`.
 jest.mock('@opentelemetry/resources', () => ({
-  Resource: jest.fn().mockImplementation((attrs) => ({ attributes: attrs }))
+  resourceFromAttributes: jest.fn((attrs) => ({ attributes: attrs }))
 }));
 
 jest.mock('@opentelemetry/semantic-conventions', () => ({
@@ -106,6 +107,43 @@ describe('tracing', () => {
     expect(config.instrumentations[1]).toEqual(
       expect.objectContaining({ instrumentationName: '@traceloop/instrumentation-openai' })
     );
+  });
+
+  test('should build the resource with resourceFromAttributes and the same attributes', () => {
+    require('../tracing');
+    const { resourceFromAttributes } = require('@opentelemetry/resources');
+    expect(resourceFromAttributes).toHaveBeenCalledTimes(1);
+    const { NodeSDK } = require('@opentelemetry/sdk-node');
+    const config = NodeSDK.mock.calls[0][0];
+    expect(config.resource.attributes).toEqual({
+      'service.name': 'discord-article-bot',
+      'service.version': '1.0.0-test',
+      'service.namespace': 'discord-article-bot',
+      'deployment.environment': process.env.NODE_ENV || 'development',
+    });
+  });
+
+  test('should pass the OTLP batch processor via spanProcessors (plural, 2.x API)', () => {
+    require('../tracing');
+    const { NodeSDK } = require('@opentelemetry/sdk-node');
+    const { BatchSpanProcessor } = require('@opentelemetry/sdk-trace-base');
+    const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-proto');
+    const config = NodeSDK.mock.calls[0][0];
+    expect(config.spanProcessor).toBeUndefined();
+    expect(config.spanProcessors).toHaveLength(1);
+    expect(BatchSpanProcessor).toHaveBeenCalledTimes(1);
+    expect(OTLPTraceExporter).toHaveBeenCalledWith(
+      expect.objectContaining({ url: expect.stringMatching(/\/v1\/traces$/) })
+    );
+  });
+
+  test('should disable the upstream OTel openai instrumentation so LLM calls are not double-traced', () => {
+    // auto-instrumentations-node >=0.6x bundles @opentelemetry/instrumentation-openai,
+    // which would emit a second span per OpenAI call alongside OpenLLMetry's.
+    require('../tracing');
+    const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+    const autoConfig = getNodeAutoInstrumentations.mock.calls[0][0];
+    expect(autoConfig['@opentelemetry/instrumentation-openai']).toEqual({ enabled: false });
   });
 
   test('should start the SDK on module load', () => {

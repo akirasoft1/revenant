@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
-require('dotenv').config({ path: '../../.env' });
+require('dotenv').config({ path: '../../.env', quiet: true });
 
 const CHANNEL_ID = process.argv[2] || '684882379516805202';
 const OUTPUT_FILE = process.argv[3] || 'discord_users.json';

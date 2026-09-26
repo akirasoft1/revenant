@@ -1,5 +1,8 @@
 // services/VeoService.js
-const { VertexAI } = require('@google-cloud/vertexai');
+// Veo runs through the unified @google/genai SDK in Vertex mode (replaces the
+// deprecated @google-cloud/vertexai SDK + hand-rolled predictLongRunning REST
+// calls). Auth is ADC (GOOGLE_APPLICATION_CREDENTIALS), as before.
+const { GoogleGenAI } = require('@google/genai');
 const { Storage } = require('@google-cloud/storage');
 const axios = require('axios');
 const logger = require('../logger');
@@ -49,8 +52,9 @@ class VeoService {
       throw new Error('VEO_GCS_BUCKET is required for video generation');
     }
 
-    // Initialize Vertex AI client
-    this.vertexAI = new VertexAI({
+    // Vertex-mode GenAI client (generateVideos + operations polling)
+    this.genai = new GoogleGenAI({
+      vertexai: true,
       project: config.veo.projectId,
       location: config.veo.location
     });
@@ -423,6 +427,31 @@ class VeoService {
   // ==================== VIDEO GENERATION ====================
 
   /**
+   * Validate the prompt/ratio/duration shared by every mode.
+   * @returns {{error?: string, trimmedPrompt?: string, aspectRatio?: string, duration?: number|string}}
+   */
+  _validateRequest(prompt, options) {
+    const promptValidation = this.validatePrompt(prompt);
+    if (!promptValidation.valid) {
+      return { error: promptValidation.error };
+    }
+
+    const aspectRatio = options.aspectRatio || this.config.veo.defaultAspectRatio;
+    const ratioValidation = this.validateAspectRatio(aspectRatio);
+    if (!ratioValidation.valid) {
+      return { error: ratioValidation.error };
+    }
+
+    const duration = options.duration || this.config.veo.defaultDuration;
+    const durationValidation = this.validateDuration(duration);
+    if (!durationValidation.valid) {
+      return { error: durationValidation.error };
+    }
+
+    return { trimmedPrompt: prompt.trim(), aspectRatio, duration };
+  }
+
+  /**
    * Generate a video from a text prompt only (text-to-video)
    * @param {string} prompt - Text description of the video
    * @param {Object} options - Generation options
@@ -433,187 +462,18 @@ class VeoService {
    * @returns {Promise<{success: boolean, buffer?: Buffer, error?: string, prompt?: string}>}
    */
   async generateVideoFromText(prompt, options = {}, user = null, onProgress = null) {
-    // Validate prompt
-    const promptValidation = this.validatePrompt(prompt);
-    if (!promptValidation.valid) {
-      return { success: false, error: promptValidation.error };
+    const req = this._validateRequest(prompt, options);
+    if (req.error) {
+      return { success: false, error: req.error };
     }
 
-    // Validate and set aspect ratio
-    const aspectRatio = options.aspectRatio || this.config.veo.defaultAspectRatio;
-    const ratioValidation = this.validateAspectRatio(aspectRatio);
-    if (!ratioValidation.valid) {
-      return { success: false, error: ratioValidation.error };
-    }
-
-    // Validate and set duration
-    const duration = options.duration || this.config.veo.defaultDuration;
-    const durationValidation = this.validateDuration(duration);
-    if (!durationValidation.valid) {
-      return { success: false, error: durationValidation.error };
-    }
-
-    const trimmedPrompt = prompt.trim();
-
-    try {
-      logger.info(`Generating video from text for prompt: "${trimmedPrompt}" with duration: ${duration}s, ratio: ${aspectRatio}`);
-
-      if (onProgress) onProgress('Starting video generation...');
-
-      // Build the output GCS URI
-      const outputUri = this.buildGcsOutputUri();
-      const model = this.config.veo.model;
-
-      // Wrap the entire generation process in a span
-      const result = await withSpan('vertexai.veo.generateVideo', {
-        // GenAI semantic conventions
-        'gen_ai.system': 'google_vertex',
-        'gen_ai.operation.name': 'video_generation',
-        'gen_ai.request.model': model,
-        // Video generation context
-        'video_gen.mode': 'text_to_video',
-        'video_gen.duration_seconds': duration,
-        'video_gen.aspect_ratio': aspectRatio,
-        'video_gen.prompt_length': trimmedPrompt.length,
-        // Discord context
-        'discord.user.id': user?.id || '',
-      }, async (span) => {
-        // Make the API request to Vertex AI (text-only mode - no image)
-        const endpoint = `https://${this.config.veo.location}-aiplatform.googleapis.com/v1/projects/${this.config.veo.projectId}/locations/${this.config.veo.location}/publishers/google/models/${model}:predictLongRunning`;
-
-        const requestBody = {
-          instances: [{
-            prompt: trimmedPrompt
-          }],
-          parameters: {
-            storageUri: outputUri,
-            sampleCount: 1,
-            aspectRatio: aspectRatio,
-            durationSeconds: parseInt(duration, 10)
-          }
-        };
-
-        // Get access token for authentication
-        const { GoogleAuth } = require('google-auth-library');
-        const auth = new GoogleAuth({
-          scopes: ['https://www.googleapis.com/auth/cloud-platform']
-        });
-        const client = await auth.getClient();
-        const accessToken = await client.getAccessToken();
-
-        // Start the long-running operation
-        const startResponse = await axios.post(endpoint, requestBody, {
-          headers: {
-            'Authorization': `Bearer ${accessToken.token}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 60000
-        });
-
-        const operationName = startResponse.data.name;
-        logger.info(`Video generation operation started: ${operationName}`);
-        span.setAttributes({ 'video_gen.operation_name': operationName });
-
-        // Poll for completion
-        if (onProgress) onProgress('Generating video (this may take a few minutes)...');
-        const pollResult = await this.pollOperation(operationName, accessToken.token, onProgress);
-
-        // Add response attributes
-        span.setAttributes({
-          'gen_ai.response.success': pollResult.success,
-        });
-
-        return pollResult;
-      });
-
-      if (!result.success) {
-        // Record failed generation
-        if (this.mongoService && user) {
-          await this.mongoService.recordVideoGeneration(
-            user.id,
-            user.tag || user.username,
-            trimmedPrompt,
-            duration,
-            aspectRatio,
-            this.config.veo.model,
-            false,
-            result.error,
-            0
-          );
-        }
-        return result;
-      }
-
-      // Download the generated video from GCS
-      if (onProgress) onProgress('Downloading generated video...');
-      const videoGcsUri = result.videoUri;
-      const downloadResult = await this.downloadVideoFromGcs(videoGcsUri);
-
-      if (!downloadResult.success) {
-        return downloadResult;
-      }
-
-      // Set cooldown for user
-      if (user) {
-        this.setCooldown(user.id);
-      }
-
-      // Record successful generation
-      if (this.mongoService && user) {
-        await this.mongoService.recordVideoGeneration(
-          user.id,
-          user.tag || user.username,
-          trimmedPrompt,
-          duration,
-          aspectRatio,
-          this.config.veo.model,
-          true,
-          null,
-          downloadResult.buffer.length
-        );
-      }
-
-      logger.info(`Video generated successfully from text: ${downloadResult.buffer.length} bytes`);
-
-      return {
-        success: true,
-        buffer: downloadResult.buffer,
-        prompt: trimmedPrompt,
-        duration,
-        aspectRatio
-      };
-
-    } catch (error) {
-      logger.error(`Video generation error: ${error.message}`);
-
-      let errorMessage;
-      if (error.response?.data?.error?.message) {
-        errorMessage = error.response.data.error.message;
-      } else if (error.message.includes('rate limit') || error.message.includes('quota')) {
-        errorMessage = 'API rate limit exceeded. Please try again later.';
-      } else if (error.message.includes('safety') || error.message.includes('blocked')) {
-        errorMessage = 'Your prompt was blocked by safety filters. Please try a different prompt.';
-      } else {
-        errorMessage = `Video generation failed: ${error.message}`;
-      }
-
-      // Record failed generation
-      if (this.mongoService && user) {
-        await this.mongoService.recordVideoGeneration(
-          user.id,
-          user.tag || user.username,
-          trimmedPrompt,
-          duration,
-          aspectRatio,
-          this.config.veo.model,
-          false,
-          errorMessage,
-          0
-        );
-      }
-
-      return { success: false, error: errorMessage };
-    }
+    return this._generate({
+      ...req,
+      user,
+      onProgress,
+      mode: 'text_to_video',
+      successLabel: 'from text',
+    });
   }
 
   /**
@@ -628,27 +488,10 @@ class VeoService {
    * @returns {Promise<{success: boolean, buffer?: Buffer, error?: string, prompt?: string}>}
    */
   async generateVideoFromImage(prompt, imageUrl, options = {}, user = null, onProgress = null) {
-    // Validate prompt
-    const promptValidation = this.validatePrompt(prompt);
-    if (!promptValidation.valid) {
-      return { success: false, error: promptValidation.error };
+    const req = this._validateRequest(prompt, options);
+    if (req.error) {
+      return { success: false, error: req.error };
     }
-
-    // Validate and set aspect ratio
-    const aspectRatio = options.aspectRatio || this.config.veo.defaultAspectRatio;
-    const ratioValidation = this.validateAspectRatio(aspectRatio);
-    if (!ratioValidation.valid) {
-      return { success: false, error: ratioValidation.error };
-    }
-
-    // Validate and set duration
-    const duration = options.duration || this.config.veo.defaultDuration;
-    const durationValidation = this.validateDuration(duration);
-    if (!durationValidation.valid) {
-      return { success: false, error: durationValidation.error };
-    }
-
-    const trimmedPrompt = prompt.trim();
 
     // Fetch the source image
     if (onProgress) onProgress('Fetching image...');
@@ -657,170 +500,15 @@ class VeoService {
       return { success: false, error: sourceImage.error };
     }
 
-    try {
-      logger.info(`Generating video from image for prompt: "${trimmedPrompt}" with duration: ${duration}s, ratio: ${aspectRatio}`);
-
-      if (onProgress) onProgress('Starting video generation...');
-
-      // Build the output GCS URI
-      const outputUri = this.buildGcsOutputUri();
-      const model = this.config.veo.model;
-
-      // Wrap the entire generation process in a span
-      const result = await withSpan('vertexai.veo.generateVideo', {
-        // GenAI semantic conventions
-        'gen_ai.system': 'google_vertex',
-        'gen_ai.operation.name': 'video_generation',
-        'gen_ai.request.model': model,
-        // Video generation context
-        'video_gen.mode': 'image_to_video',
-        'video_gen.duration_seconds': duration,
-        'video_gen.aspect_ratio': aspectRatio,
-        'video_gen.prompt_length': trimmedPrompt.length,
-        'video_gen.source_image_mime': sourceImage.mimeType,
-        // Discord context
-        'discord.user.id': user?.id || '',
-      }, async (span) => {
-        // Make the API request to Vertex AI (single image mode - no lastFrame)
-        const endpoint = `https://${this.config.veo.location}-aiplatform.googleapis.com/v1/projects/${this.config.veo.projectId}/locations/${this.config.veo.location}/publishers/google/models/${model}:predictLongRunning`;
-
-        const requestBody = {
-          instances: [{
-            prompt: trimmedPrompt,
-            image: {
-              bytesBase64Encoded: sourceImage.data,
-              mimeType: sourceImage.mimeType
-            }
-          }],
-          parameters: {
-            storageUri: outputUri,
-            sampleCount: 1,
-            aspectRatio: aspectRatio,
-            durationSeconds: parseInt(duration, 10)
-          }
-        };
-
-        // Get access token for authentication
-        const { GoogleAuth } = require('google-auth-library');
-        const auth = new GoogleAuth({
-          scopes: ['https://www.googleapis.com/auth/cloud-platform']
-        });
-        const client = await auth.getClient();
-        const accessToken = await client.getAccessToken();
-
-        // Start the long-running operation
-        const startResponse = await axios.post(endpoint, requestBody, {
-          headers: {
-            'Authorization': `Bearer ${accessToken.token}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 60000
-        });
-
-        const operationName = startResponse.data.name;
-        logger.info(`Video generation operation started: ${operationName}`);
-        span.setAttributes({ 'video_gen.operation_name': operationName });
-
-        // Poll for completion
-        if (onProgress) onProgress('Generating video (this may take a few minutes)...');
-        const pollResult = await this.pollOperation(operationName, accessToken.token, onProgress);
-
-        // Add response attributes
-        span.setAttributes({
-          'gen_ai.response.success': pollResult.success,
-        });
-
-        return pollResult;
-      });
-
-      if (!result.success) {
-        // Record failed generation
-        if (this.mongoService && user) {
-          await this.mongoService.recordVideoGeneration(
-            user.id,
-            user.tag || user.username,
-            trimmedPrompt,
-            duration,
-            aspectRatio,
-            this.config.veo.model,
-            false,
-            result.error,
-            0
-          );
-        }
-        return result;
-      }
-
-      // Download the generated video from GCS
-      if (onProgress) onProgress('Downloading generated video...');
-      const videoGcsUri = result.videoUri;
-      const downloadResult = await this.downloadVideoFromGcs(videoGcsUri);
-
-      if (!downloadResult.success) {
-        return downloadResult;
-      }
-
-      // Set cooldown for user
-      if (user) {
-        this.setCooldown(user.id);
-      }
-
-      // Record successful generation
-      if (this.mongoService && user) {
-        await this.mongoService.recordVideoGeneration(
-          user.id,
-          user.tag || user.username,
-          trimmedPrompt,
-          duration,
-          aspectRatio,
-          this.config.veo.model,
-          true,
-          null,
-          downloadResult.buffer.length
-        );
-      }
-
-      logger.info(`Video generated successfully from single image: ${downloadResult.buffer.length} bytes`);
-
-      return {
-        success: true,
-        buffer: downloadResult.buffer,
-        prompt: trimmedPrompt,
-        duration,
-        aspectRatio
-      };
-
-    } catch (error) {
-      logger.error(`Video generation error: ${error.message}`);
-
-      let errorMessage;
-      if (error.response?.data?.error?.message) {
-        errorMessage = error.response.data.error.message;
-      } else if (error.message.includes('rate limit') || error.message.includes('quota')) {
-        errorMessage = 'API rate limit exceeded. Please try again later.';
-      } else if (error.message.includes('safety') || error.message.includes('blocked')) {
-        errorMessage = 'Your prompt was blocked by safety filters. Please try a different prompt.';
-      } else {
-        errorMessage = `Video generation failed: ${error.message}`;
-      }
-
-      // Record failed generation
-      if (this.mongoService && user) {
-        await this.mongoService.recordVideoGeneration(
-          user.id,
-          user.tag || user.username,
-          trimmedPrompt,
-          duration,
-          aspectRatio,
-          this.config.veo.model,
-          false,
-          errorMessage,
-          0
-        );
-      }
-
-      return { success: false, error: errorMessage };
-    }
+    return this._generate({
+      ...req,
+      user,
+      onProgress,
+      mode: 'image_to_video',
+      successLabel: 'from single image',
+      image: { imageBytes: sourceImage.data, mimeType: sourceImage.mimeType },
+      spanAttributes: { 'video_gen.source_image_mime': sourceImage.mimeType },
+    });
   }
 
   /**
@@ -849,27 +537,11 @@ class VeoService {
     if (!lastFrameUrl) {
       return this.generateVideoFromImage(prompt, firstFrameUrl, options, user, onProgress);
     }
-    // Validate prompt
-    const promptValidation = this.validatePrompt(prompt);
-    if (!promptValidation.valid) {
-      return { success: false, error: promptValidation.error };
-    }
 
-    // Validate and set aspect ratio
-    const aspectRatio = options.aspectRatio || this.config.veo.defaultAspectRatio;
-    const ratioValidation = this.validateAspectRatio(aspectRatio);
-    if (!ratioValidation.valid) {
-      return { success: false, error: ratioValidation.error };
+    const req = this._validateRequest(prompt, options);
+    if (req.error) {
+      return { success: false, error: req.error };
     }
-
-    // Validate and set duration
-    const duration = options.duration || this.config.veo.defaultDuration;
-    const durationValidation = this.validateDuration(duration);
-    if (!durationValidation.valid) {
-      return { success: false, error: durationValidation.error };
-    }
-
-    const trimmedPrompt = prompt.trim();
 
     // Fetch first frame
     if (onProgress) onProgress('Fetching first frame...');
@@ -885,109 +557,119 @@ class VeoService {
       return { success: false, error: `Failed to fetch last frame: ${lastFrame.error}` };
     }
 
+    return this._generate({
+      ...req,
+      user,
+      onProgress,
+      mode: 'first_last_frame',
+      successLabel: '',
+      image: { imageBytes: firstFrame.data, mimeType: firstFrame.mimeType },
+      lastFrame: { imageBytes: lastFrame.data, mimeType: lastFrame.mimeType },
+      spanAttributes: {
+        'video_gen.first_frame_mime': firstFrame.mimeType,
+        'video_gen.last_frame_mime': lastFrame.mimeType,
+      },
+    });
+  }
+
+  /**
+   * Record a generation attempt in MongoDB (no-op without mongo or user).
+   */
+  async _recordGeneration(user, trimmedPrompt, duration, aspectRatio, success, error, sizeBytes) {
+    if (!this.mongoService || !user) return;
+    await this.mongoService.recordVideoGeneration(
+      user.id,
+      user.tag || user.username,
+      trimmedPrompt,
+      duration,
+      aspectRatio,
+      this.config.veo.model,
+      success,
+      error,
+      sizeBytes
+    );
+  }
+
+  /**
+   * Map an SDK/transport error to the user-facing message.
+   */
+  _describeError(error) {
+    if (error.response?.data?.error?.message) {
+      return error.response.data.error.message;
+    }
+    const message = error.message || '';
+    if (error.status === 429 || message.includes('rate limit') || message.includes('quota')) {
+      return 'API rate limit exceeded. Please try again later.';
+    }
+    if (message.includes('safety') || message.includes('blocked')) {
+      return 'Your prompt was blocked by safety filters. Please try a different prompt.';
+    }
+    return `Video generation failed: ${message}`;
+  }
+
+  /**
+   * Shared generation pipeline for every mode: start the Veo long-running
+   * operation through @google/genai (Vertex), poll it, download the result from
+   * GCS, record the attempt and apply the cooldown.
+   * @private
+   */
+  async _generate({
+    trimmedPrompt, aspectRatio, duration, user, onProgress,
+    mode, successLabel, image, lastFrame, spanAttributes = {},
+  }) {
     try {
-      logger.info(`Generating video for prompt: "${trimmedPrompt}" with duration: ${duration}s, ratio: ${aspectRatio}`);
+      logger.info(`Generating video ${successLabel ? successLabel + ' ' : ''}for prompt: "${trimmedPrompt}" with duration: ${duration}s, ratio: ${aspectRatio}`);
 
       if (onProgress) onProgress('Starting video generation...');
 
-      // Build the output GCS URI
-      const outputUri = this.buildGcsOutputUri();
       const model = this.config.veo.model;
 
-      // Wrap the entire generation process in a span
       const result = await withSpan('vertexai.veo.generateVideo', {
         // GenAI semantic conventions
         'gen_ai.system': 'google_vertex',
         'gen_ai.operation.name': 'video_generation',
         'gen_ai.request.model': model,
         // Video generation context
-        'video_gen.mode': 'first_last_frame',
+        'video_gen.mode': mode,
         'video_gen.duration_seconds': duration,
         'video_gen.aspect_ratio': aspectRatio,
         'video_gen.prompt_length': trimmedPrompt.length,
-        'video_gen.first_frame_mime': firstFrame.mimeType,
-        'video_gen.last_frame_mime': lastFrame.mimeType,
+        ...spanAttributes,
         // Discord context
         'discord.user.id': user?.id || '',
       }, async (span) => {
-        // Make the API request to Vertex AI
-        const endpoint = `https://${this.config.veo.location}-aiplatform.googleapis.com/v1/projects/${this.config.veo.projectId}/locations/${this.config.veo.location}/publishers/google/models/${model}:predictLongRunning`;
+        const source = { prompt: trimmedPrompt };
+        if (image) source.image = image;
 
-        const requestBody = {
-          instances: [{
-            prompt: trimmedPrompt,
-            image: {
-              bytesBase64Encoded: firstFrame.data,
-              mimeType: firstFrame.mimeType
-            },
-            lastFrame: {
-              bytesBase64Encoded: lastFrame.data,
-              mimeType: lastFrame.mimeType
-            }
-          }],
-          parameters: {
-            storageUri: outputUri,
-            sampleCount: 1,
-            aspectRatio: aspectRatio,
-            durationSeconds: parseInt(duration, 10)
-          }
+        const config = {
+          numberOfVideos: 1,
+          outputGcsUri: this.buildGcsOutputUri(),
+          aspectRatio,
+          durationSeconds: parseInt(duration, 10),
         };
-
-        // Get access token for authentication
-        const { GoogleAuth } = require('google-auth-library');
-        const auth = new GoogleAuth({
-          scopes: ['https://www.googleapis.com/auth/cloud-platform']
-        });
-        const client = await auth.getClient();
-        const accessToken = await client.getAccessToken();
+        if (lastFrame) config.lastFrame = lastFrame;
 
         // Start the long-running operation
-        const startResponse = await axios.post(endpoint, requestBody, {
-          headers: {
-            'Authorization': `Bearer ${accessToken.token}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 60000
-        });
-
-        const operationName = startResponse.data.name;
-        logger.info(`Video generation operation started: ${operationName}`);
-        span.setAttributes({ 'video_gen.operation_name': operationName });
+        const operation = await this.genai.models.generateVideos({ model, source, config });
+        logger.info(`Video generation operation started: ${operation.name}`);
+        span.setAttributes({ 'video_gen.operation_name': operation.name || '' });
 
         // Poll for completion
         if (onProgress) onProgress('Generating video (this may take a few minutes)...');
-        const pollResult = await this.pollOperation(operationName, accessToken.token, onProgress);
+        const pollResult = await this.pollOperation(operation, onProgress);
 
-        // Add response attributes
-        span.setAttributes({
-          'gen_ai.response.success': pollResult.success,
-        });
-
+        span.setAttributes({ 'gen_ai.response.success': pollResult.success });
         return pollResult;
       });
 
       if (!result.success) {
-        // Record failed generation
-        if (this.mongoService && user) {
-          await this.mongoService.recordVideoGeneration(
-            user.id,
-            user.tag || user.username,
-            trimmedPrompt,
-            duration,
-            aspectRatio,
-            this.config.veo.model,
-            false,
-            result.error,
-            0
-          );
-        }
+        await this._recordGeneration(user, trimmedPrompt, duration, aspectRatio, false, result.error, 0);
         return result;
       }
 
       // Download the generated video from GCS
       if (onProgress) onProgress('Downloading generated video...');
-      const videoGcsUri = result.videoUri;
-      const downloadResult = await this.downloadVideoFromGcs(videoGcsUri);
+      const downloadResult = await this.downloadVideoFromGcs(result.videoUri);
 
       if (!downloadResult.success) {
         return downloadResult;
@@ -998,22 +680,11 @@ class VeoService {
         this.setCooldown(user.id);
       }
 
-      // Record successful generation
-      if (this.mongoService && user) {
-        await this.mongoService.recordVideoGeneration(
-          user.id,
-          user.tag || user.username,
-          trimmedPrompt,
-          duration,
-          aspectRatio,
-          this.config.veo.model,
-          true,
-          null,
-          downloadResult.buffer.length
-        );
-      }
+      await this._recordGeneration(
+        user, trimmedPrompt, duration, aspectRatio, true, null, downloadResult.buffer.length
+      );
 
-      logger.info(`Video generated successfully: ${downloadResult.buffer.length} bytes`);
+      logger.info(`Video generated successfully${successLabel ? ' ' + successLabel : ''}: ${downloadResult.buffer.length} bytes`);
 
       return {
         success: true,
@@ -1025,104 +696,81 @@ class VeoService {
 
     } catch (error) {
       logger.error(`Video generation error: ${error.message}`);
-
-      let errorMessage;
-      if (error.response?.data?.error?.message) {
-        errorMessage = error.response.data.error.message;
-      } else if (error.message.includes('rate limit') || error.message.includes('quota')) {
-        errorMessage = 'API rate limit exceeded. Please try again later.';
-      } else if (error.message.includes('safety') || error.message.includes('blocked')) {
-        errorMessage = 'Your prompt was blocked by safety filters. Please try a different prompt.';
-      } else {
-        errorMessage = `Video generation failed: ${error.message}`;
-      }
-
-      // Record failed generation
-      if (this.mongoService && user) {
-        await this.mongoService.recordVideoGeneration(
-          user.id,
-          user.tag || user.username,
-          trimmedPrompt,
-          duration,
-          aspectRatio,
-          this.config.veo.model,
-          false,
-          errorMessage,
-          0
-        );
-      }
-
+      const errorMessage = this._describeError(error);
+      await this._recordGeneration(user, trimmedPrompt, duration, aspectRatio, false, errorMessage, 0);
       return { success: false, error: errorMessage };
     }
   }
 
   /**
-   * Poll a long-running operation until completion
-   * @param {string} operationName - The operation name/ID
-   * @param {string} accessToken - OAuth access token
+   * Resolve a finished operation to a video URI or an error.
+   * @private
+   */
+  _resultFromOperation(operation) {
+    if (operation.error) {
+      logger.error(`Video generation failed: ${JSON.stringify(operation.error)}`);
+      return {
+        success: false,
+        error: operation.error.message || 'Video generation failed'
+      };
+    }
+
+    const response = operation.response || {};
+    const videoUri = response.generatedVideos?.[0]?.video?.uri;
+    if (!videoUri) {
+      if (response.raiMediaFilteredCount > 0) {
+        const reasons = (response.raiMediaFilteredReasons || []).join('; ');
+        return {
+          success: false,
+          error: `The video was blocked by safety filters${reasons ? `: ${reasons}` : ''}`
+        };
+      }
+      return { success: false, error: 'No video was generated' };
+    }
+
+    logger.info(`Video generation complete: ${videoUri}`);
+    return { success: true, videoUri };
+  }
+
+  /**
+   * Poll a Veo long-running operation (via @google/genai) until completion.
+   * @param {Object} operation - GenerateVideosOperation returned by generateVideos
    * @param {Function} onProgress - Optional progress callback
    * @returns {Promise<{success: boolean, videoUri?: string, error?: string}>}
    */
-  async pollOperation(operationName, accessToken, onProgress = null) {
+  async pollOperation(operation, onProgress = null) {
     const maxWaitMs = this.config.veo.maxWaitSeconds * 1000;
     const pollIntervalMs = this.config.veo.pollIntervalMs;
     const startTime = Date.now();
+    let current = operation;
 
-    // Use fetchPredictOperation endpoint for Veo video generation
-    const fetchOperationUrl = `https://${this.config.veo.location}-aiplatform.googleapis.com/v1/projects/${this.config.veo.projectId}/locations/${this.config.veo.location}/publishers/google/models/${this.config.veo.model}:fetchPredictOperation`;
+    while (true) {
+      if (current?.done) {
+        return this._resultFromOperation(current);
+      }
 
-    while (Date.now() - startTime < maxWaitMs) {
+      if (Date.now() - startTime >= maxWaitMs) {
+        break;
+      }
+
+      // Still processing
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      if (onProgress) {
+        onProgress(`Generating video... (${elapsedSec}s elapsed)`);
+      }
+      logger.debug(`Video generation in progress (${elapsedSec}s elapsed)...`);
+
+      // Wait before polling again
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
       try {
-        const response = await axios.post(fetchOperationUrl, {
-          operationName: operationName
-        }, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        });
-
-        const operation = response.data;
-
-        if (operation.done) {
-          if (operation.error) {
-            logger.error(`Video generation failed: ${JSON.stringify(operation.error)}`);
-            return {
-              success: false,
-              error: operation.error.message || 'Video generation failed'
-            };
-          }
-
-          // Extract video URI from response
-          const videos = operation.response?.videos;
-          if (!videos || videos.length === 0) {
-            return { success: false, error: 'No video was generated' };
-          }
-
-          const videoUri = videos[0].gcsUri;
-          logger.info(`Video generation complete: ${videoUri}`);
-
-          return { success: true, videoUri };
-        }
-
-        // Still processing
-        const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-        if (onProgress) {
-          onProgress(`Generating video... (${elapsedSec}s elapsed)`);
-        }
-        logger.debug(`Video generation in progress (${elapsedSec}s elapsed)...`);
-
-        // Wait before polling again
-        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-
+        current = await this.genai.operations.getVideosOperation({ operation: current });
       } catch (error) {
         logger.error(`Error polling operation: ${error.message}`);
         // Continue polling unless it's a fatal error
-        if (error.response?.status === 404) {
+        if (error.status === 404) {
           return { success: false, error: 'Operation not found' };
         }
-        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
       }
     }
 

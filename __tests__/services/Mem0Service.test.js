@@ -61,6 +61,17 @@ describe('Mem0Service', () => {
       }));
     });
 
+    it('should not put sampling params in the LLM config (gpt-6-* rejects temperature/max_tokens/top_p)', () => {
+      mockConfig.mem0.llmModel = 'gpt-6-luna';
+      mem0Service = new Mem0Service(mockConfig);
+
+      const llmConfig = Memory.mock.calls[0][0].llm.config;
+      expect(llmConfig.model).toBe('gpt-6-luna');
+      expect(llmConfig).not.toHaveProperty('temperature');
+      expect(llmConfig).not.toHaveProperty('maxTokens');
+      expect(llmConfig).not.toHaveProperty('topP');
+    });
+
     it('should throw error if mem0 is disabled', () => {
       mockConfig.mem0.enabled = false;
       expect(() => new Mem0Service(mockConfig)).toThrow('Mem0 service is disabled');
@@ -136,10 +147,10 @@ describe('Mem0Service', () => {
 
       expect(mockMemory.search).toHaveBeenCalledWith(
         query,
-        expect.objectContaining({
-          userId: userId,
-          limit: 5,
-        })
+        // mem0ai v3: search() rejects top-level userId/limit; entity ids go in
+        // snake_case `filters`, the cap is `topK`, and threshold 0 keeps v2's
+        // plain top-k semantics (v3 defaults to dropping scores < 0.1).
+        { topK: 5, threshold: 0, filters: { user_id: userId } }
       );
       expect(result.results).toHaveLength(2);
     });
@@ -155,7 +166,8 @@ describe('Mem0Service', () => {
       expect(mockMemory.search).toHaveBeenCalledWith(
         'test query',
         expect.objectContaining({
-          agentId: 'clair',
+          filters: { user_id: 'user-123', agent_id: 'clair' },
+          topK: 3,
         })
       );
     });
@@ -184,8 +196,10 @@ describe('Mem0Service', () => {
 
       const result = await mem0Service.getUserMemories('user-123');
 
+      // v3 getAll takes filters + topK; default 100 preserves v2's getAll default
+      // (v3's own default is 20, which would silently truncate /memories).
       expect(mockMemory.getAll).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'user-123' })
+        { topK: 100, filters: { user_id: 'user-123' } }
       );
       expect(result.results).toHaveLength(2);
     });
@@ -196,7 +210,7 @@ describe('Mem0Service', () => {
       await mem0Service.getUserMemories('user-123', { limit: 10 });
 
       expect(mockMemory.getAll).toHaveBeenCalledWith(
-        expect.objectContaining({ limit: 10 })
+        expect.objectContaining({ topK: 10 })
       );
     });
   });
@@ -352,8 +366,7 @@ describe('Mem0Service', () => {
         expect(mockMemory.search).toHaveBeenCalledWith(
           query,
           expect.objectContaining({
-            userId: `channel:${channelId}`,
-            agentId: 'shared_channel',
+            filters: { user_id: `channel:${channelId}`, agent_id: 'shared_channel' },
           })
         );
         expect(result.results).toHaveLength(1);
@@ -366,7 +379,7 @@ describe('Mem0Service', () => {
 
         expect(mockMemory.search).toHaveBeenCalledWith(
           'query',
-          expect.objectContaining({ limit: 3 })
+          expect.objectContaining({ topK: 3 })
         );
       });
 
@@ -377,7 +390,7 @@ describe('Mem0Service', () => {
 
         expect(mockMemory.search).toHaveBeenCalledWith(
           'query',
-          expect.objectContaining({ limit: 5 })
+          expect.objectContaining({ topK: 5 })
         );
       });
 
@@ -405,8 +418,7 @@ describe('Mem0Service', () => {
 
         expect(mockMemory.getAll).toHaveBeenCalledWith(
           expect.objectContaining({
-            userId: `channel:${channelId}`,
-            agentId: 'shared_channel',
+            filters: { user_id: `channel:${channelId}`, agent_id: 'shared_channel' },
           })
         );
         expect(result.results).toHaveLength(2);
@@ -418,7 +430,7 @@ describe('Mem0Service', () => {
         await mem0Service.getSharedChannelMemories('channel-123', { limit: 10 });
 
         expect(mockMemory.getAll).toHaveBeenCalledWith(
-          expect.objectContaining({ limit: 10 })
+          expect.objectContaining({ topK: 10 })
         );
       });
 
