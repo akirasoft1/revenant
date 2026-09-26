@@ -29,6 +29,10 @@ metadata:
     app.kubernetes.io/part-of: mem0
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the storage PVC is RWO, so a surge pod can't
+  # attach it while the old pod holds it (and two writers must never share it).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: qdrant
@@ -41,7 +45,10 @@ spec:
     spec:
       containers:
         - name: qdrant
-          image: qdrant/qdrant:v1.12.4
+          # Upgrade ONE MINOR VERSION AT A TIME (storage compat is only guaranteed
+          # across one minor). 1.12.4 -> 1.18.3 was stepped through the latest
+          # patch of every minor on 2026-09-26; 1.16 migrated RocksDB -> Gridstore.
+          image: qdrant/qdrant:v1.18.3
           ports:
             - name: http
               containerPort: 6333
@@ -53,12 +60,15 @@ spec:
             - name: QDRANT__SERVICE__GRPC_PORT
               value: "6334"
           resources:
+            # Limits sized for segment merges / HNSW rebuilds of irc_history
+            # (~378k x 1536-dim): at 2 CPU / 4Gi a rebuild ran pegged near the
+            # memory ceiling. Qdrant sizes optimizer threads from visible CPUs.
             requests:
-              memory: "4Gi"
-              cpu: "1500m"
+              memory: "2Gi"
+              cpu: "1"
             limits:
-              memory: "6Gi"
-              cpu: "4000m"
+              memory: "8Gi"
+              cpu: "8"
           volumeMounts:
             - name: qdrant-storage
               mountPath: /qdrant/storage
