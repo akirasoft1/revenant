@@ -8,7 +8,7 @@ something like "openai/gpt-6-luna".
 """
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from google.adk.agents import Agent
 from google.adk.models import Gemini
@@ -17,6 +17,7 @@ from google.genai import types
 
 from .config import Config
 from .orchestrator import SandboxOrchestrator
+from .sc_tools import ScToolsProvider
 from .tools import RunInSandboxTool, ToolBudgetExceeded
 
 log = logging.getLogger(__name__)
@@ -211,6 +212,14 @@ prefix your reply with a personality header; don't paste long code (it's
 auto-attached via reaction reveal).
 """.strip()
 
+SC_TOOLS_PREAMBLE = """
+Star Citizen: you have live-data tools for the game Star Citizen — sc_find_item (item stats + where to buy it, with prices), sc_compare_components (rank ship components of a type and size), sc_faction_missions (a faction's rank ladder and missions ranked by reputation per minute), sc_trade_routes (profitable commodity routes from a location, profit already computed for the cargo/budget), sc_commodity_prices, and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). For ANY Star Citizen question about items, ship components, shops, prices, missions, reputation, or trading, call these tools instead of answering from memory — the game changes every patch. Their numbers are already ranked and computed; never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data. Use web search on top of them only for community strategy or opinions. Mention the data's patch or age when prices or availability matter. If a tool returns an error or candidates, say so or ask which one was meant — do not invent values.
+""".strip()
+
+SC_TOOLS_UNAVAILABLE_NOTE = """
+Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen items, prices, missions or trade, say live data is unavailable right now and answer only with clearly-labelled general knowledge — do not use run_in_sandbox to fetch Star Citizen data.
+""".strip()
+
 
 @dataclass
 class AgentChatResult:
@@ -224,6 +233,19 @@ class AgentChatResult:
     # with it. Propagated to ChatResponse.fallback_occurred so the bot can tell
     # the user rather than serving a personality-less answer as if it were normal.
     fallback_occurred: bool = False
+    # Names of any sc_* MCP tool functions the model actually called this turn
+    # (e.g. ["sc_find_item"]). Empty when sc tools were off/unavailable or the
+    # model didn't call any.
+    sc_tool_names: list[str] = field(default_factory=list)
+    # How many run_in_sandbox executions were attempted this turn, INCLUDING
+    # ones that failed/errored before producing an execution_id (budget-
+    # exceeded, concurrency caps). Until Task 10 adds a real `tool.attempts`
+    # counter to RunInSandboxTool, this is len(execution_ids) — an
+    # undercount for those failure paths, called out here rather than hidden.
+    sandbox_attempts: int = 0
+    # "off" (sc tools disabled entirely), "available" (probe passed, attached
+    # this turn), or "unavailable" (probe failed; turn ran without them).
+    sc_state: str = "off"
 
 
 class ChannelVoiceAgent:
@@ -236,10 +258,12 @@ class ChannelVoiceAgent:
         config: Config,
         orchestrator: SandboxOrchestrator,
         base_system_prompt: str,
+        sc_tools: ScToolsProvider | None = None,
     ) -> None:
         self._config = config
         self._orch = orchestrator
         self._base_system_prompt = base_system_prompt
+        self._sc_tools = sc_tools or ScToolsProvider.disabled()
 
     @staticmethod
     def _uses_base_prompt(system_prompt: str) -> bool:
@@ -248,12 +272,20 @@ class ChannelVoiceAgent:
         it, so the flag can never disagree with what was actually sent."""
         return not (system_prompt and system_prompt.strip())
 
-    def _compose_instruction(self, *, system_prompt: str) -> str:
+    def _compose_instruction(self, *, system_prompt: str, sc_state: str = "off") -> str:
         """Build the ADK Agent instruction: bot-supplied system_prompt when
         present, else the sidecar's own base prompt (old-bot-client
-        backward compat), always followed by the sandbox tool preamble."""
+        backward compat), always followed by the sandbox tool preamble, then
+        (when sc_state != "off") a Star Citizen tools note. With sc_state
+        "off" (the default) this is byte-identical to before sc-knowledge
+        existed — pinned by test_instruction_off_is_byte_identical_to_today."""
         base = self._base_system_prompt if self._uses_base_prompt(system_prompt) else system_prompt.strip()
-        return f"{base}\n\n{TOOL_AVAILABILITY_PREAMBLE}"
+        instruction = f"{base}\n\n{TOOL_AVAILABILITY_PREAMBLE}"
+        if sc_state == "available":
+            instruction = f"{instruction}\n\n{SC_TOOLS_PREAMBLE}"
+        elif sc_state == "unavailable":
+            instruction = f"{instruction}\n\n{SC_TOOLS_UNAVAILABLE_NOTE}"
+        return instruction
 
     def _compose_context_block(self, *, memory_context: str, history) -> str:
         """Build the memory + recent-history block prepended to the turn's
@@ -284,6 +316,18 @@ class ChannelVoiceAgent:
             call_budget=self._config.sandbox_agent_turn_call_budget,
         )
 
+        # Determine this turn's Star Citizen tools state from the provider's
+        # cached health probe (never a fresh network call on the hot path —
+        # see ScToolsProvider). "off" when sc tools are disabled/not wired at
+        # all, so an sc-knowledge outage can never fail Chat: the toolset is
+        # simply left off the Agent for this turn.
+        if self._sc_tools.enabled:
+            sc_state = "available" if await self._sc_tools.available() else "unavailable"
+        else:
+            sc_state = "off"
+        if sc_state == "unavailable":
+            log.info("sc_tools=unavailable (probe failed); turn runs without Star Citizen tools")
+
         async def run_in_sandbox(
             language: str,
             code: str,
@@ -313,11 +357,12 @@ class ChannelVoiceAgent:
             except ToolBudgetExceeded:
                 return {"exit_code": -3, "error": "turn_call_budget_exceeded"}
 
+        tools = [run_in_sandbox] + (list(self._sc_tools.toolsets) if sc_state == "available" else [])
         agent = Agent(
             name="channel_voice",
             description="Discord channel-voice agent with sandboxed execution capabilities.",
-            instruction=self._compose_instruction(system_prompt=system_prompt),
-            tools=[run_in_sandbox],
+            instruction=self._compose_instruction(system_prompt=system_prompt, sc_state=sc_state),
+            tools=tools,
             model=_build_model(self._config.agent_model),
             generate_content_config=_build_generate_content_config(),
         )
@@ -330,6 +375,7 @@ class ChannelVoiceAgent:
         text = f"{ctx}\n\n{user_message}" if ctx else user_message
         new_message = types.Content(role="user", parts=[types.Part(text=text)])
         message_text = ""
+        sc_tool_names: list[str] = []
         try:
             async for event in runner.run_async(
                 user_id=user_id, session_id=user_id, new_message=new_message,
@@ -342,6 +388,19 @@ class ChannelVoiceAgent:
                     text = getattr(part, "text", None)
                     if text:
                         message_text = text
+                # Count sc_* tool invocations for span attrs / observability.
+                # ADK 2.10's Event.get_function_calls() is the documented way
+                # to read tool calls off an event; fall back to reading
+                # part.function_call directly (and, in tests, to nothing at
+                # all) for anything that doesn't expose it.
+                get_function_calls = getattr(event, "get_function_calls", None)
+                function_calls = get_function_calls() if callable(get_function_calls) else [
+                    getattr(p, "function_call", None) for p in parts
+                ]
+                for fc in function_calls:
+                    fc_name = getattr(fc, "name", None) if fc else None
+                    if fc_name and fc_name.startswith("sc_"):
+                        sc_tool_names.append(fc_name)
         except Exception as e:  # noqa: BLE001
             # Translate model API errors (404 model not found, 400 bad
             # tool schema, 403 quota, 5xx upstream, etc.) into a single
@@ -365,4 +424,11 @@ class ChannelVoiceAgent:
             execution_ids=list(tool.execution_ids),
             any_failed=any_failed,
             fallback_occurred=self._uses_base_prompt(system_prompt),
+            sc_tool_names=sc_tool_names,
+            # Task 10 adds a real `tool.attempts` counter to RunInSandboxTool
+            # that also counts calls that failed before producing an
+            # execution_id (budget/concurrency caps); until then this
+            # undercounts those paths.
+            sandbox_attempts=len(tool.execution_ids),
+            sc_state=sc_state,
         )

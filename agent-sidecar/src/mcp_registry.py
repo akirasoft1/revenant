@@ -14,10 +14,24 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 # profile -> list of servers. Each server names the Config attrs holding its
-# URL and bearer token so credentials never live in this file.
+# URL and bearer token so credentials never live in this file. `token_attr`
+# may be None for a server that takes no auth (e.g. sc-knowledge, an
+# in-cluster-only server behind the NetworkPolicy rather than a bearer
+# token); `enabled_attr`, when set, names a Config bool that gates the
+# server entirely regardless of url/token.
 _PROFILES = {
     "observability": [
         {"name": "dynatrace", "url_attr": "dt_mcp_url", "token_attr": "dt_platform_token"},
+    ],
+    "channel_voice": [
+        {
+            "name": "sc-knowledge",
+            "url_attr": "sc_knowledge_url",
+            "token_attr": None,
+            "enabled_attr": "sc_knowledge_enabled",
+        },
+        # Future: SC Trade Tools would be another entry here with its own
+        # token_attr.
     ],
 }
 
@@ -26,19 +40,28 @@ def build_mcp_toolsets(profile: str, config: Config) -> list:
     servers = _PROFILES.get(profile, [])
     toolsets = []
     for server in servers:
+        enabled_attr = server.get("enabled_attr")
+        if enabled_attr is not None and not getattr(config, enabled_attr, False):
+            log.info(
+                "MCP server %r in profile %r skipped: %s is disabled",
+                server["name"], profile, enabled_attr,
+            )
+            continue
         url = getattr(config, server["url_attr"], None)
-        token = getattr(config, server["token_attr"], None)
-        if not url or not token:
+        token_attr = server.get("token_attr")
+        token = getattr(config, token_attr, None) if token_attr is not None else None
+        if not url or (token_attr is not None and not token):
             log.warning(
                 "MCP server %r in profile %r skipped: missing url/token config",
                 server["name"], profile,
             )
             continue
+        headers = {"Authorization": f"Bearer {token}"} if token_attr is not None else None
         toolsets.append(
             McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
                     url=url,
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers=headers,
                 ),
             )
         )

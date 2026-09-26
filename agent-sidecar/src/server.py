@@ -247,6 +247,13 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
                 n = len(result.execution_ids)
                 span.set_attribute("sandbox.invoked", n > 0)
                 span.set_attribute("sandbox.call_count", n)
+                # Star Citizen toolset observability: was it attached this
+                # turn, how many sc_* calls were made, and which ones.
+                sc_state = getattr(result, "sc_state", "off")
+                sc_tool_names = getattr(result, "sc_tool_names", None) or []
+                span.set_attribute("sc.tools.available", sc_state == "available")
+                span.set_attribute("sc.tool.calls", len(sc_tool_names))
+                span.set_attribute("sc.tool.names", ",".join(sc_tool_names))
         except asyncio.CancelledError:
             self._breaker.record_failure(
                 "Chat cancelled before it produced a reply — the client's deadline expired "
@@ -330,8 +337,10 @@ def serve() -> None:
     from .concurrency import ConcurrencyGate
     from .egress_scraper import NoopEgressScraper
     from .k8s_client import LiveK8sClient
+    from .mcp_registry import build_mcp_toolsets
     from .orchestrator import SandboxOrchestrator
     from .retention import demote_old_traces
+    from .sc_tools import ScToolsProvider, health_url_for
 
     kube_config.load_incluster_config()
     k8s_batch = kube_client.BatchV1Api()
@@ -355,8 +364,19 @@ def serve() -> None:
         memory_limit=config.sandbox_memory_limit,
     )
 
+    if config.sc_knowledge_enabled:
+        sc_tools = ScToolsProvider(
+            build_mcp_toolsets("channel_voice", config),
+            health_url_for(config.sc_knowledge_url),
+        )
+        log.info("sc_knowledge=enabled url=%s", config.sc_knowledge_url)
+    else:
+        sc_tools = ScToolsProvider.disabled()
+        log.info("sc_knowledge=disabled")
+
     agent = ChannelVoiceAgent(
         config=config, orchestrator=orch, base_system_prompt=_load_base_prompt(),
+        sc_tools=sc_tools,
     )
     log.info(
         "agent LLM resolved: AGENT_MODEL=%s genai_backend=%s project=%s location=%s",

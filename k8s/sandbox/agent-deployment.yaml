@@ -44,6 +44,12 @@ spec:
               value: "discord-article-bot"
             - name: SANDBOX_BASE_IMAGE
               value: "mvilliger/sandbox-base:e861ef8"
+            # sc-knowledge (Star Citizen data MCP server): flip to true after
+            # sc-knowledge is deployed (see k8s/sc-knowledge/README.md).
+            - name: SC_KNOWLEDGE_ENABLED
+              value: "false"
+            - name: SC_KNOWLEDGE_URL
+              value: "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp"
           envFrom:
             - configMapRef:
                 name: sandbox-config

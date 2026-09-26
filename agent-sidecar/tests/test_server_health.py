@@ -319,6 +319,92 @@ async def test_servicer_honours_the_breaker_settings_from_config():
     assert (await servicer.Health(agent_pb2.HealthRequest(), None)).healthy is False
 
 
+# --- sc-knowledge isolation: an unreachable add-on must never fail Chat -----
+
+
+async def test_chat_succeeds_and_breaker_records_success_when_sc_tools_unavailable(monkeypatch):
+    # An sc-knowledge outage must be invisible to Chat health: the provider's
+    # cached probe says unavailable, the turn still runs (on run_in_sandbox
+    # alone) and succeeds, and the breaker must record that as a success —
+    # not silently swallow it, and not fail it.
+    import os
+
+    import src.agent as A
+    from src.agent import ChannelVoiceAgent
+    from src.config import load
+    from src.sc_tools import ScToolsProvider
+
+    for k, v in {
+        "MONGO_URI": "mongodb://x", "SANDBOX_BASE_IMAGE": "img", "AGENT_MODEL": "gemini-3.8-flash",
+    }.items():
+        os.environ.setdefault(k, v)
+
+    class _FakePart:
+        def __init__(self, text):
+            self.text = text
+
+    class _FakeContent:
+        def __init__(self, text):
+            self.parts = [_FakePart(text)]
+
+    class _FakeEvent:
+        def __init__(self, text):
+            self.content = _FakeContent(text)
+
+    class _FakeSessionService:
+        async def create_session(self, **kw):
+            return None
+
+    class _FakeRunner:
+        def __init__(self, *, agent, app_name):
+            self.session_service = _FakeSessionService()
+
+        async def run_async(self, **kw):
+            for e in (_FakeEvent("the reply"),):
+                yield e
+
+        async def close(self):
+            return None
+
+    captured = {}
+
+    def _fake_agent_ctor(**kw):
+        captured.update(kw)
+        return object()
+
+    monkeypatch.setattr(A, "InMemoryRunner", _FakeRunner)
+    monkeypatch.setattr(A, "Agent", _fake_agent_ctor)
+    monkeypatch.setattr(A, "_build_model", lambda spec: object())
+    monkeypatch.setattr(A, "_build_generate_content_config", lambda: None)
+
+    async def _never_up(url):
+        return False
+
+    sc = ScToolsProvider(["fake-sc-toolset"], "http://sc.test:8080/healthz", probe=_never_up)
+
+    agent = ChannelVoiceAgent(
+        config=load(), orchestrator=None, base_system_prompt="FALLBACK", sc_tools=sc,
+    )
+
+    clock = _FakeClock()
+    breaker = ChatCircuitBreaker(failure_threshold=1, cooldown_seconds=60, clock=clock)
+    breaker.record_failure("unrelated prior failure")
+    assert breaker.state == ChatCircuitBreaker.OPEN
+    clock.advance(60)  # cooldown elapses -> half-open admits this trial Chat
+
+    servicer = AgentServicer(channel_voice_agent=agent, breaker=breaker)
+    resp = await _chat(servicer, "hi")
+
+    assert resp is not None
+    assert resp.message_text == "the reply"
+    assert breaker.state == ChatCircuitBreaker.CLOSED
+    assert breaker.consecutive_failures == 0
+
+    # process_chat must have built the Agent with ONLY run_in_sandbox — no
+    # sc-knowledge toolset attached while the probe says unavailable.
+    assert len(captured["tools"]) == 1
+
+
 # --- The breaker itself ------------------------------------------------------
 
 
