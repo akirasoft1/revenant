@@ -1,8 +1,10 @@
+import httpx
+
 from src.cache import TTLCache
 from src.config import load
-from src.tools_trade import TradeTools, _row
+from src.tools_trade import MAX_ORIGIN_TERMINALS, TradeTools, _row
 from src.uex import build_uex
-from tests.conftest import fixture_transport
+from tests.conftest import fixture_transport, load_fixture
 
 
 def _tools():
@@ -106,22 +108,94 @@ async def test_routes_deduped_by_id():
 async def test_routes_deduped_across_multiple_origin_terminals():
     """Fix-round-1 #2: "MIC-L5" resolves to exactly ONE commodity terminal
     (uniquely, via the primary index), so the dedup-by-id path above is never
-    actually exercised across multiple origin terminals. "Nyx" resolves via the
-    R2 location/name fallback to every commodity terminal in (or named after)
-    the Nyx system (>1, but well under the 120-call/60s UEX rate limit so the
-    test stays fast), and fixture_transport serves the SAME 43-route MIC-L5
-    fixture for any origin id -- so without de-duplication after concatenation,
-    routes would repeat once per origin terminal."""
-    from tests.conftest import load_fixture
+    actually exercised across multiple origin terminals. "L1" resolves via the
+    R2 location/name fallback to 6 commodity terminals (ARC-L1, CRU-L1, HUR-L1,
+    MIC-L1, and two "Platinum Bay - *-L1" shops) -- more than one, but within
+    Fix-round-2's MAX_ORIGIN_TERMINALS cap (so this stays a normal dedup case,
+    not a too_broad one; "Nyx" (13) and "Stanton" (121) now exceed the cap --
+    see the too_broad tests below). fixture_transport serves the SAME 43-route
+    MIC-L5 fixture for any origin id, so without de-duplication after
+    concatenation, routes would repeat once per origin terminal."""
     total_routes = len(load_fixture("uex_routes_mic_l5.json")["data"])
-    r = await _tools().trade_routes("Nyx", limit=1000)
-    assert r["origin_terminal_count"] > 1, r
+    r = await _tools().trade_routes("L1", limit=1000)
+    assert 1 < r["origin_terminal_count"] <= MAX_ORIGIN_TERMINALS, r
     assert len(r["routes"]) <= total_routes
     seen_ids = set()
     for row in r["routes"]:
         key = (row["commodity"], row["buy_at"], row["sell_at"], row["buy_price"], row["sell_price"])
         assert key not in seen_ids, f"duplicate route surfaced: {key}"
         seen_ids.add(key)
+
+
+async def test_too_broad_origin_makes_no_route_calls():
+    """Fix-round-2: "Stanton" resolves to 121 commodity terminals -- well over
+    MAX_ORIGIN_TERMINALS. trade_routes must refuse before making a single
+    commodities_routes call (that fan-out is exactly what stalled ~60s against
+    the UEX rate limiter), returning "too_broad" with candidate location names
+    instead."""
+    calls = {"routes": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path.startswith("/2.0/commodities_routes"):
+            calls["routes"] += 1
+            return httpx.Response(200, json=load_fixture("uex_routes_mic_l5.json"))
+        if path.startswith("/2.0/terminals"):
+            return httpx.Response(200, json=load_fixture("uex_terminals.json"))
+        if path.startswith("/2.0/commodities"):
+            return httpx.Response(200, json=load_fixture("uex_commodities.json"))
+        return httpx.Response(404, json={"status": "not_found"})
+
+    uex = build_uex(load(), transport=httpx.MockTransport(handler))
+    t = TradeTools(uex, TTLCache())
+    r = await t.trade_routes("Stanton", limit=5)
+    assert r.get("error") == "too_broad", r
+    assert r["candidates"], r
+    assert len(r["candidates"]) <= 10
+    assert calls["routes"] == 0
+
+
+async def test_partial_origin_failure_returns_routes_and_note():
+    """Fix-round-2: one of "L1"'s 6 resolved origin terminals fails upstream
+    (simulated 503); the others still succeed, so trade_routes must return
+    the successful routes plus a notes line naming the failure count, not
+    fail the whole call."""
+    fail_id = 1  # "Admin - ARC-L1", one of the "L1" fallback matches
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path.startswith("/2.0/commodities_routes"):
+            if req.url.params.get("id_terminal_origin") == str(fail_id):
+                return httpx.Response(503, json={"status": "error"})
+            return httpx.Response(200, json=load_fixture("uex_routes_mic_l5.json"))
+        if path.startswith("/2.0/terminals"):
+            return httpx.Response(200, json=load_fixture("uex_terminals.json"))
+        if path.startswith("/2.0/commodities"):
+            return httpx.Response(200, json=load_fixture("uex_commodities.json"))
+        return httpx.Response(404, json={"status": "not_found"})
+
+    uex = build_uex(load(), transport=httpx.MockTransport(handler))
+    t = TradeTools(uex, TTLCache())
+    r = await t.trade_routes("L1", limit=50)
+    assert r["routes"], r
+    assert any("1" in n and "failed" in n.lower() for n in r["notes"]), r["notes"]
+
+
+async def test_all_origins_failing_is_uex_unavailable():
+    def handler(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if path.startswith("/2.0/commodities_routes"):
+            return httpx.Response(503, json={"status": "error"})
+        if path.startswith("/2.0/terminals"):
+            return httpx.Response(200, json=load_fixture("uex_terminals.json"))
+        if path.startswith("/2.0/commodities"):
+            return httpx.Response(200, json=load_fixture("uex_commodities.json"))
+        return httpx.Response(404, json={"status": "not_found"})
+
+    uex = build_uex(load(), transport=httpx.MockTransport(handler))
+    t = TradeTools(uex, TTLCache())
+    r = await t.trade_routes("L1", limit=50)
+    assert r.get("error") == "uex_unavailable", r
 
 
 async def test_l1_fallback_excludes_l19_residences():

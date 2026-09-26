@@ -13,7 +13,19 @@ Fix-round-1 (binding): the fallback (and the commodity_prices location filter)
 must NOT use raw substring matching -- "l1" is a raw substring of "l19" (from
 "Admin - L19 Residences - Metro Center - Lorville"), which would silently
 merge an unrelated station into an "L1" query. See _token_match().
+
+Fix-round-2 (binding): a broad origin (e.g. "Stanton" -> 121 commodity
+terminals) used to fan out to one commodities_routes call per terminal --
+~60s against the 120/min UEX rate limiter, which blows past both the voice
+path's 6s tool-call bound and would hang text chat too. If origin resolution
+yields more than MAX_ORIGIN_TERMINALS terminals, trade_routes now makes ZERO
+route calls and returns error("too_broad", ...) instead. At or under that
+cap, the per-terminal fetches run concurrently (asyncio.gather) rather than
+sequentially, and a partial failure (some origin terminals error, others
+succeed) still returns the successful routes with a notes line, only
+failing outright when EVERY origin terminal's fetch fails.
 """
+import asyncio
 import re
 from datetime import datetime, timezone
 
@@ -26,6 +38,12 @@ from .uex import UexClient
 _INDEX_TTL = 21600
 _ROUTES_TTL = 1800
 SOURCE = "uexcorp.space (crowd-sourced)"
+
+# Fix-round-2: above this many resolved origin terminals, trade_routes refuses
+# to fan out one commodities_routes call per terminal (that's how "Stanton"
+# turned into a ~60s stall against the 120/min UEX rate limiter, well past the
+# voice path's 6s tool-call bound) and instead errors "too_broad" up front.
+MAX_ORIGIN_TERMINALS = 8
 
 # Fields checked for both the R2 location token-match fallback (terminal dicts:
 # name/nickname + location fields) and the commodity_prices location filter
@@ -167,6 +185,18 @@ def _shared_label(terminals: list[dict], fallback: str) -> str:
     return fallback
 
 
+def _location_names(terminals: list[dict], limit: int = 10) -> list[str]:
+    """Up to `limit` distinct, sorted location names for a too_broad error's
+    candidates: space_station_name / city_name / outpost_name, falling back to
+    the terminal's own name when none of those are set."""
+    seen: set = set()
+    for t in terminals:
+        label = t.get("space_station_name") or t.get("city_name") or t.get("outpost_name") or t.get("name")
+        if label:
+            seen.add(label)
+    return sorted(seen)[:limit]
+
+
 class TradeTools:
     def __init__(self, uex: UexClient, cache: TTLCache) -> None:
         self._uex = uex
@@ -218,6 +248,13 @@ class TradeTools:
         if origin_terminals is None:
             return error(origin_err, f"origin '{origin}' not resolved", candidates=origin_cands)
 
+        if len(origin_terminals) > MAX_ORIGIN_TERMINALS:
+            return error(
+                "too_broad",
+                f"Origin '{origin}' matches {len(origin_terminals)} trade terminals; "
+                "name a specific station, city, outpost or planet.",
+                candidates=_location_names(origin_terminals))
+
         dest_ids = None
         if destination:
             dest_terminals, _dest_label, dest_err, dest_cands = self._resolve_terminal(
@@ -234,20 +271,41 @@ class TradeTools:
                              candidates=[c.name for c in cr.candidates])
             commodity_id = cr.match.id
 
-        try:
-            all_routes: list[dict] = []
-            seen_ids: set = set()
-            for t in origin_terminals:
-                tid = t["id"]
+        async def _fetch_one(tid: int):
+            try:
                 res = await self._cache.get_or_fetch(
                     f"uex:routes:{tid}", _ROUTES_TTL,
                     lambda tid=tid: self._uex.commodities_routes(id_terminal_origin=tid))
-                for rt in res.value:
-                    rid = rt.get("id", rt.get("code"))
-                    if rid in seen_ids:
-                        continue
-                    seen_ids.add(rid)
-                    all_routes.append(rt)
+                return res.value, None
+            except UpstreamError as e:
+                return None, e
+
+        # At most MAX_ORIGIN_TERMINALS fetches, run concurrently: sequential
+        # awaits here is exactly what turned a several-terminal origin into a
+        # multi-second (or, pre-cap, multi-minute) stall against the voice
+        # path's 6s tool-call bound.
+        fetch_results = await asyncio.gather(*(_fetch_one(t["id"]) for t in origin_terminals))
+
+        all_routes: list[dict] = []
+        seen_ids: set = set()
+        failed = 0
+        last_error: UpstreamError | None = None
+        for value, err in fetch_results:
+            if err is not None:
+                failed += 1
+                last_error = err
+                continue
+            for rt in value:
+                rid = rt.get("id", rt.get("code"))
+                if rid in seen_ids:
+                    continue
+                seen_ids.add(rid)
+                all_routes.append(rt)
+
+        if failed == len(origin_terminals):
+            return error("uex_unavailable", str(last_error))
+
+        try:
             if all_routes:
                 game_version = all_routes[0].get("game_version_origin")
             else:
@@ -267,6 +325,9 @@ class TradeTools:
         rows = rows[:max(1, limit)]
 
         notes = ["Prices are player-reported to UEX; verify in game."]
+        if failed:
+            notes.append(f"{failed} of {len(origin_terminals)} origin terminal(s) failed to fetch "
+                         "routes (uex_unavailable); results may be incomplete.")
         origin_commodities = sorted({rt.get("commodity_name") for rt in all_routes if rt.get("commodity_name")})
         if 0 < len(origin_commodities) <= 3:
             notes.append(f"Only {', '.join(origin_commodities)} sold at {origin_label}")
