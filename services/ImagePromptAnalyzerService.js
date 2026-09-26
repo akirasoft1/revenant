@@ -2,6 +2,7 @@
 // Analyzes failed image generation prompts and suggests improvements
 
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 const { withSpan } = require('../tracing');
 const { ERROR } = require('../tracing-attributes');
 
@@ -71,8 +72,10 @@ class ImagePromptAnalyzerService {
         const analysisPrompt = this._buildAnalysisPrompt(originalPrompt, failureReason, failureContext, failureType);
 
         // Call OpenAI to analyze the failure
+        const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
         const response = await this.openaiClient.responses.create({
-          model: this.config.openai.model || 'gpt-4o-mini',
+          model,
+          ...reasoningParams(model, 'low'),
           instructions: `You are an image generation expert. Analyze why image generation prompts fail and suggest improvements.
 
 Your task is to:

@@ -2,6 +2,7 @@
 // Voice-informed search: query expansion + voice-styled synthesis for IRC history
 
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 
 class VoiceSearchService {
   /**
@@ -37,10 +38,12 @@ Output: ["prod went down", "server crashed rip", "server outage"]`;
 
       const input = `Query: "${query}"${vocabulary.length > 0 ? `\nGroup vocabulary: ${vocabulary.join(', ')}` : ''}`;
 
+      const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
       const response = await this.openaiClient.responses.create({
-        model: this.config.openai.model || 'gpt-4.1-mini',
+        model,
         instructions: instruction,
-        input
+        input,
+        ...reasoningParams(model, 'none')
       });
 
       let variants;
@@ -139,10 +142,12 @@ RULES:
         }
       }
 
+      const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
       const response = await this.openaiClient.responses.create({
-        model: this.config.openai.model || 'gpt-4.1-mini',
+        model,
         instructions: instruction,
-        input: resultsContext
+        input: resultsContext,
+        ...reasoningParams(model, 'low')
       });
 
       logger.info(`Voice synthesis: ${response.usage?.input_tokens || 0} input, ${response.usage?.output_tokens || 0} output tokens`);

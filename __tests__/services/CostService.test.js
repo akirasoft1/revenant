@@ -64,3 +64,48 @@ describe('CostService.recordMediaGen - ElevenLabs', () => {
     expect(svc.cumulative.media.byModel['elevenlabs-music-v1']).toBeCloseTo(0.10, 5);
   });
 });
+
+describe('CostService.recordMediaGen - Lyria 3.5', () => {
+  test('prices lyria-3.5 at the published $0.08 per song', () => {
+    const svc = new CostService();
+    const result = svc.recordMediaGen('lyria-3.5', { id: 'u1' });
+    expect(result.success).toBe(true);
+    expect(result.cost).toBeCloseTo(0.08, 5);
+  });
+});
+
+describe('CostService.calculateCosts (per-model token pricing)', () => {
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000, input_tokens_details: { cached_tokens: 0 } };
+
+  test('prices gpt-6-luna at $0.10 in / $0.50 out per MTok', () => {
+    const costs = new CostService().calculateCosts(usage, 'gpt-6-luna');
+    expect(costs.input).toBeCloseTo(0.10, 6);
+    expect(costs.output).toBeCloseTo(0.50, 6);
+    expect(costs.total).toBeCloseTo(0.60, 6);
+  });
+
+  test('prices gpt-6-sol at $2 in / $10 out per MTok', () => {
+    const costs = new CostService().calculateCosts(usage, 'gpt-6-sol');
+    expect(costs.total).toBeCloseTo(12, 6);
+  });
+
+  test('still prices historical gpt-4.1-mini rows correctly', () => {
+    const costs = new CostService().calculateCosts(usage, 'gpt-4.1-mini');
+    expect(costs.input).toBeCloseTo(0.40, 6);
+    expect(costs.output).toBeCloseTo(1.60, 6);
+  });
+
+  test('without a model, uses the default model (gpt-6-luna) pricing', () => {
+    const costs = new CostService().calculateCosts(usage);
+    expect(costs.total).toBeCloseTo(0.60, 6);
+  });
+
+  test('cached tokens are billed at the cached rate', () => {
+    const costs = new CostService().calculateCosts(
+      { input_tokens: 1_000_000, output_tokens: 0, input_tokens_details: { cached_tokens: 1_000_000 } },
+      'gpt-6-luna'
+    );
+    expect(costs.input).toBeCloseTo(0.01, 6);
+    expect(costs.cached).toBe(1_000_000);
+  });
+});

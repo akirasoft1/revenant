@@ -19,7 +19,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const QDRANT_HOST = process.env.QDRANT_HOST || 'localhost';
 const QDRANT_PORT = parseInt(process.env.QDRANT_PORT || '6333', 10);
-const MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-6-luna';
 
 // Parse args
 const args = process.argv.slice(2);

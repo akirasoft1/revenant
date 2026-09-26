@@ -353,9 +353,9 @@ class MongoService {
      * @param {number} inputTokens - Number of input tokens used
      * @param {number} outputTokens - Number of output tokens used
      * @param {string} commandType - Type of command (e.g., 'summarize', 'chat', 'personality')
-     * @param {string} model - Model used (e.g., 'gpt-5.1')
+     * @param {string} model - Model used (e.g., 'gpt-6-luna')
      */
-    async recordTokenUsage(userId, username, inputTokens, outputTokens, commandType, model = 'gpt-5.1') {
+    async recordTokenUsage(userId, username, inputTokens, outputTokens, commandType, model = 'gpt-6-luna') {
         if (!this.db) {
             logger.error('Cannot record token usage: Not connected to MongoDB.');
             return false;
@@ -893,7 +893,7 @@ class MongoService {
      * @param {string} username - Discord username
      * @param {string} prompt - The prompt used for generation
      * @param {string} aspectRatio - The aspect ratio used
-     * @param {string} model - The model used (e.g., 'gemini-3-pro-image-preview')
+     * @param {string} model - The model used (e.g., 'gemini-3.1-flash-image')
      * @param {boolean} success - Whether generation was successful
      * @param {string} error - Error message if generation failed
      * @param {number} imageSizeBytes - Size of generated image in bytes (if successful)

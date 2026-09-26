@@ -16,10 +16,12 @@ require('dotenv').config({ quiet: true });
 const fs = require('fs');
 const path = require('path');
 
-const MODEL = 'gemini-2.5-flash-preview-tts';
+// gemini-2.5-flash-preview-tts (previous model) returned raw audio/L16 PCM;
+// gemini-3.8-flash-tts returns a full audio/wav. audioToWav() handles both.
+const MODEL = 'gemini-3.8-flash-tts';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 const OUT_DIR = path.join(__dirname, '..', 'voice-fixtures');
-const SAMPLE_RATE = 24000; // matches audio/L16;rate=24000 returned by the TTS endpoint
+const SAMPLE_RATE = 24000; // TTS output rate (both L16 and WAV responses are 24kHz mono 16-bit)
 
 // voice -> utterance. Distinct prebuilt voices so the two clips are
 // trivially distinguishable by ear when spot-checking fixtures.
@@ -50,6 +52,27 @@ function pcmToWav(pcmBuf, { sampleRate = SAMPLE_RATE, channels = 1, bitsPerSampl
   return Buffer.concat([header, pcmBuf]);
 }
 
+/**
+ * Normalize a TTS response payload to a 24kHz mono 16-bit WAV.
+ * Already-WAV payloads (RIFF magic) pass through; raw L16 PCM is wrapped.
+ */
+function audioToWav(buf, mimeType) {
+  const isWav = buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WAVE';
+  if (isWav) {
+    const rate = buf.readUInt32LE(24);
+    const channels = buf.readUInt16LE(22);
+    const bits = buf.readUInt16LE(34);
+    if (rate !== SAMPLE_RATE || channels !== 1 || bits !== 16) {
+      throw new Error(`TTS returned WAV at ${rate}Hz/${channels}ch/${bits}-bit; voice fixtures expect ${SAMPLE_RATE}Hz mono 16-bit`);
+    }
+    return buf;
+  }
+  if (mimeType && !/^audio\/L16;.*\brate=\d+/i.test(mimeType)) {
+    console.warn(`  [warn] unexpected mimeType "${mimeType}" -- assuming L16 PCM`);
+  }
+  return pcmToWav(buf, { sampleRate: SAMPLE_RATE, channels: 1, bitsPerSample: 16 });
+}
+
 async function generateClip(apiKey, { voice, text }) {
   const body = {
     contents: [{ parts: [{ text }] }],
@@ -73,13 +96,10 @@ async function generateClip(apiKey, { voice, text }) {
   if (!inlineData?.data) {
     throw new Error(`Gemini TTS response missing candidates[0].content.parts[0].inlineData.data (voice=${voice}): ${JSON.stringify(json)}`);
   }
-  if (inlineData.mimeType && !/^audio\/L16;.*\brate=\d+/i.test(inlineData.mimeType)) {
-    console.warn(`  [warn] unexpected mimeType "${inlineData.mimeType}" for voice=${voice} -- assuming L16 PCM anyway`);
-  }
-  return Buffer.from(inlineData.data, 'base64');
+  return audioToWav(Buffer.from(inlineData.data, 'base64'), inlineData.mimeType);
 }
 
-(async () => {
+async function main() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.error('ERROR: GEMINI_API_KEY is not set. Export it or add it to .env before running this script.');
@@ -92,8 +112,7 @@ async function generateClip(apiKey, { voice, text }) {
   for (const clip of CLIPS) {
     process.stdout.write(`  [${clip.voice}] "${clip.text}" -> voice-fixtures/${clip.file} ... `);
     try {
-      const pcm = await generateClip(apiKey, clip);
-      const wav = pcmToWav(pcm, { sampleRate: SAMPLE_RATE, channels: 1, bitsPerSample: 16 });
+      const wav = await generateClip(apiKey, clip);
       const outPath = path.join(OUT_DIR, clip.file);
       fs.writeFileSync(outPath, wav);
       console.log(`done (${wav.length} bytes)`);
@@ -104,4 +123,10 @@ async function generateClip(apiKey, { voice, text }) {
     }
   }
   console.log(`\nAll fixtures written to ${OUT_DIR}/ (gitignored -- not committed).`);
-})();
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = { MODEL, SAMPLE_RATE, pcmToWav, audioToWav };

@@ -114,3 +114,36 @@ describe('tokenCounter', () => {
     });
   });
 });
+
+describe('getEncoderForModel (unknown-model fallback)', () => {
+  const { getEncoderForModel } = require('../../utils/tokenCounter');
+
+  it('does not throw for gpt-6 models tiktoken does not know, and falls back to o200k_base', () => {
+    let enc;
+    expect(() => { enc = getEncoderForModel('gpt-6-luna'); }).not.toThrow();
+    expect(enc).toBeTruthy();
+    // o200k_base and gpt-4o share an encoding: same token ids for the same text
+    const ref = getEncoderForModel('gpt-4o');
+    expect(Array.from(enc.encode('Hello, world!'))).toEqual(Array.from(ref.encode('Hello, world!')));
+  });
+
+  it('does not throw for empty/undefined model names', () => {
+    expect(() => getEncoderForModel(undefined)).not.toThrow();
+    expect(getEncoderForModel(undefined)).toBeTruthy();
+  });
+});
+
+describe('TokenService', () => {
+  const TokenService = require('../../services/TokenService');
+
+  it('initializes an encoder for a gpt-6 model instead of silently disabling counting', () => {
+    const svc = new TokenService('gpt-6-luna');
+    expect(svc.encoder).toBeTruthy();
+    expect(svc.countTokens('Hello, world!')).toBeGreaterThan(0);
+  });
+
+  it('defaults to a working encoder with no model argument', () => {
+    const svc = new TokenService();
+    expect(svc.countTokens('Hello')).toBeGreaterThan(0);
+  });
+});

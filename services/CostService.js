@@ -1,19 +1,18 @@
 // ===== services/CostService.js =====
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, getTokenPricing } = require('../utils/openaiModels');
 
 class CostService {
   constructor() {
-    // GPT-4.1 mini pricing
-    this.pricing = {
-      input: 0.40 / 1_000_000,      // $0.40 per 1M tokens
-      cachedInput: 0.10 / 1_000_000, // $0.10 per 1M cached tokens
-      output: 1.60 / 1_000_000       // $1.60 per 1M tokens
-    };
+    // Default-model token pricing (per token). Per-model rates live in
+    // utils/openaiModels.js; calculateCosts() takes the serving model.
+    this.pricing = getTokenPricing(DEFAULT_OPENAI_MODEL);
 
     // Flat per-call pricing for media generation models (USD per call).
-    // Placeholders pending finalized Google pricing.
+    // Old keys are kept so historical/pinned models still price.
     this.mediaPricing = {
-      'lyria-3-pro-preview': 0.06,
+      'lyria-3.5': 0.08, // Lyria 3.5 (full song) — Gemini API pricing, $0.08/song
+      'lyria-3-pro-preview': 0.06, // legacy placeholder
       'elevenlabs-music-v1': 0.10
     };
 
@@ -27,13 +26,14 @@ class CostService {
     };
   }
 
-  calculateCosts(tokenUsage) {
+  calculateCosts(tokenUsage, model = null) {
     const { input_tokens, output_tokens, input_tokens_details } = tokenUsage;
     const cachedTokens = input_tokens_details?.cached_tokens || 0;
     const regularInputTokens = input_tokens - cachedTokens;
-    
-    const inputCost = (regularInputTokens * this.pricing.input) + (cachedTokens * this.pricing.cachedInput);
-    const outputCost = output_tokens * this.pricing.output;
+    const pricing = model ? getTokenPricing(model) : this.pricing;
+
+    const inputCost = (regularInputTokens * pricing.input) + (cachedTokens * pricing.cachedInput);
+    const outputCost = output_tokens * pricing.output;
     const totalCost = inputCost + outputCost;
     
     return {

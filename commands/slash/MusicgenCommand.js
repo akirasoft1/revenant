@@ -1,5 +1,5 @@
 // commands/slash/MusicgenCommand.js
-// Slash command for AI music generation via Lyria 3 Pro
+// Slash command for AI music generation via Lyria (default lyria-3.5)
 
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const BaseSlashCommand = require('../base/BaseSlashCommand');
@@ -13,7 +13,7 @@ class MusicgenSlashCommand extends BaseSlashCommand {
     super({
       data: new SlashCommandBuilder()
         .setName('musicgen')
-        .setDescription('Generate music with Lyria 3')
+        .setDescription('Generate music with Lyria 3.5')
         .addStringOption((o) => o.setName('prompt').setDescription('What to generate').setRequired(true).setMaxLength(6000))
         .addStringOption((o) => o.setName('lyrics').setDescription('Custom lyrics. Supports [Verse] / [Chorus] / [Bridge] tags').setRequired(false).setMaxLength(6000))
         .addStringOption((o) => o.setName('negative_prompt').setDescription('Things to avoid (e.g. "no vocals", "no drums")').setRequired(false).setMaxLength(6000))

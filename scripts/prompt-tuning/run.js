@@ -17,6 +17,7 @@ const APP_ROOT = process.env.BOT_APP_ROOT || path.resolve(__dirname, '..', '..')
 const appRequire = createRequire(path.join(APP_ROOT, 'package.json'));
 
 const config = appRequire('./config/config');
+const { DEFAULT_OPENAI_MODEL, getTokenPricing, isReasoningModel } = appRequire('./utils/openaiModels');
 
 function parseArgs(argv) {
   const args = { n: 20, days: 7, baseline: path.resolve(APP_ROOT, 'personalities', 'channel-voice.js') };
@@ -84,7 +85,7 @@ function parseArgs(argv) {
     args.label = path.basename(args.candidate, path.extname(args.candidate));
   }
   if (!args.model) {
-    args.model = config.openai?.model || 'gpt-5-mini';
+    args.model = config.openai?.model || DEFAULT_OPENAI_MODEL;
   }
   if (!Number.isFinite(args.n) || args.n <= 0) {
     console.error('ERROR: --n must be a positive integer');
@@ -197,12 +198,9 @@ async function main() {
   // Pre-flight cost estimate (rough): assume ~300 tokens in (system) + ~50 tokens out per call
   const ESTIMATED_IN_PER_CALL = 600;   // system+user; conservative
   const ESTIMATED_OUT_PER_CALL = 100;  // response; conservative
-  const RATES_PRE = {
-    'gpt-5-mini': { in: 0.25, out: 2.0 },
-    'gpt-4.1-mini': { in: 0.40, out: 1.60 },
-    'gpt-4o-mini': { in: 0.15, out: 0.60 }
-  };
-  const rate_pre = RATES_PRE[args.model] || RATES_PRE['gpt-4.1-mini'];
+  // Per-1M-token rates from the shared table (unknown models -> default model's rate)
+  const pricingPre = getTokenPricing(args.model);
+  const rate_pre = { in: pricingPre.input * 1_000_000, out: pricingPre.output * 1_000_000 };
   const callsTotal = sampled.length * 2;
   const estCost = ((ESTIMATED_IN_PER_CALL * rate_pre.in) + (ESTIMATED_OUT_PER_CALL * rate_pre.out)) / 1_000_000 * callsTotal;
   console.log(`Estimated cost: $${estCost.toFixed(4)} for ${callsTotal} OpenAI calls`);
@@ -229,6 +227,8 @@ async function main() {
         ]
       };
       if (typeof args.seed === 'number') params.seed = args.seed;
+      // Mirror the bot's direct-OpenAI chat effort (gpt-6-* are reasoning models)
+      if (isReasoningModel(args.model) && config.openai?.reasoningEffort) params.reasoning_effort = config.openai.reasoningEffort;
       const resp = await openai.chat.completions.create(params);
       return {
         ok: true,
@@ -272,14 +272,9 @@ async function main() {
   const avgCandLen = Math.round(totalCandLen / results.length);
   const lenDelta = avgBaseLen > 0 ? Math.round(((avgCandLen - avgBaseLen) / avgBaseLen) * 100) : 0;
 
-  // Rough cost: model.pricing × tokens. Use a simple per-1M rate map.
-  // gpt-5-mini placeholder rates; fall back to the same for unknown models.
-  const RATES = {
-    'gpt-5-mini': { in: 0.25, out: 2.0 },
-    'gpt-4.1-mini': { in: 0.40, out: 1.60 },
-    'gpt-4o-mini': { in: 0.15, out: 0.60 }
-  };
-  const rate = RATES[args.model] || RATES['gpt-4.1-mini'];
+  // Rough cost: model.pricing × tokens, per-1M rates from the shared table.
+  const pricing = getTokenPricing(args.model);
+  const rate = { in: pricing.input * 1_000_000, out: pricing.output * 1_000_000 };
   const totalBaseIn = results.reduce((s, r) => s + ((r.baseline.ok && r.baseline.usage?.prompt_tokens) || 0), 0);
   const totalCandIn = results.reduce((s, r) => s + ((r.candidate.ok && r.candidate.usage?.prompt_tokens) || 0), 0);
   const baseCost = ((totalBaseIn * rate.in) + (totalBaseTokens * rate.out)) / 1_000_000;

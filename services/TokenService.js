@@ -1,17 +1,19 @@
 // ===== services/TokenService.js =====
 const logger = require('../logger');
-const { encoding_for_model } = require('tiktoken');
+const { getEncoderForModel } = require('../utils/tokenCounter');
+const { DEFAULT_OPENAI_MODEL } = require('../utils/openaiModels');
 
 class TokenService {
-  constructor() {
+  constructor(model = DEFAULT_OPENAI_MODEL) {
+    this.model = model;
     this.encoder = null;
     this.initializeEncoder();
   }
 
   initializeEncoder() {
     try {
-      // Using gpt-5 tokenizer (supported in tiktoken 1.0.22+)
-      this.encoder = encoding_for_model('gpt-5');
+      // Unknown models (e.g. gpt-6-*) fall back to o200k_base instead of throwing
+      this.encoder = getEncoderForModel(this.model);
       logger.info('Tiktoken encoder initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize tiktoken encoder:', error);

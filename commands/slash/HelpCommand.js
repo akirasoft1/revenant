@@ -68,7 +68,7 @@ class HelpSlashCommand extends BaseSlashCommand {
       value: [
         '`/imagine` - Generate an image from text',
         '`/videogen` - Generate a video from text/images',
-        '`/musicgen` - Generate music from text (Lyria 3 Pro)'
+        '`/musicgen` - Generate music from text (Lyria 3.5)'
       ].join('\n'),
       inline: false
     });
@@ -143,7 +143,7 @@ class HelpSlashCommand extends BaseSlashCommand {
         title: '/musicgen',
         description: 'Generate music',
         usage: '/musicgen prompt:<description> [lyrics:<text>] [negative_prompt:<text>] [image1:<file>] [image2:<file>] [image3:<file>]',
-        details: 'Generates multi-minute music with Google Lyria 3 Pro. Lyrics support [Verse]/[Chorus]/[Bridge] tags. Negative prompts are composed into the prompt text. Up to 3 reference images can influence the result. Generation takes 1-3 minutes.'
+        details: 'Generates multi-minute music with Google Lyria 3.5. Lyrics support [Verse]/[Chorus]/[Bridge] tags. Negative prompts are composed into the prompt text. Up to 3 reference images can influence the result. Generation takes 1-3 minutes.'
       },
       videogen: {
         title: '/videogen',
