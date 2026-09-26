@@ -43,3 +43,12 @@ async def test_network_error_after_retries_raises_upstream_error():
     with pytest.raises(UpstreamError) as ei:
         await _client(handler).get_json("/x")
     assert ei.value.status is None
+
+
+async def test_preserves_long_error_body_intact():
+    long_body = "x" * 1000  # >500 chars
+    def handler(req):
+        return httpx.Response(500, text=long_body)
+    with pytest.raises(UpstreamError) as ei:
+        await _client(handler).get_json("/x")
+    assert ei.value.detail == long_body and len(ei.value.detail) == 1000

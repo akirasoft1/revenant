@@ -45,7 +45,7 @@ class UpstreamClient:
             else:
                 if resp.status_code < 400:
                     return resp.json()
-                last = UpstreamError(self.name, resp.status_code, resp.text[:500])
+                last = UpstreamError(self.name, resp.status_code, resp.text)
                 if resp.status_code not in _RETRY_STATUS:
                     raise last
             if attempt < _MAX_ATTEMPTS - 1:
