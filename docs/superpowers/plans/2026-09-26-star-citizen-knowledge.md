@@ -2028,3 +2028,17 @@ After all tasks pass review: run all three suites; build + push `sc-knowledge`, 
 - `server.py` builds `ItemTools(wiki, cache, uex=uex)`.
 
 - [ ] TDD: tests first (Scorpius → New Deal/Lorville price from fixture; "Scorpius Antares" → Antares not base; V801-12 still resolves via Wiki; non-JSON body → UpstreamError; vehicle UpstreamError falls back to Wiki path), implement, full suite, docker build, commit.
+
+---
+
+### Task 15: Voice-tolerant tool inputs (added after the live voice smoke test)
+
+**Why (live voice evidence, 2026-09-26):** Gemini Live's ASR heard "V801-12" as "v8o1-12" → `sc_find_item` not_found; for "most powerful Size 2 shield" the model guessed `rank_by="shield_hp"` → `bad_request`, and a parallel reply hallucinated from search. Spoken queries need forgiving inputs. (The duplicated replies in the smoke output are a harness artifact: the harness sends `audio_stream_end` while production leaves endpointing to Gemini's server VAD.)
+
+**Files:** `sc-knowledge/src/tools_items.py`, `sc-knowledge/src/server.py` (docstrings), tests in `sc-knowledge/tests/test_tools_items.py`.
+
+**Interfaces:**
+- `compare_components`: `type` accepts synonyms (case/space/hyphen-insensitive): shield/shields/shield generator/shield generators → shield; power plant/powerplant/power → power_plant; cooler/coolers/cooling → cooler; quantum drive/quantum/qd/qt drive → quantum_drive; radar/radars/scanner → radar; weapon/weapons/gun/guns/cannon/repeater → weapon; missile/missiles → missile. `rank_by` accepts synonyms per type (e.g. shield: hp/health/shield_hp/strength/capacity/max_hp/pool/"most powerful"/power → max_health; regen/regeneration/recharge → regen_rate; delay → regen_delay_damage_s). An unknown `rank_by` NEVER errors: rank by the type's default and add `"note": "rank_by '<x>' not recognised; ranked by <default>. Options: …"`. Unknown `type` still returns `bad_request` listing the types.
+- `find_item`: when the Wiki path returns not_found and the vehicle path found nothing, retry ONCE with ASR-normalised variants before giving up: (1) letter o/O adjacent to a digit → 0 (e.g. "v8o1-12" → "v801-12"); (2) strip trailing generic category words (radar, shield, shield generator, cooler, power plant, quantum drive, drive, gun, cannon, missile, ship) — e.g. "V801-12 radar" → "V801-12"; (3) both. The first variant that resolves wins and the result carries `"note": "Interpreted '<original>' as '<variant>'."`.
+- Docstrings for sc_find_item / sc_compare_components mention these tolerances briefly.
+- [ ] TDD with real fixtures: "v8o1-12" → V801-12 with the note; "V801-12 radar" → V801-12; compare_components("shield generator", 2, rank_by="shield_hp") → ranked by max_health with note, FR-76 first; unknown type still bad_request; existing tests unchanged.
