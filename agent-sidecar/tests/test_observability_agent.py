@@ -11,7 +11,7 @@ def test_observe_returns_error_when_no_toolsets():
     assert result.answer_text == ""
 
 def test_observe_builds_agent_with_mcp_tools_and_no_sandbox():
-    cfg = _cfg(dt_mcp_url="https://x/mcp", dt_platform_token="tok", agent_model="gemini-3-flash-preview")
+    cfg = _cfg(dt_mcp_url="https://x/mcp", dt_platform_token="tok", agent_model="gemini-3.8-flash")
     fake_toolset = MagicMock()
     with patch("src.observability_agent.build_mcp_toolsets", return_value=[fake_toolset]), \
          patch("src.observability_agent.Agent") as MockAgent, \

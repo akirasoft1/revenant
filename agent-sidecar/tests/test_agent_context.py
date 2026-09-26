@@ -11,7 +11,7 @@ class _FakeOrch:
 def _agent():
     from src.config import load
     import os
-    for k, v in {"MONGO_URI": "mongodb://x", "SANDBOX_BASE_IMAGE": "img", "AGENT_MODEL": "gemini-3.6-flash"}.items():
+    for k, v in {"MONGO_URI": "mongodb://x", "SANDBOX_BASE_IMAGE": "img", "AGENT_MODEL": "gemini-3.8-flash"}.items():
         os.environ.setdefault(k, v)
     return ChannelVoiceAgent(config=load(), orchestrator=_FakeOrch(), base_system_prompt="FALLBACK")
 

@@ -31,16 +31,16 @@ def test_backend_developer_api_by_default(monkeypatch):
 
 
 def test_native_gemini_returns_gemini_model():
-    assert _build_model("gemini-3-flash-preview").model == "gemini-3-flash-preview"
+    assert _build_model("gemini-3.8-flash").model == "gemini-3.8-flash"
 
 
 def test_gemini_prefix_stripped():
-    assert _build_model("gemini/gemini-3-flash-preview").model == "gemini-3-flash-preview"
+    assert _build_model("gemini/gemini-3.8-flash").model == "gemini-3.8-flash"
 
 
 def test_empty_falls_back_to_default():
-    assert _build_model("").model == "gemini-3-flash-preview"
-    assert _build_model("   ").model == "gemini-3-flash-preview"
+    assert _build_model("").model == "gemini-3.8-flash"
+    assert _build_model("   ").model == "gemini-3.8-flash"
 
 
 def test_bare_model_with_no_slash_treated_as_native():
@@ -64,15 +64,15 @@ def test_native_gemini_configures_exponential_retry_on_503():
 
 def test_litellm_path_has_no_genai_retry_options():
     # Non-Gemini providers go through LiteLlm, which has no genai retry_options.
-    m = _build_model("openai/gpt-5.1")
+    m = _build_model("openai/gpt-6-luna")
     assert not hasattr(m, "retry_options")
 
 
 def test_openai_uses_litellm_wrapper():
     from google.adk.models.lite_llm import LiteLlm
-    m = _build_model("openai/gpt-5.1")
+    m = _build_model("openai/gpt-6-luna")
     assert isinstance(m, LiteLlm)
-    assert m.model == "openai/gpt-5.1"
+    assert m.model == "openai/gpt-6-luna"
 
 
 def test_anthropic_uses_litellm_wrapper():

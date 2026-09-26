@@ -34,7 +34,7 @@ def test_only_first_line_kept():
 
 def test_unknown_error_shape_still_summarized():
     e = ValueError("malformed input")
-    out = _summarize_llm_error(e, model_spec="openai/gpt-5.1")
-    assert "model=openai/gpt-5.1" in out
+    out = _summarize_llm_error(e, model_spec="openai/gpt-6-luna")
+    assert "model=openai/gpt-6-luna" in out
     assert "ValueError" in out
     assert "malformed input" in out

@@ -1,9 +1,10 @@
 """ADK Agent assembly. One Agent per ChatRequest so per-turn tool state is fresh.
 
-Adapted for google-adk 1.31.1: drives Gemini natively (best ADK first-class
-support, GEMINI_API_KEY honored by google-genai SDK) by default; falls back
+Written against google-adk 1.31.1, verified on 2.10.0: drives Gemini natively
+(best ADK first-class support; backend chosen by google-genai env — see
+active_genai_backend) by default; falls back
 to the LiteLlm wrapper for non-Gemini providers when AGENT_MODEL is set to
-something like "openai/gpt-5.1".
+something like "openai/gpt-6-luna".
 """
 import logging
 import os
@@ -146,12 +147,12 @@ def _build_model(model_spec: str):
     LiteLlm.
 
     Accepted shapes:
-      "gemini-3-flash-preview"      -> Gemini("gemini-3-flash-preview", retry)  (native)
-      "gemini/gemini-3-flash"       -> Gemini("gemini-3-flash", retry)          (native)
-      "openai/gpt-5.1"              -> LiteLlm("openai/gpt-5.1")
+      "gemini-3.8-flash"            -> Gemini("gemini-3.8-flash", retry)        (native)
+      "gemini/gemini-3.8-flash"     -> Gemini("gemini-3.8-flash", retry)        (native)
+      "openai/gpt-6-luna"           -> LiteLlm("openai/gpt-6-luna")
       "anthropic/claude-opus-4-7"   -> LiteLlm("anthropic/...")
     """
-    spec = (model_spec or "").strip() or "gemini-3-flash-preview"
+    spec = (model_spec or "").strip() or "gemini-3.8-flash"
     if spec.startswith("gemini/"):
         spec = spec[len("gemini/"):]
     if spec.startswith("gemini") or "/" not in spec:
