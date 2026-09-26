@@ -27,12 +27,28 @@ CAPTURES = {
     "wiki_factions.json": f"{WIKI}/factions?limit=200",
     # Live samples for Task 4 compare_components non-shield COMPONENT_TYPES: used to
     # confirm real dotted stat paths (never guessed) and as fixtures for per-type tests.
-    "wiki_vehicle_items_power_plant_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "PowerPlant", "limit": 3}),
-    "wiki_vehicle_items_cooler_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Cooler", "limit": 3}),
-    "wiki_vehicle_items_quantum_drive_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "QuantumDrive", "limit": 3}),
-    "wiki_vehicle_items_radar_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Radar", "limit": 3}),
-    "wiki_vehicle_items_weapon_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "WeaponGun", "limit": 3}),
-    "wiki_vehicle_items_missile_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Missile", "limit": 3}),
+    #
+    # Fix round 1 item 1: these MUST be captured as a single real page (one filtered
+    # size, limit=200, verify meta.last_page == 1 on every recapture) -- NOT the
+    # original limit=3 samples. `_all_pages` re-requests the same path for every page
+    # number up to meta.last_page, and the path-only fixture_transport mock replays
+    # page 1 verbatim on every one of those requests, so a limit=3 capture whose real
+    # last_page was e.g. 19-58 silently duplicated its 3 items dozens of times when
+    # replayed through tests (reviewer-reproduced: compare_components("radar", 2,
+    # limit=10) returned 10x "Agrippa"; quantum_drive's "Aither" was crowded out
+    # entirely). filter[size]=<one real size> + limit=200 keeps the whole page in one
+    # response so `_all_pages` stops after its first request.
+    "wiki_vehicle_items_power_plant_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "PowerPlant", "filter[size]": 2, "limit": 200}),
+    "wiki_vehicle_items_cooler_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Cooler", "filter[size]": 2, "limit": 200}),
+    "wiki_vehicle_items_quantum_drive_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "QuantumDrive", "filter[size]": 2, "limit": 200}),
+    "wiki_vehicle_items_radar_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Radar", "filter[size]": 2, "limit": 200}),
+    "wiki_vehicle_items_weapon_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "WeaponGun", "filter[size]": 2, "limit": 200}),
+    "wiki_vehicle_items_missile_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Missile", "filter[size]": 9, "limit": 200}),
+    # wiki_vehicle_items_weapon_damage_types_sample.json is NOT captured live here --
+    # it's a hand-picked 3-item subset (one ballistic/physical, one laser/energy, one
+    # distortion weapon) copied verbatim from wiki_vehicle_items_weapon_sample.json,
+    # isolated so compare_components' 20-row cap doesn't crop the non-ballistic
+    # entries out of the fix-round-1-item-4 DPS-formula verification test.
 }
 
 

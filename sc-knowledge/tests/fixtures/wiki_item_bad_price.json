@@ -1,0 +1,28 @@
+{
+ "data": {
+  "uuid": "bbbbbbbb-0000-0000-0000-000000000001",
+  "name": "BadPricer",
+  "type": "Radar",
+  "size": 1,
+  "grade": "A",
+  "class": "Military",
+  "manufacturer": {"name": "Foo"},
+  "version": "4.10.1-LIVE.12660092",
+  "uex_prices": {
+   "purchase": [
+    {
+     "price_buy": "not-a-number",
+     "terminal_name": "Bad Shop",
+     "starmap_location": {"name": "X", "parent_name": "Y", "star_system_name": "Z"},
+     "date_updated": "2026-01-01T00:00:00+00:00"
+    },
+    {
+     "price_buy": 5000,
+     "terminal_name": "Good Shop",
+     "starmap_location": {"name": "A", "parent_name": "B", "star_system_name": "C"},
+     "date_updated": "2026-01-02T00:00:00+00:00"
+    }
+   ]
+  }
+ }
+}

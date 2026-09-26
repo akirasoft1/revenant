@@ -1,0 +1,37 @@
+{
+ "data": [
+  {
+   "uuid": "aaaaaaaa-0000-0000-0000-000000000001",
+   "name": "Alpha",
+   "type": "Shield",
+   "size": 2,
+   "grade": "A",
+   "class": "Military",
+   "manufacturer": {"name": "Foo"},
+   "version": "4.10.1-LIVE.12660092",
+   "shield": {"max_health": 9000, "regen_rate": 1500, "regen_delay": {"damage": 4}}
+  },
+  {
+   "uuid": "aaaaaaaa-0000-0000-0000-000000000002",
+   "name": "Beta",
+   "type": "Shield",
+   "size": 2,
+   "grade": "B",
+   "class": "Military",
+   "manufacturer": {"name": "Foo"},
+   "version": "4.10.1-LIVE.12660092",
+   "shield": {"max_health": 8000, "regen_rate": 1400, "regen_delay": {"damage": 5}}
+  },
+  {
+   "uuid": "aaaaaaaa-0000-0000-0000-000000000003",
+   "name": "Gamma",
+   "type": "Shield",
+   "size": 2,
+   "grade": "C",
+   "class": "Military",
+   "manufacturer": {"name": "Foo"},
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "meta": {"current_page": 1, "last_page": 1, "total": 3}
+}
