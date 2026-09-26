@@ -19,6 +19,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GUIDES_DIR="${1:-$ROOT_DIR/OrgGuides}"
 NAMESPACE="${2:-discord-article-bot}"
 CONFIGMAP_NAME="sc-org-guides"
+# Guard against the ConfigMap object limit (1 MiB for the whole object in
+# etcd), leaving headroom for metadata/managedFields. This IS the effective
+# limit because the apply below is SERVER-SIDE: a client-side `kubectl apply`
+# would also copy the entire ConfigMap into the
+# kubectl.kubernetes.io/last-applied-configuration annotation, and
+# annotations are capped at 256 KiB total -- so client-side apply failed at
+# ~256 KiB, well below this guard.
 MAX_BYTES=$((900 * 1024))
 
 if [[ ! -d "$GUIDES_DIR" ]]; then
@@ -55,4 +62,8 @@ if (( total_bytes > MAX_BYTES )); then
   exit 1
 fi
 
-kubectl create configmap "$CONFIGMAP_NAME" --from-file="$tmp" -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+# Server-side apply: no last-applied annotation (see MAX_BYTES above).
+# --force-conflicts lets this script take ownership of the data keys even if
+# a previous client-side apply (or a manual edit) last managed them.
+kubectl create configmap "$CONFIGMAP_NAME" --from-file="$tmp" -n "$NAMESPACE" --dry-run=client -o yaml \
+  | kubectl apply --server-side --force-conflicts --field-manager=sync-org-guides -f -

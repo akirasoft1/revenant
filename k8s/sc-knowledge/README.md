@@ -18,7 +18,7 @@ as `k8s/voice/` and `k8s/sandbox/`.
 
 | File | Purpose |
 |---|---|
-| `deployment.yaml` | `RollingUpdate` Deployment, 1 replica, port 8080 (`http`), `httpGet /healthz` readiness+liveness, hardened `securityContext` (non-root uid 1000, read-only rootfs, no capabilities, no privilege escalation), `automountServiceAccountToken: false`. `UEXCORP_BEARER` comes from Secret `sc-knowledge-secrets` (optional -- the service degrades to unauthenticated UEX rate limits without it, never fails to start). |
+| `deployment.yaml` | `RollingUpdate` Deployment, 1 replica, port 8080 (`http`), `httpGet /healthz` readiness+liveness (explicit `timeoutSeconds: 2`; `/healthz` never calls upstream -- it reports the cached game version and refreshes it in the background), hardened `securityContext` (non-root uid 1000, read-only rootfs, no capabilities, no privilege escalation), `automountServiceAccountToken: false`. `UEXCORP_BEARER` comes from Secret `sc-knowledge-secrets` (optional -- the service degrades to unauthenticated UEX rate limits without it, never fails to start). |
 | `service.yaml` | ClusterIP Service, port 8080 -> 8080. |
 | `networkpolicy.yaml` | Ingress from the agent (`app: discord-article-bot-agent`) and voice (`app: discord-article-bot-voice`) sidecar pods on TCP 8080 only. Egress: kube-dns, public TCP 443 (UEX Corp + Star Citizen Wiki APIs, RFC1918 excluded), and Dynatrace OTLP on TCP 4317. |
 
@@ -64,12 +64,12 @@ out) to run against UEX's unauthenticated rate limits.
    kubectl set image deployment/sc-knowledge sc-knowledge=mvilliger/sc-knowledge:<git-short-sha> -n discord-article-bot
    ```
 
-## Sidecar NetworkPolicy egress (Task 9/11 -- not yet wired here)
+## Sidecar NetworkPolicy egress
 
-Once the agent and voice sidecars gain `sc_*` MCP tool clients, their own
-egress NetworkPolicies (`k8s/sandbox/agent-networkpolicy.yaml`,
-`k8s/voice/voice-networkpolicy.yaml`) need an additional rule so they can
-reach `sc-knowledge` on TCP 8080 in-namespace, e.g.:
+Both calling sidecars carry the matching egress rule to reach `sc-knowledge`
+on TCP 8080 in-namespace -- `k8s/sandbox/agent-networkpolicy.yaml` (agent)
+and `k8s/voice/voice-networkpolicy.yaml` (voice) -- mirrored in their
+deployed-overlay copies:
 
 ```yaml
     - to:
@@ -80,8 +80,22 @@ reach `sc-knowledge` on TCP 8080 in-namespace, e.g.:
         - { protocol: TCP, port: 8080 }
 ```
 
-This manifest only opens the sc-knowledge side (ingress); the calling
-sidecars' egress rules are out of scope for this task.
+It needs its own rule because the sidecars' public-internet :443 rule
+excludes RFC1918, which would otherwise silently drop in-cluster traffic.
+This manifest's own NetworkPolicy opens the sc-knowledge side (ingress from
+those two sidecars only).
+
+## Host allow-list (421 Invalid Host header)
+
+sc-knowledge's `/mcp` endpoint validates the `Host` header (mcp's
+DNS-rebinding protection) against `SC_ALLOWED_HOSTS`, which defaults to every
+in-cluster spelling of the Service (`sc-knowledge`,
+`sc-knowledge.discord-article-bot`, `...svc`, `...svc.cluster.local`, any
+port) plus loopback. A caller using any other name -- a renamed Service, an
+ingress hostname -- gets `421 Invalid Host header` on `/mcp` while `/healthz`
+stays green; set `SC_ALLOWED_HOSTS` (comma-separated, `name:*` = any port) on
+the deployment to add it. A 421 is not a NetworkPolicy problem: the request
+reached the pod.
 
 ## Smoke test
 
@@ -89,4 +103,6 @@ sidecars' egress rules are out of scope for this task.
 kubectl port-forward svc/sc-knowledge 18080:8080 -n discord-article-bot &
 curl -s localhost:18080/healthz
 # {"ok": true, "version": "<git-short-sha>", "game_version": "4.10.1"}
+# (game_version is null for the first call after start -- /healthz never
+# fetches; it kicks off a background refresh and reports the cached value)
 ```
