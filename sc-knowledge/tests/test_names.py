@@ -23,10 +23,22 @@ def test_mic_l5_variants_resolve_to_terminal_58():
         assert 58 in {c.id for c in ([r.match] if r.match else r.candidates)}, (q, r.status, [c.name for c in r.candidates])
 
 
-def test_commodity_fuzzy_via_rapidfuzz():
-    """Test fuzzy resolution via rapidfuzz WRatio scorer (score ≥88, margin ≥8)."""
-    r = _idx().resolve("Diluthermal Fluid", kind="commodity")
-    assert r.status == "fuzzy" and r.match is not None and r.match.name == "Diluthermex"
+def test_commodity_fuzzy_via_rapidfuzz_wration():
+    """Test fuzzy resolution via rapidfuzz WRatio scorer (score ≥88, margin ≥8).
+
+    Uses hand-made entries to ensure no substring relation (both directions):
+    - Query "quantanium" vs entry "Quantainium" (one-letter transposition)
+    - WRatio score 95.24 (≥88), margin 51.76 vs "Hephaestanite" (≥8)
+    - No substring overlap: "quantanium" ⊄ "quantainium" and vice versa
+    """
+    from src.names import Entry
+    idx = NameIndex()
+    idx.add(Entry("commodity", 101, "Quantainium", ("Quantainium",), {}))
+    idx.add(Entry("commodity", 102, "Hephaestanite", ("Hephaestanite",), {}))
+    idx.add(Entry("commodity", 103, "Zenithium", ("Zenithium",), {}))
+
+    r = idx.resolve("quantanium", kind="commodity")
+    assert r.status == "fuzzy" and r.match is not None and r.match.name == "Quantainium"
 
 
 def test_commodity_one_letter_typo():
