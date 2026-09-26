@@ -1,0 +1,38 @@
+"""Labeled prompts for the Star Citizen tools eval.
+
+Each entry is `{"prompt": str, "expect_tool": str | None}`. `expect_tool` is
+the `sc_*` MCP tool the agent must call to answer correctly, or `None` for a
+non-SC control prompt where NO `sc_*` tool may be called (the model should
+answer directly or, if it truly needs execution, use the sandbox — SC data
+must never come from a sandboxed fetch, per the sc_state preamble).
+"""
+
+SC_EVAL_SET = [
+    # --- the four canonical questions ---
+    {"prompt": "Where can we purchase a V801-12 radar?", "expect_tool": "sc_find_item"},
+    {"prompt": "What is the most powerful Size 2 shield generator?", "expect_tool": "sc_compare_components"},
+    {"prompt": "What is an optimal way to grind Foxwell Enforcement reputation?", "expect_tool": "sc_faction_missions"},
+    {"prompt": "What are some currently profitable trade routes from MIC-L5?", "expect_tool": "sc_trade_routes"},
+
+    # --- 8 more SC variants ---
+    {"prompt": "best size 1 quantum drive for speed", "expect_tool": "sc_compare_components"},
+    {"prompt": "where do I sell Laranite in Stanton", "expect_tool": "sc_commodity_prices"},
+    {"prompt": "how much does a FR-76 cost and where", "expect_tool": "sc_find_item"},
+    {"prompt": "I have a C2 with 696 SCU and 2M aUEC, best route from Area18", "expect_tool": "sc_trade_routes"},
+    {"prompt": "what rank do I need for Foxwell ship-under-attack missions", "expect_tool": "sc_faction_missions"},
+    {"prompt": "compare size 3 power plants", "expect_tool": "sc_compare_components"},
+    {"prompt": "where can I buy a Scorpius", "expect_tool": "sc_find_item"},
+    {"prompt": "cheapest place to buy Quantanium", "expect_tool": "sc_commodity_prices"},
+
+    # --- 2 org-guide prompts ---
+    {"prompt": "how do mining scan signatures work for rock clusters", "expect_tool": "sc_org_guides"},
+    {"prompt": "what salvage contract tiers are there and what do they cost", "expect_tool": "sc_org_guides"},
+
+    # --- 6 non-SC controls: no sc_* tool may be called ---
+    {"prompt": "what's the capital of France", "expect_tool": None},
+    {"prompt": "explain TCP handshakes", "expect_tool": None},
+    {"prompt": "write a haiku about coffee", "expect_tool": None},
+    {"prompt": "what's 17*23", "expect_tool": None},
+    {"prompt": "recommend a sci-fi novel", "expect_tool": None},
+    {"prompt": "what's a good co-op game for four people", "expect_tool": None},
+]
