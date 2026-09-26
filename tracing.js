@@ -5,7 +5,7 @@
 const { NodeSDK } = require('@opentelemetry/sdk-node');
 const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
 const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-proto');
-const { Resource } = require('@opentelemetry/resources');
+const { resourceFromAttributes } = require('@opentelemetry/resources');
 const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = require('@opentelemetry/semantic-conventions');
 const { BatchSpanProcessor } = require('@opentelemetry/sdk-trace-base');
 const { trace, SpanStatusCode, SpanKind, context, ROOT_CONTEXT } = require('@opentelemetry/api');
@@ -27,8 +27,9 @@ const isTestEnv = process.env.JEST_WORKER_ID !== undefined;
 
 // Create the OTLP exporter and span processor only outside test environments.
 // The BatchSpanProcessor runs a scheduled timer that prevents Jest from exiting.
+// NodeSDK 0.2xx takes `spanProcessors` (array); the singular `spanProcessor` is deprecated.
 const spanProcessorConfig = isTestEnv ? {} : {
-  spanProcessor: new BatchSpanProcessor(
+  spanProcessors: [new BatchSpanProcessor(
     new OTLPTraceExporter({
       url: `${OTLP_ENDPOINT}/v1/traces`,
       headers: process.env.OTEL_EXPORTER_OTLP_HEADERS
@@ -41,12 +42,13 @@ const spanProcessorConfig = isTestEnv ? {} : {
       maxExportBatchSize: 512,
       maxQueueSize: 2048,
     }
-  ),
+  )],
 };
 
 // Create the OpenTelemetry SDK
 const sdk = new NodeSDK({
-  resource: new Resource({
+  // OTel JS 2.x removed the `Resource` class; build it with resourceFromAttributes().
+  resource: resourceFromAttributes({
     [ATTR_SERVICE_NAME]: SERVICE_NAME,
     [ATTR_SERVICE_VERSION]: SERVICE_VERSION,
     'service.namespace': 'discord-article-bot',
@@ -69,6 +71,12 @@ const sdk = new NodeSDK({
         enabled: false, // Too noisy for file operations
       },
       '@opentelemetry/instrumentation-dns': {
+        enabled: false,
+      },
+      // auto-instrumentations-node now bundles the upstream OpenAI instrumentation.
+      // OpenLLMetry (below) already traces every OpenAI call, so leaving this on
+      // would emit a duplicate gen_ai span per call.
+      '@opentelemetry/instrumentation-openai': {
         enabled: false,
       },
     }),
