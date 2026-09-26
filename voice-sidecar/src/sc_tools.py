@@ -152,6 +152,10 @@ class ScToolExecutor:
         # INITIALISED MCP ClientSession. Tests inject a fake.
         self._session_factory = session_factory or _default_session_factory(url)
         self.declarations: list[types.FunctionDeclaration] = []
+        # The exception from the most recent failed refresh (None after a
+        # success) -- surfaced in the startup warning so a 421/4xx from the
+        # server isn't misread as a NetworkPolicy/connectivity problem.
+        self.last_error: BaseException | None = None
 
     async def refresh(self) -> bool:
         """Re-read the tool list. On failure keep the previous declarations
@@ -173,10 +177,12 @@ class ScToolExecutor:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
+            self.last_error = e
             logger.warning(
                 "sc_knowledge: list_tools failed against %s (%s: %s); keeping %d previous declaration(s)",
                 self._url, type(e).__name__, e, len(self.declarations))
             return False
+        self.last_error = None
         self.declarations = decls
         logger.info("sc_knowledge: %d tool declaration(s) loaded: %s",
                     len(decls), ", ".join(d.name for d in decls))

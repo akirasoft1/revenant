@@ -68,6 +68,25 @@ def _build_sc_executor(config):
     return ScToolExecutor(config.sc_knowledge_url)
 
 
+def _describe_error(err: BaseException | None) -> str:
+    """'<ExcClass>: <msg>' for the startup warning; an ExceptionGroup (anyio
+    task groups in the MCP client wrap the real HTTP error) is unwrapped to
+    its leaf exceptions so the 421/4xx itself is visible."""
+    if err is None:
+        return "unknown error"
+    if isinstance(err, BaseExceptionGroup):
+        leaves = []
+        stack = list(err.exceptions)
+        while stack:
+            e = stack.pop(0)
+            if isinstance(e, BaseExceptionGroup):
+                stack.extend(e.exceptions)
+            else:
+                leaves.append(e)
+        return "; ".join(f"{type(e).__name__}: {e}" for e in leaves) or f"{type(err).__name__}: {err}"
+    return f"{type(err).__name__}: {err}"
+
+
 async def _prime_sc_tools(executor, retry_interval_s: float = SC_REFRESH_RETRY_INTERVAL_S):
     """Load sc-knowledge declarations before serving. If sc-knowledge is
     unreachable, voice starts search-only and a background task retries every
@@ -86,7 +105,12 @@ async def _prime_sc_tools(executor, retry_interval_s: float = SC_REFRESH_RETRY_I
         logger.warning("sc_knowledge reachable but exposed no sc_* tools; voice runs search-only "
                        "until a refresh returns some")
     else:
-        logger.warning("sc_knowledge=unreachable at startup; voice runs search-only until refresh succeeds")
+        # "unreachable OR rejected", with the actual exception: a 421/4xx
+        # (e.g. sc-knowledge's Host allow-list) is a server-side config
+        # problem, and blaming it on the NetworkPolicy sends the operator
+        # debugging the wrong layer.
+        logger.warning("sc_knowledge=unreachable or rejected at startup (%s); voice runs search-only "
+                       "until refresh succeeds", _describe_error(getattr(executor, "last_error", None)))
 
     async def _retry() -> None:
         while not executor.declarations:

@@ -67,6 +67,20 @@ async def test_refresh_failure_keeps_previous_declarations():
     assert len(ex.declarations) == 2
 
 
+async def test_refresh_records_last_error_and_clears_it_on_success():
+    ex = ScToolExecutor("http://x/mcp", session_factory=_factory())
+    assert ex.last_error is None
+    good = ex._session_factory
+    def boom():
+        raise OSError("down")
+    ex._session_factory = boom
+    assert await ex.refresh() is False
+    assert isinstance(ex.last_error, OSError) and str(ex.last_error) == "down"
+    ex._session_factory = good
+    assert await ex.refresh() is True
+    assert ex.last_error is None
+
+
 # ---- beyond the brief's minimum -------------------------------------------
 
 def _factory_returning(result):

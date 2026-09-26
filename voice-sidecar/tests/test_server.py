@@ -133,10 +133,14 @@ class _FlakyExecutor:
         self.attempts = 0
         self.declarations = []
 
+        self.last_error = None
+
     async def refresh(self):
         self.attempts += 1
         if self.attempts <= self.fail_times:
+            self.last_error = RuntimeError("Client error '421 Misdirected Request'")
             return False
+        self.last_error = None
         self.declarations = ["d"]
         return True
 
@@ -152,10 +156,28 @@ async def test_prime_sc_tools_failure_warns_and_retries_in_background(caplog):
     with caplog.at_level(logging.WARNING):
         task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
     assert task is not None
-    assert ("sc_knowledge=unreachable at startup; voice runs search-only until refresh succeeds"
-            in caplog.text)
+    assert ("sc_knowledge=unreachable or rejected at startup "
+            "(RuntimeError: Client error '421 Misdirected Request'); "
+            "voice runs search-only until refresh succeeds" in caplog.text)
     await asyncio.wait_for(task, 1.0)
     assert ex.attempts == 3 and ex.declarations == ["d"]
+
+
+async def test_prime_sc_tools_failure_without_recorded_error_still_warns(caplog):
+    """An executor that records no last_error (older/fake) still gets the
+    warning, with an explicit 'unknown error' rather than a crash."""
+    ex = _FlakyExecutor(1)
+    ex.refresh_orig = ex.refresh
+
+    async def _refresh_no_error():
+        ok = await ex.refresh_orig()
+        ex.last_error = None
+        return ok
+    ex.refresh = _refresh_no_error
+    with caplog.at_level(logging.WARNING):
+        task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
+    assert "sc_knowledge=unreachable or rejected at startup (unknown error)" in caplog.text
+    await asyncio.wait_for(task, 1.0)
 
 
 async def test_prime_sc_tools_none_is_noop():
@@ -185,3 +207,12 @@ async def test_prime_sc_tools_reachable_but_no_tools_has_distinct_warning(caplog
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+def test_describe_error_unwraps_exception_groups():
+    inner = ValueError("Client error '421 Misdirected Request' for url 'http://sc/mcp'")
+    grp = ExceptionGroup("unhandled errors in a TaskGroup", [ExceptionGroup("nested", [inner])])
+    assert server_mod._describe_error(grp) == (
+        "ValueError: Client error '421 Misdirected Request' for url 'http://sc/mcp'")
+    assert server_mod._describe_error(OSError("refused")) == "OSError: refused"
+    assert server_mod._describe_error(None) == "unknown error"
