@@ -1,16 +1,25 @@
-google-adk[extensions]>=1.31.0
-grpcio>=1.80.0
-grpcio-tools>=1.80.0
-protobuf>=6.31.1
-# Cap below 2.0: mcp 2.0.0 dropped streamablehttp_client and mcp.shared.session
-# (breaking the dql_runner + observability paths). Last-good image ran 1.28.1.
-mcp>=1.13.0,<2.0.0
-kubernetes>=30.0.0
-pymongo>=4.10.0
-opentelemetry-api>=1.27.0
-opentelemetry-sdk>=1.27.0
-opentelemetry-exporter-otlp>=1.27.0
-opentelemetry-instrumentation-grpc>=0.48b0
-pytest>=8.3.0
-pytest-asyncio>=0.24.0
+google-adk[extensions]>=2.10.0
+grpcio>=1.84.0
+# grpcio-tools / protobuf are held below their latest (1.84.0 / 7.x) by a
+# transitive cap, not by choice: google-adk 2.10.0 pins
+# opentelemetry-sdk<=1.42.1, whose opentelemetry-proto 1.42.1 requires
+# protobuf<7, and grpcio-tools>=1.82 requires protobuf>=7. Raise all three
+# together once google-adk lifts its OTel ceiling, then regenerate the stubs
+# (`make protoc`) so gencode <= runtime.
+grpcio-tools>=1.81.1
+protobuf>=6.33.6
+# mcp 2.x: dql_runner uses streamable_http_client + an httpx2.AsyncClient
+# (the 1.x streamablehttp_client was removed in 2.0). See
+# tests/test_mcp_v2_compat.py.
+mcp>=2.2.0
+httpx2>=2.13.1
+kubernetes>=36.0.3
+pymongo>=4.18.2
+# OTel held at 1.42.1 / 0.63b1: google-adk 2.10.0 caps opentelemetry-sdk<=1.42.1.
+opentelemetry-api>=1.42.1
+opentelemetry-sdk>=1.42.1
+opentelemetry-exporter-otlp>=1.42.1
+opentelemetry-instrumentation-grpc>=0.63b1
+pytest>=9.1.1
+pytest-asyncio>=1.4.0
 mongomock>=4.3.0
