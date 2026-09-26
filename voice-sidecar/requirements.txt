@@ -2,6 +2,13 @@ grpcio>=1.84.0
 grpcio-tools>=1.84.0
 protobuf>=7.36.2
 google-genai>=2.25.0
+# sc-knowledge function calling (src/sc_tools.py). mcp 2.x's
+# streamable_http_client takes an httpx2.AsyncClient (imported directly for
+# the connect/read timeouts), so httpx2 is pinned explicitly alongside the
+# httpx floor.
+mcp>=2.2.0
+httpx>=0.28.0
+httpx2>=2.13.1
 opentelemetry-api>=1.45.0
 opentelemetry-sdk>=1.45.0
 opentelemetry-exporter-otlp>=1.45.0

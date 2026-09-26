@@ -29,6 +29,15 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    # sc-knowledge (Star Citizen data MCP server), in-cluster. It's a ClusterIP
+    # pod on RFC1918, so it needs its own rule -- the public-internet :443 rule
+    # below explicitly excludes RFC1918 and would otherwise silently drop this.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sc-knowledge
+      ports:
+        - { protocol: TCP, port: 8080 }
     # GEAP / Vertex AI (aiplatform.googleapis.com) — public egress, no RFC1918 exposure
     - to:
         - ipBlock:

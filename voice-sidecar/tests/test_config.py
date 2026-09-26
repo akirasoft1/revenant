@@ -52,3 +52,22 @@ def test_session_resumption_enabled_for_other_truthy_values(monkeypatch):
     for value in ("true", "1", "yes", "on", "anything-else"):
         monkeypatch.setenv("VOICE_SESSION_RESUMPTION_ENABLED", value)
         assert cfg.load().session_resumption_enabled is True, value
+
+
+def test_sc_knowledge_defaults(monkeypatch):
+    monkeypatch.delenv("SC_KNOWLEDGE_ENABLED", raising=False)
+    monkeypatch.delenv("SC_KNOWLEDGE_URL", raising=False)
+    c = cfg.load()
+    assert c.sc_knowledge_enabled is False
+    assert c.sc_knowledge_url == "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp"
+
+
+def test_sc_knowledge_enabled_from_env(monkeypatch):
+    for value in ("true", "TRUE", "1", "yes"):
+        monkeypatch.setenv("SC_KNOWLEDGE_ENABLED", value)
+        assert cfg.load().sc_knowledge_enabled is True, value
+    for value in ("false", "0", "no", ""):
+        monkeypatch.setenv("SC_KNOWLEDGE_ENABLED", value)
+        assert cfg.load().sc_knowledge_enabled is False, value
+    monkeypatch.setenv("SC_KNOWLEDGE_URL", "http://other:1/mcp")
+    assert cfg.load().sc_knowledge_url == "http://other:1/mcp"

@@ -107,3 +107,56 @@ async def test_converse_bridge_exception_is_logged_not_dropped(caplog):
     assert any(e.WhichOneof("event") == "output_transcript" for e in got)
     assert any("voice bridge task failed" in r.message for r in caplog.records)
     assert handler_calls == []
+
+
+# ---- sc-knowledge startup wiring -----------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from src import server as server_mod  # noqa: E402
+
+
+def _cfg(enabled):
+    return SimpleNamespace(sc_knowledge_enabled=enabled,
+                           sc_knowledge_url="http://sc:8080/mcp")
+
+
+def test_build_sc_executor_respects_flag():
+    assert server_mod._build_sc_executor(_cfg(False)) is None
+    ex = server_mod._build_sc_executor(_cfg(True))
+    assert ex is not None and ex._url == "http://sc:8080/mcp"
+
+
+class _FlakyExecutor:
+    def __init__(self, fail_times):
+        self.fail_times = fail_times
+        self.attempts = 0
+        self.declarations = []
+
+    async def refresh(self):
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            return False
+        self.declarations = ["d"]
+        return True
+
+
+async def test_prime_sc_tools_success_needs_no_retry():
+    ex = _FlakyExecutor(0)
+    assert await server_mod._prime_sc_tools(ex, retry_interval_s=0.01) is None
+    assert ex.attempts == 1
+
+
+async def test_prime_sc_tools_failure_warns_and_retries_in_background(caplog):
+    ex = _FlakyExecutor(2)
+    with caplog.at_level(logging.WARNING):
+        task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
+    assert task is not None
+    assert ("sc_knowledge=unreachable at startup; voice runs search-only until refresh succeeds"
+            in caplog.text)
+    await asyncio.wait_for(task, 1.0)
+    assert ex.attempts == 3 and ex.declarations == ["d"]
+
+
+async def test_prime_sc_tools_none_is_noop():
+    assert await server_mod._prime_sc_tools(None) is None
