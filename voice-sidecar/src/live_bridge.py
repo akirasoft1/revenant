@@ -138,7 +138,7 @@ class _SessionStats:
     __slots__ = ("audio_in_chunks", "audio_in_bytes", "audio_out_chunks",
                  "audio_out_bytes", "turns", "interruptions",
                  "in_tx_chars", "out_tx_chars", "speaker_markers",
-                 "deferral_acks", "tool_calls")
+                 "deferral_acks", "tool_calls", "sc_fallbacks")
 
     def __init__(self):
         self.audio_in_chunks = 0
@@ -152,6 +152,7 @@ class _SessionStats:
         self.speaker_markers = 0
         self.deferral_acks = 0
         self.tool_calls = 0
+        self.sc_fallbacks = 0
 
 
 class _ResumeState:
@@ -189,7 +190,10 @@ class LiveBridge:
         self._resumption_enabled = resumption_enabled
         self._max_reconnects = max_reconnects
 
-    def _live_config(self, start, resumption_handle=None) -> types.LiveConnectConfig:
+    def _sc_tools_attachable(self) -> bool:
+        return self._sc is not None and bool(self._sc.declarations)
+
+    def _live_config(self, start, resumption_handle=None, with_sc=True) -> types.LiveConnectConfig:
         voice = start.voice_name or self._default_voice
         # Google Search grounding: lets the model answer with current, real
         # web knowledge (e.g. game specifics) instead of only its training
@@ -204,7 +208,8 @@ class LiveBridge:
         # tests/test_live_bridge_tools.py). Evaluated per (re)connect, so a
         # background refresh that succeeds later reaches the next session.
         # These calls are answered by `_pump_server` via send_tool_response.
-        if self._sc is not None and self._sc.declarations:
+        # with_sc=False is `converse`'s search-only connect fallback.
+        if with_sc and self._sc_tools_attachable():
             tools.append(types.Tool(function_declarations=list(self._sc.declarations)))
             system_instruction = (start.system_prompt or "") + "\n\n" + SC_VOICE_NOTE
         return types.LiveConnectConfig(
@@ -294,6 +299,11 @@ class LiveBridge:
             # handle" branch and seed nothing -- even though resume.handle is
             # None. Only set True once context has actually been sent.
             seeded_context = False
+            # SC connect fallback: flips False (for the rest of this Converse
+            # call, reconnects included) the first time an open fails while
+            # sc-knowledge function declarations were attached. See the
+            # open-failure handler below.
+            use_sc = True
             try:
                 while True:
                     # --- (Re)open the Live session for this iteration.
@@ -308,9 +318,11 @@ class LiveBridge:
                     entered = False
                     client_exc = None
                     server_exc = None
+                    sc_attached = use_sc and self._sc_tools_attachable()
                     try:
                         async with self._session_factory(
-                                self._model, self._live_config(start, resume.handle)) as session:
+                                self._model,
+                                self._live_config(start, resume.handle, with_sc=use_sc)) as session:
                             entered = True
                             session_ref.session = session
                             if not seeded_context:
@@ -391,6 +403,28 @@ class LiveBridge:
                             # logged/classified by the raises above; propagate
                             # unchanged to the outer handler.
                             raise
+                        if sc_attached:
+                            # The open failed WITH sc-knowledge function
+                            # declarations attached. Their JSON schemas (sanitised
+                            # by sc_tools._sanitize_schema, but still) are
+                            # the one part of this config not proven on GEAP
+                            # Live, and a rejection would fail EVERY connect
+                            # while SC_KNOWLEDGE_ENABLED is on -- so retry this
+                            # open ONCE, immediately and outside the reconnect
+                            # budget, search-only (no declarations, no
+                            # SC_VOICE_NOTE), and keep this call search-only.
+                            # If the failure was unrelated (e.g. a transient
+                            # 503) the search-only open fails too and falls
+                            # into the normal budgeted retry below.
+                            use_sc = False
+                            stats.sc_fallbacks += 1
+                            logger.warning(
+                                "voice: Live session open failed with sc_* function declarations "
+                                "attached (%s: %s); retrying once search-only -- this Converse "
+                                "stays search-only (sc_fallbacks=%d)",
+                                type(open_or_body_exc).__name__, open_or_body_exc,
+                                stats.sc_fallbacks, exc_info=True)
+                            continue
                         # The (re)open itself failed. Retry it against the same
                         # reconnect budget with exponential backoff + jitter
                         # (mirrors agent-sidecar's _gemini_retry_options shape
@@ -471,18 +505,19 @@ class LiveBridge:
             span.set_attribute("voice.interruptions", stats.interruptions)
             span.set_attribute("voice.reconnects", resume.reconnects)
             span.set_attribute("voice.tool_calls", stats.tool_calls)
+            span.set_attribute("voice.sc_fallbacks", stats.sc_fallbacks)
             span.end()
             logger.info(
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
                 "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d "
-                "speaker_markers=%d deferral_acks=%d tool_calls=%d",
+                "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
                 resume.reconnects, stats.speaker_markers, stats.deferral_acks,
-                stats.tool_calls,
+                stats.tool_calls, stats.sc_fallbacks,
             )
 
     async def _pump_client(self, request_iter, session_ref, stats) -> None:

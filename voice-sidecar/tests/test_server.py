@@ -160,3 +160,28 @@ async def test_prime_sc_tools_failure_warns_and_retries_in_background(caplog):
 
 async def test_prime_sc_tools_none_is_noop():
     assert await server_mod._prime_sc_tools(None) is None
+
+
+
+class _EmptyExecutor:
+    """Reachable, but the server exposes no sc_* tools."""
+    def __init__(self):
+        self.declarations = []
+        self.attempts = 0
+
+    async def refresh(self):
+        self.attempts += 1
+        return True
+
+
+async def test_prime_sc_tools_reachable_but_no_tools_has_distinct_warning(caplog):
+    ex = _EmptyExecutor()
+    with caplog.at_level(logging.WARNING):
+        task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
+    try:
+        assert "sc_knowledge reachable but exposed no sc_* tools" in caplog.text
+        assert "unreachable" not in caplog.text
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task

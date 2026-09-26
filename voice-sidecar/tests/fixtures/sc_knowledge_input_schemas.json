@@ -1,0 +1,235 @@
+{
+  "sc_commodity_prices": {
+    "properties": {
+      "commodity": {
+        "title": "Commodity",
+        "type": "string"
+      },
+      "limit": {
+        "default": 5,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "location": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Location"
+      },
+      "side": {
+        "default": "sell",
+        "title": "Side",
+        "type": "string"
+      }
+    },
+    "required": [
+      "commodity"
+    ],
+    "title": "sc_commodity_pricesArguments",
+    "type": "object"
+  },
+  "sc_compare_components": {
+    "properties": {
+      "component_class": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Component Class"
+      },
+      "grade": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Grade"
+      },
+      "limit": {
+        "default": 5,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "rank_by": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Rank By"
+      },
+      "size": {
+        "title": "Size",
+        "type": "integer"
+      },
+      "type": {
+        "title": "Type",
+        "type": "string"
+      }
+    },
+    "required": [
+      "type",
+      "size"
+    ],
+    "title": "sc_compare_componentsArguments",
+    "type": "object"
+  },
+  "sc_faction_missions": {
+    "properties": {
+      "current_rank": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Current Rank"
+      },
+      "faction": {
+        "title": "Faction",
+        "type": "string"
+      },
+      "limit": {
+        "default": 10,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "system": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "System"
+      }
+    },
+    "required": [
+      "faction"
+    ],
+    "title": "sc_faction_missionsArguments",
+    "type": "object"
+  },
+  "sc_find_item": {
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "title": "sc_find_itemArguments",
+    "type": "object"
+  },
+  "sc_org_guides": {
+    "properties": {
+      "limit": {
+        "default": 3,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "query": {
+        "title": "Query",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "sc_org_guidesArguments",
+    "type": "object"
+  },
+  "sc_trade_routes": {
+    "properties": {
+      "budget_auec": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Budget Auec"
+      },
+      "cargo_scu": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Cargo Scu"
+      },
+      "commodity": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Commodity"
+      },
+      "destination": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Destination"
+      },
+      "limit": {
+        "default": 5,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "origin": {
+        "title": "Origin",
+        "type": "string"
+      }
+    },
+    "required": [
+      "origin"
+    ],
+    "title": "sc_trade_routesArguments",
+    "type": "object"
+  }
+}

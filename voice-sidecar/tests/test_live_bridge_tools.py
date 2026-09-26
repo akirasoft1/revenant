@@ -115,7 +115,9 @@ async def test_two_calls_in_one_message_run_concurrently():
     rs = session.responses()
     assert sorted(r.id for r in rs) == ["a", "b"]
     assert {r.id: r.name for r in rs} == {"a": "sc_find_item", "b": "sc_trade_routes"}
-    assert max(t for (t, _) in session.tool_responses) - t0 < 0.3
+    # Overlap, not a tight wall-clock bound: serial execution would need
+    # >= 0.4s; allow scheduler jitter above the ideal 0.2s.
+    assert max(t for (t, _) in session.tool_responses) - t0 <= 0.35
 
 
 async def test_tool_calls_do_not_block_the_pump():
@@ -262,3 +264,107 @@ def test_sc_voice_note_verbatim():
         "a lookup, say a very short natural filler like \"let me check\". When answering, speak "
         "only the top two or three results in plain sentences and offer the rest; never read "
         "tables or long number lists aloud.")
+
+
+# ---- search-only connect fallback (fix round 1) ---------------------------
+
+def _rejecting_factory(session, opens, reject_open_numbers=None):
+    """Raises on open whenever function_declarations are attached (models GEAP
+    rejecting the SC schemas), or on the listed 1-based open attempts."""
+    @contextlib.asynccontextmanager
+    async def make(model, config):
+        opens.append(config)
+        n = len(opens)
+        has_fd = any(t.function_declarations for t in (config.tools or []))
+        if has_fd or (reject_open_numbers and n in reject_open_numbers):
+            raise RuntimeError(f"400 INVALID_ARGUMENT: bad function schema (open #{n})")
+        yield session
+    return make
+
+
+async def _converse_briefly(bridge, wait=0.1, prompt="PERSONA"):
+    start = voice_pb2.VoiceClientEvent(session_start=voice_pb2.SessionStart(
+        user_id="u", system_prompt=prompt))
+    out = []
+
+    async def req_iter():
+        yield start
+        await asyncio.Event().wait()
+
+    async def emit(ev): out.append(ev)
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(wait)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    return out
+
+
+async def test_open_rejected_with_sc_tools_retries_once_search_only(caplog):
+    session = ToolSession([])
+    opens = []
+    bridge = LiveBridge(_rejecting_factory(session, opens), model="m", default_voice="Puck",
+                        sc_executor=FakeExecutor(), max_reconnects=0)
+    with caplog.at_level(logging.INFO):
+        out = await _converse_briefly(bridge)
+    assert len(opens) == 2
+    assert any(t.function_declarations for t in opens[0].tools)
+    assert opens[1].tools == [types.Tool(google_search=types.GoogleSearch())]
+    assert opens[1].system_instruction == "PERSONA"
+    # the fallback does not spend the reconnect budget (max_reconnects=0 here)
+    assert not any(e.WhichOneof("event") == "error" for e in out)
+    warn = [r for r in caplog.records if r.levelno == logging.WARNING and "search-only" in r.getMessage()]
+    assert len(warn) == 1 and "400 INVALID_ARGUMENT: bad function schema (open #1)" in warn[0].getMessage()
+    assert "sc_fallbacks=1" in caplog.text
+
+
+async def test_fallback_is_sticky_across_reconnects():
+    # After the fallback, a later reconnect must stay search-only too.
+    from google.genai import errors as genai_errors
+    drop = genai_errors.APIError(1011, {"message": "internal"})
+
+    class DropOnce(ToolSession):
+        def __init__(self):
+            super().__init__([])
+            self.n = 0
+
+        async def receive(self):
+            self.n += 1
+            if self.n == 1:
+                yield SimpleNamespace(data=None, server_content=None, go_away=None,
+                                      session_resumption_update=SimpleNamespace(
+                                          new_handle="h1", resumable=True))
+                raise drop
+            await asyncio.Event().wait()
+            yield  # pragma: no cover
+
+    session = DropOnce()
+    opens = []
+    bridge = LiveBridge(_rejecting_factory(session, opens), model="m", default_voice="Puck",
+                        sc_executor=FakeExecutor(), max_reconnects=3)
+    await _converse_briefly(bridge, wait=0.2)
+    assert len(opens) == 3                       # sc (rejected), search-only, reconnect
+    assert all(not any(t.function_declarations for t in o.tools) for o in opens[1:])
+
+
+async def test_fallback_happens_only_once_then_normal_budget_applies():
+    # Every open fails (not SC-related): one search-only retry, then the
+    # ordinary budgeted retry path -- never a second fallback.
+    session = ToolSession([])
+    opens = []
+    bridge = LiveBridge(_rejecting_factory(session, opens, reject_open_numbers={1, 2, 3, 4}),
+                        model="m", default_voice="Puck", sc_executor=FakeExecutor(),
+                        max_reconnects=0)
+    out = await _converse_briefly(bridge)
+    assert len(opens) == 2
+    assert any(e.WhichOneof("event") == "error" for e in out)
+
+
+async def test_no_fallback_attempt_without_sc_tools():
+    session = ToolSession([])
+    opens = []
+    bridge = LiveBridge(_rejecting_factory(session, opens, reject_open_numbers={1}),
+                        model="m", default_voice="Puck", max_reconnects=0)
+    out = await _converse_briefly(bridge)
+    assert len(opens) == 1
+    assert any(e.WhichOneof("event") == "error" for e in out)

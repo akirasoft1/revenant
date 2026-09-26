@@ -218,3 +218,110 @@ async def test_timeout_bound_holds_over_real_mcp2_transport():
         r = await ex.call("sc_find_item", {"name": "x"})
         assert time.monotonic() - t0 < 2.0
     assert r["error"] == "timeout"
+
+
+# ---- schema sanitising (fix round 1) --------------------------------------
+
+import os  # noqa: E402
+
+from src.sc_tools import _sanitize_schema  # noqa: E402
+
+# Captured from the REAL sc-knowledge server (build_app + list_tools over
+# streamable HTTP, 2026-09-26). FastMCP renders Optional params as
+# anyOf[{type: X}, {type: null}] with default/title noise.
+_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sc_knowledge_input_schemas.json")
+
+
+def _walk_keywords(schema, path="$"):
+    """Yield (path, keyword) for every keyword in schema position (property
+    NAMES under `properties` are not keywords)."""
+    if isinstance(schema, dict):
+        for k, v in schema.items():
+            yield path, k
+            if k == "properties" and isinstance(v, dict):
+                for pname, sub in v.items():
+                    yield from _walk_keywords(sub, f"{path}.properties.{pname}")
+            elif isinstance(v, (dict, list)):
+                yield from _walk_keywords(v, f"{path}.{k}")
+    elif isinstance(schema, list):
+        for i, v in enumerate(schema):
+            yield from _walk_keywords(v, f"{path}[{i}]")
+
+
+def test_actual_sc_knowledge_schemas_are_sanitised():
+    with open(_FIXTURE) as f:
+        raw = json.load(f)
+    assert set(raw) == {"sc_find_item", "sc_compare_components", "sc_faction_missions",
+                        "sc_trade_routes", "sc_commodity_prices", "sc_org_guides"}
+    assert any("anyOf" in json.dumps(s) for s in raw.values()), "fixture must exercise anyOf"
+    for name, schema in raw.items():
+        clean = _sanitize_schema(schema)
+        bad = [(p, k) for p, k in _walk_keywords(clean)
+               if k in ("anyOf", "oneOf", "title", "default", "$schema", "additionalProperties")]
+        assert bad == [], (name, bad)
+        assert clean["type"] == "object"
+        assert clean["required"] == schema["required"], name
+        assert set(clean["properties"]) == set(schema["properties"]), name
+    tr = _sanitize_schema(raw["sc_trade_routes"])
+    assert tr["properties"]["destination"] == {"type": "string"}
+    assert tr["properties"]["cargo_scu"] == {"type": "integer"}
+    assert tr["properties"]["limit"] == {"type": "integer"}
+    assert tr["properties"]["origin"] == {"type": "string"}
+
+
+def test_sanitize_keeps_property_names_that_look_like_keywords():
+    schema = {"type": "object", "title": "fArguments",
+              "properties": {"title": {"type": "string", "title": "Title"},
+                             "default": {"type": "integer", "default": 1}},
+              "required": ["title"]}
+    assert _sanitize_schema(schema) == {
+        "type": "object",
+        "properties": {"title": {"type": "string"}, "default": {"type": "integer"}},
+        "required": ["title"]}
+
+
+def test_sanitize_collapse_keeps_sibling_keywords_and_nests():
+    schema = {"type": "object", "properties": {
+        "tags": {"anyOf": [{"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+                           {"type": "null"}], "description": "d", "default": None},
+        "mode": {"oneOf": [{"type": "null"}, {"type": "string", "enum": ["a", "b"]}]},
+        "either": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+        "listy": {"type": ["string", "null"]},
+    }}
+    out = _sanitize_schema(schema)["properties"]
+    assert out["tags"] == {"type": "array", "items": {"type": "string"}, "description": "d"}
+    assert out["mode"] == {"type": "string", "enum": ["a", "b"]}
+    # not "exactly one type + null": left as-is (other keywords untouched)
+    assert out["either"] == {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+    assert out["listy"] == {"type": "string"}
+
+
+def test_sanitize_does_not_mutate_input():
+    with open(_FIXTURE) as f:
+        raw = json.load(f)
+    before = json.dumps(raw, sort_keys=True)
+    for s in raw.values():
+        _sanitize_schema(s)
+    assert json.dumps(raw, sort_keys=True) == before
+
+
+async def test_refresh_sanitises_declarations():
+    class T:
+        name = "sc_trade_routes"
+        description = "d"
+        input_schema = {"type": "object", "title": "X", "properties": {
+            "commodity": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None, "title": "C"}},
+            "required": []}
+
+    class S:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[T()])
+
+    class Ctx:
+        async def __aenter__(self): return S()
+        async def __aexit__(self, *a): return False
+
+    ex = ScToolExecutor("http://x/mcp", session_factory=lambda: Ctx())
+    assert await ex.refresh()
+    assert ex.declarations[0].parameters_json_schema == {
+        "type": "object", "properties": {"commodity": {"type": "string"}}, "required": []}

@@ -57,6 +57,67 @@ def _input_schema(tool):
     return schema
 
 
+# Keywords that carry no meaning for the model and are not needed by (and may
+# be rejected by) the Gemini Live/GEAP function-declaration schema subset.
+_DROP_KEYWORDS = frozenset({"title", "default", "$schema", "additionalProperties"})
+# Keywords whose value is a map of NAME -> subschema (names are not keywords).
+_SCHEMA_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
+# Keywords whose value is a list of subschemas.
+_SCHEMA_LISTS = frozenset({"anyOf", "oneOf", "allOf", "prefixItems"})
+# Keywords whose value is a single subschema.
+_SCHEMA_ONE = frozenset({"items", "not", "contains"})
+
+
+def _is_null_branch(branch) -> bool:
+    return isinstance(branch, dict) and branch.get("type") == "null" and len(branch) == 1
+
+
+def _sanitize_schema(schema):
+    """Return a cleaned COPY of an MCP tool input schema for Gemini Live.
+
+    FastMCP renders `x: str | None = None` as
+    `{"anyOf": [{"type": "string"}, {"type": "null"}], "default": null,
+    "title": "X"}` plus a top-level `"title": "<fn>Arguments"`. Recursively:
+    drop title/default/$schema/additionalProperties; collapse an anyOf/oneOf
+    of exactly one typed branch + a null branch into that branch (keeping
+    sibling keywords like description), and `type: [X, "null"]` into
+    `type: X`. Everything else is left as-is. Property NAMES under
+    `properties` are never treated as keywords (a param called `title`
+    survives)."""
+    if isinstance(schema, list):
+        return [_sanitize_schema(s) for s in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {}
+    for key, value in schema.items():
+        if key in _DROP_KEYWORDS:
+            continue
+        if key in _SCHEMA_MAPS and isinstance(value, dict):
+            out[key] = {name: _sanitize_schema(sub) for name, sub in value.items()}
+        elif key in _SCHEMA_LISTS and isinstance(value, list):
+            out[key] = [_sanitize_schema(sub) for sub in value]
+        elif key in _SCHEMA_ONE:
+            out[key] = _sanitize_schema(value)
+        else:
+            out[key] = value
+    for combo in ("anyOf", "oneOf"):
+        branches = out.get(combo)
+        if isinstance(branches, list) and len(branches) == 2:
+            non_null = [b for b in branches if not _is_null_branch(b)]
+            if (len(non_null) == 1 and isinstance(non_null[0], dict)
+                    and "type" in non_null[0]):
+                merged = {k: v for k, v in out.items() if k != combo}
+                merged.update(non_null[0])
+                out = merged
+                break
+    t = out.get("type")
+    if isinstance(t, list):
+        non_null_types = [x for x in t if x != "null"]
+        if len(non_null_types) == 1 and len(t) == 2:
+            out["type"] = non_null_types[0]
+    return out
+
+
 def _result_to_dict(res) -> dict:
     """CallToolResult -> the dict handed to the model. FastMCP wraps a
     non-dict return as {"result": ...}; unwrap only that exact shape so a
@@ -104,7 +165,7 @@ class ScToolExecutor:
                 types.FunctionDeclaration(
                     name=t.name,
                     description=t.description or "",
-                    parameters_json_schema=_input_schema(t),
+                    parameters_json_schema=_sanitize_schema(_input_schema(t)),
                 )
                 for t in listed.tools
                 if (t.name or "").startswith(TOOL_PREFIX)

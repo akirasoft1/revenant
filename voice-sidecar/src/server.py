@@ -76,9 +76,17 @@ async def _prime_sc_tools(executor, retry_interval_s: float = SC_REFRESH_RETRY_I
     retry task (caller owns cancelling it), or None."""
     if executor is None:
         return None
-    if await executor.refresh() and executor.declarations:
+    reachable = await executor.refresh()
+    if reachable and executor.declarations:
         return None
-    logger.warning("sc_knowledge=unreachable at startup; voice runs search-only until refresh succeeds")
+    if reachable:
+        # Distinct from "unreachable": the server answered list_tools but
+        # none of its tools start with sc_ -- a server/config problem, not a
+        # network one, so the NetworkPolicy is not the thing to debug.
+        logger.warning("sc_knowledge reachable but exposed no sc_* tools; voice runs search-only "
+                       "until a refresh returns some")
+    else:
+        logger.warning("sc_knowledge=unreachable at startup; voice runs search-only until refresh succeeds")
 
     async def _retry() -> None:
         while not executor.declarations:
