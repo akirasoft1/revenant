@@ -198,6 +198,33 @@ def _tokens(s: str) -> set[str]:
     return {t for t in _TOKEN_RE.findall((s or "").lower()) if len(t) >= 3}
 
 
+def _vehicle_match_accepted(status: str, query: str, entry: Entry) -> bool:
+    """Fix round 2: NameIndex's "fuzzy" status covers both its substring
+    branch and its WRatio scoring branch, neither of which requires the query
+    to share a whole WORD with the match -- against the real fixture,
+    find_item("the") fuzzy-matched "Vanduul Scythe" (an entry whose name is
+    literally "Scythe") purely because "the" is a contiguous substring of
+    "scythe", and find_item("sair") fuzzy-matched "Corsair" the same way.
+    Because vehicles are resolved FIRST, that would hijack an ordinary
+    item/component query into a fabricated ship answer. `exact` is always
+    trusted (already a full alias-normalised equality, not a substring test).
+    A `fuzzy` match is only trusted when EVERY query token (len >= 3) is a
+    WHOLE token of one of the matched vehicle's aliases -- not merely
+    contained within one. Anything else is treated as no match at all (not
+    even surfaced as an ambiguous candidate) and falls through to Wiki."""
+    if status == "exact":
+        return True
+    if status != "fuzzy":
+        return False
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return False
+    alias_tokens: set[str] = set()
+    for a in entry.aliases:
+        alias_tokens |= _tokens(a)
+    return query_tokens <= alias_tokens
+
+
 def _merge_freshness(*results: CacheResult) -> dict:
     """Like freshness(), but across several CacheResults feeding one output
     (the vehicle index fetch and the per-vehicle price fetch) -- stale if
@@ -263,7 +290,8 @@ class ItemTools:
             resolved = await self._resolve_vehicle(name)
             if resolved is not None:
                 resolution, vehicles, index_res = resolved
-                if resolution.status in ("exact", "fuzzy"):
+                if (resolution.status in ("exact", "fuzzy")
+                        and _vehicle_match_accepted(resolution.status, name, resolution.match)):
                     try:
                         return await self._vehicle_result(resolution.match, vehicles, index_res)
                     except Exception:

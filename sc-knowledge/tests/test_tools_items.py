@@ -231,6 +231,49 @@ async def test_find_item_scorpius_shield_v801_unchanged_by_token_filter():
     assert r_v801["item"]["type"] == "Radar"
 
 
+async def test_find_item_the_and_a_do_not_hijack_into_vehicle():
+    """Controller ruling, fix round 2: against the real fixture,
+    find_item("the") fuzzy-matched "Vanduul Scythe" (name "Scythe") via
+    NameIndex's substring branch -- "the" is a contiguous substring of
+    "scythe" but shares no whole word with it. A short, ordinary word must
+    never hijack into a fabricated ship answer just because vehicles are
+    resolved first."""
+    for query in ("the", "a"):
+        r = await _tools_with_uex(wiki_routes=_EMPTY_WIKI_ROUTES).find_item(query)
+        assert (r.get("item") or {}).get("type") != "Vehicle"
+        assert r.get("source") != "uexcorp.space (crowd-sourced)"
+
+
+async def test_find_item_substring_of_ship_name_is_not_a_different_word_match():
+    """"sair" fuzzy-matches "Corsair" via the same substring mechanism as
+    "the"/"Scythe" above, but "sair" is not a whole word of any of Corsair's
+    aliases (name/name_full/slug) -- it must not resolve to Corsair."""
+    r = await _tools_with_uex(wiki_routes=_EMPTY_WIKI_ROUTES).find_item("sair")
+    assert (r.get("item") or {}).get("name") != "Corsair"
+    assert (r.get("item") or {}).get("type") != "Vehicle"
+
+
+async def test_find_item_multitoken_fuzzy_match_still_resolves():
+    """Contrast case: "Hornet Wildfire" fuzzy-matches "F7C Hornet Wildfire Mk
+    I" via the same substring branch, but here EVERY query token ("hornet",
+    "wildfire") is a whole token of the matched vehicle's own name/name_full/
+    slug -- this is a real, intentional match and must still resolve."""
+    r = await _tools_with_uex().find_item("Hornet Wildfire")
+    assert "error" not in r
+    assert r["item"]["type"] == "Vehicle"
+    assert r["item"]["name"] == "Anvil F7C Hornet Wildfire Mk I"
+
+
+async def test_find_item_scorpius_family_unaffected_by_token_relatedness_guard():
+    """Regression: the token-relatedness guard must not disturb the
+    already-covered exact vehicle matches."""
+    r_scorpius = await _tools_with_uex().find_item("Scorpius")
+    assert r_scorpius["item"]["name"] == "RSI Scorpius"
+
+    r_antares = await _tools_with_uex().find_item("Scorpius Antares")
+    assert r_antares["item"]["name"] == "RSI Scorpius Antares"
+
+
 async def test_find_item_malformed_vehicle_record_falls_back_to_wiki():
     """A vehicles fixture with one record missing "id" must not surface as
     error("internal", ...) -- vehicle_entries() raises KeyError building the
