@@ -12,6 +12,7 @@ class Config:
     uex_bearer: str | None
     version: str
     otlp_endpoint: str | None
+    guides_dir: str
 
 
 def load() -> Config:
@@ -23,4 +24,5 @@ def load() -> Config:
         uex_bearer=os.environ.get("UEXCORP_BEARER") or None,
         version=os.environ.get("SC_KNOWLEDGE_VERSION", "dev"),
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
+        guides_dir=os.environ.get("SC_GUIDES_DIR", "/guides"),
     )
