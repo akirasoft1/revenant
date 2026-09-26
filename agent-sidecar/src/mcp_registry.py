@@ -1,12 +1,12 @@
 """Reusable MCP toolset registry.
 
 Maps a named "profile" to a set of remote MCP servers and turns each into an
-ADK MCPToolset. v1 has one profile ("observability" -> Dynatrace). Adding
+ADK McpToolset. v1 has one profile ("observability" -> Dynatrace). Adding
 another MCP server later is a dict entry here, not new plumbing elsewhere.
 """
 import logging
 
-from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
 from .config import Config
@@ -35,7 +35,7 @@ def build_mcp_toolsets(profile: str, config: Config) -> list:
             )
             continue
         toolsets.append(
-            MCPToolset(
+            McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
                     url=url,
                     headers={"Authorization": f"Bearer {token}"},
