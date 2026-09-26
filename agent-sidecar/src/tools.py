@@ -55,7 +55,7 @@ class RunInSandboxTool:
             return {
                 "exit_code": -4,
                 "error": "use_sc_tools",
-                "detail": "Star Citizen data is available through the sc_find_item, sc_compare_components, sc_faction_missions, sc_trade_routes and sc_commodity_prices tools. Do not fetch it in the sandbox.",
+                "detail": "Star Citizen data is available through the sc_find_item, sc_compare_components, sc_faction_missions, sc_trade_routes, sc_commodity_prices and sc_org_guides tools. Do not fetch it in the sandbox.",
                 "execution_id": None,
             }
 

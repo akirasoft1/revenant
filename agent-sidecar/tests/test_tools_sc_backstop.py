@@ -41,3 +41,11 @@ async def test_refusal_does_not_consume_budget():
     await t.run(language="bash", code="curl https://uexcorp.space")
     r = await t.run(language="bash", code="echo hi")
     assert r["exit_code"] == 0 and t.attempts == 2
+
+
+async def test_refusal_detail_names_every_sc_tool():
+    t = RunInSandboxTool(orch=Orch(), user_id="u", call_budget=5)
+    r = await t.run(language="bash", code="curl https://uexcorp.space")
+    for name in ("sc_find_item", "sc_compare_components", "sc_faction_missions",
+                 "sc_trade_routes", "sc_commodity_prices", "sc_org_guides"):
+        assert name in r["detail"]
