@@ -1,0 +1,673 @@
+{
+ "data": [
+  {
+   "uuid": "e0750711-1aba-4141-8470-090b1dfc4a6e",
+   "slug": "v801-11",
+   "name": "V801-11",
+   "class_name": "RADR_GRNP_S01_V80111",
+   "classification": "Ship.Radar.MidRangeRadar",
+   "classification_label": "Mid Range Radar",
+   "description": {
+    "en_EN": "Designed for the battlefield, the V801-11 is a cut above the rest thanks to the rigid, iterative testing, guaranteeing its performance when you need it most.",
+    "de_DE": "Gr\u00f6\u00dfe: S1\nG\u00fcte: A\nKlasse: Milit\u00e4r\n\nEntwickelt f\u00fcr das Schlachtfeld: Das V801-11 hebt sich dank strenger, iterativer Testreihen von der Masse ab und garantiert volle Leistung, wenn es darauf ankommt.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u96f7\u8fbe\n\u5236\u9020\u5546\uff1a\u65b0\u8303\u5f0f\u96c6\u56e2\uff08Groupe Nouveau Paradigme\uff09\n\u5c3a\u5bf8\uff1a1\n\u7b49\u7ea7\uff1aA\n\u5206\u7c7b\uff1a\u519b\u7528\n\n\u4e13\u4e3a\u6218\u573a\u8bbe\u8ba1\uff0cV801-11 \u51ed\u501f\u4e25\u683c\u7684\u8fed\u4ee3\u6d4b\u8bd5\u51fa\u7c7b\u62d4\u8403\uff0c\u786e\u4fdd\u5728\u60a8\u6700\u9700\u8981\u65f6\u53d1\u6325\u5176\u4f18\u5f02\u6027\u80fd\u3002",
+    "fr_FR": "Type d'article : Radar\nFabricant : GNP\nTaille : 1\nQualit\u00e9 : A\nClasse : Militaire\n\nCon\u00e7u pour le champ de bataille, le V801-11 surpasse largement les autres, gr\u00e2ce \u00e0 des tests rigoureux et it\u00e9ratifs qui garantissent ses performances lorsque vous en avez le plus besoin."
+   },
+   "size": 1,
+   "mass": 20,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "32267728-2647-485c-a565-cbe7e9e46a15",
+     "name": "V801-11",
+     "link": "https://api.star-citizen.wiki/api/blueprints/32267728-2647-485c-a565-cbe7e9e46a15"
+    }
+   ],
+   "grade": "A",
+   "class": "Military",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Military",
+     "type": "Military"
+    },
+    {
+     "name": "Grade",
+     "value": "A",
+     "type": "A"
+    },
+    {
+     "name": "Item Type",
+     "value": "Radar",
+     "type": "Radar"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "GNP",
+     "type": "GNP"
+    },
+    {
+     "name": "Size",
+     "value": "1",
+     "type": "1"
+    }
+   ],
+   "manufacturer_description": "GNP",
+   "manufacturer": {
+    "name": "Groupe Nouveau Paradigme",
+    "code": "GRNP",
+    "uuid": "3909dad3-eab3-4da7-9d90-74d7064d5900",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/GRNP"
+   },
+   "type": "Radar",
+   "type_label": "Radar",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Radar",
+   "sub_type": "MidRangeRadar",
+   "sub_type_label": "Mid Range Radar",
+   "radar": {
+    "detection_lifetime": null,
+    "altitude_ceiling": null,
+    "enable_cross_section_occlusion": null,
+    "cooldown": 2.5,
+    "sensitivity": {
+     "infrared": 0.8,
+     "cross_section": 0.8,
+     "electromagnetic": 0.8,
+     "resource": 1,
+     "db": 0
+    },
+    "ground_vehicle_sensitivity": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 0.25,
+     "db": 0.25
+    },
+    "piercing": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 1,
+     "db": 0.25
+    },
+    "aim_assist": {
+     "distance_min_assignment": 845,
+     "distance_max_assignment": 1326,
+     "outside_range_buffer_distance": 60
+    }
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.084,
+    "volume_converted": 84000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 0.5,
+     "height": 0.25,
+     "length": 0.75
+    },
+    "dimensions": {
+     "width": 0.5,
+     "height": 0.25,
+     "length": 0.75
+    },
+    "cargo_dimension": {
+     "width": 0.22,
+     "height": 0.8,
+     "length": 2.21
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [
+    "flightReady"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "BatteryPort",
+     "display_name": "Battery Port",
+     "position": "BATTERYPORT",
+     "size": 2,
+     "sizes": {
+      "min": 1,
+      "max": 2
+     },
+     "compatible_types": [
+      {
+       "type": "Battery",
+       "sub_types": []
+      }
+     ],
+     "types": [
+      "Battery"
+     ],
+     "type": "Battery",
+     "sub_type": null,
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "invisible"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 125.9
+   },
+   "durability": {
+    "health": 690,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.1,
+     "thermal": 0.1,
+     "physical": 0.1,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 220,
+    "decay_delay": 1.38,
+    "max": 4485,
+    "maximum": 4485,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 21.77
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 1440,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 5,
+        "minimum_fraction": 0.4,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 38.3,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 2,
+      "max": 5,
+      "minimum": 2,
+      "maximum": 5
+     },
+     "coolant": {
+      "min": 2,
+      "max": 5,
+      "minimum": 2,
+      "maximum": 5
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 576,
+    "em_max": 1440,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 176000,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega Pro - New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=v801-11&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/v801-11",
+   "link": "https://api.star-citizen.wiki/api/items/e0750711-1aba-4141-8470-090b1dfc4a6e",
+   "updated_at": "2026-09-26T00:04:56.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "69b8ba78-889f-4547-97eb-1d477002fedc",
+   "slug": "v801-12",
+   "name": "V801-12",
+   "class_name": "RADR_GRNP_S02_VB80112",
+   "classification": "Ship.Radar.MidRangeRadar",
+   "classification_label": "Mid Range Radar",
+   "description": {
+    "en_EN": "During field operations, the GNP V801-12 radar system allows for increased strategic planning owing to its capability for detecting a wide variety of emission signatures, revealing hazards and hostiles alike.",
+    "de_DE": "Gr\u00f6\u00dfe: S2\nG\u00fctegrad: A\nKlasse: Military (Milit\u00e4r)\n\nW\u00e4hrend Feldeins\u00e4tzen erm\u00f6glicht das GNP V801-12-Radarsystem aufgrund seiner F\u00e4higkeit, eine gro\u00dfe Vielfalt zu erkennen, eine bessere strategische Planung von Emissionssignaturen, die sowohl Gefahren als auch Feinde aufdecken.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u96f7\u8fbe\n\u5236\u9020\u5546\uff1a\u65b0\u8303\u5f0f\u96c6\u56e2 (GNP)\n\u5c3a\u5bf8\uff1a2\n\u7b49\u7ea7\uff1aA\n\u5206\u7c7b\uff1a\u519b\u7528\n\n\u5728\u91ce\u5916\u4f5c\u4e1a\u671f\u95f4\uff0c\u7531\u4e8e\u65b0\u8303\u5f0f\u96c6\u56e2\"V801-12\"\u96f7\u8fbe\u7cfb\u7edf\u5177\u6709\u68c0\u6d4b\u5404\u79cd\u4fe1\u53f7\uff0c\u63ed\u793a\u98ce\u9669\u548c\u654c\u5bf9\u76ee\u6807\u7684\u80fd\u529b\uff0c\u56e0\u6b64\u53ef\u4ee5\u7528\u6765\u534f\u52a9\u8fdb\u884c\u6218\u7565\u89c4\u5212\u3002",
+    "fr_FR": "Type d'article : Radar\nFabricant : GNP\nTaille : 2\nQualit\u00e9 : A\nClasse : Militaire\n\nLors des op\u00e9rations sur le terrain, le syst\u00e8me radar GNP V801-12 permet une planification strat\u00e9gique accrue gr\u00e2ce \u00e0 sa capacit\u00e9 \u00e0 d\u00e9tecter un large \u00e9ventail de signatures d'\u00e9mission, r\u00e9v\u00e9lant \u00e0 la fois les dangers et les hostiles."
+   },
+   "size": 2,
+   "mass": 0,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "a1125420-1e6a-4d09-97a7-0b4540605ea4",
+     "name": "V801-12",
+     "link": "https://api.star-citizen.wiki/api/blueprints/a1125420-1e6a-4d09-97a7-0b4540605ea4"
+    }
+   ],
+   "grade": "A",
+   "class": "Military",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Military",
+     "type": "Military"
+    },
+    {
+     "name": "Grade",
+     "value": "A",
+     "type": "A"
+    },
+    {
+     "name": "Item Type",
+     "value": "Radar",
+     "type": "Radar"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "GNP",
+     "type": "GNP"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "GNP",
+   "manufacturer": {
+    "name": "Groupe Nouveau Paradigme",
+    "code": "GRNP",
+    "uuid": "3909dad3-eab3-4da7-9d90-74d7064d5900",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/GRNP"
+   },
+   "type": "Radar",
+   "type_label": "Radar",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Radar",
+   "sub_type": "MidRangeRadar",
+   "sub_type_label": "Mid Range Radar",
+   "radar": {
+    "detection_lifetime": null,
+    "altitude_ceiling": null,
+    "enable_cross_section_occlusion": null,
+    "cooldown": 2.5,
+    "sensitivity": {
+     "infrared": 0.9,
+     "cross_section": 0.9,
+     "electromagnetic": 0.9,
+     "resource": 1,
+     "db": 0
+    },
+    "ground_vehicle_sensitivity": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 0.25,
+     "db": 0.25
+    },
+    "piercing": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 1,
+     "db": 0.25
+    },
+    "aim_assist": {
+     "distance_min_assignment": 1300,
+     "distance_max_assignment": 2184,
+     "outside_range_buffer_distance": 90
+    }
+   },
+   "dimension": {
+    "width": null,
+    "height": null,
+    "length": null,
+    "volume": 0,
+    "volume_converted": 1,
+    "volume_converted_unit": "\u00b5SCU"
+   },
+   "tags": [
+    "flightReady"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "BatteryPort",
+     "display_name": "Battery Port",
+     "position": "BATTERYPORT",
+     "size": 2,
+     "sizes": {
+      "min": 1,
+      "max": 2
+     },
+     "compatible_types": [
+      {
+       "type": "Battery",
+       "sub_types": []
+      }
+     ],
+     "types": [
+      "Battery"
+     ],
+     "type": "Battery",
+     "sub_type": null,
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "invisible"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 125.9
+   },
+   "durability": {
+    "health": 1380,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.1,
+     "thermal": 0.1,
+     "physical": 0.1,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 400,
+    "decay_delay": 2.76,
+    "max": 7475,
+    "maximum": 7475,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 21.45
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 2160,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 8,
+        "minimum_fraction": 0.25,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 67.1,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 2,
+      "max": 8,
+      "minimum": 2,
+      "maximum": 8
+     },
+     "coolant": {
+      "min": 2,
+      "max": 8,
+      "minimum": 2,
+      "maximum": 8
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 540,
+    "em_max": 2160,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 352000,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=v801-12&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/v801-12",
+   "link": "https://api.star-citizen.wiki/api/items/69b8ba78-889f-4547-97eb-1d477002fedc",
+   "updated_at": "2026-09-26T00:01:13.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/items?filter%5Bname%5D=V801&page%5Bsize%5D=10&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/items?filter%5Bname%5D=V801&page%5Bsize%5D=10&page%5Bnumber%5D=1",
+  "prev": null,
+  "next": null
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 1,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/items?filter%5Bname%5D=V801&page%5Bsize%5D=10&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": null,
+    "label": "Next &raquo;",
+    "page": null,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/items",
+  "per_page": 10,
+  "to": 2,
+  "total": 2,
+  "valid_relations": [
+   "shops",
+   "shops.items",
+   "variants",
+   "related_items",
+   "blueprints",
+   "vehicles"
+  ]
+ }
+}
