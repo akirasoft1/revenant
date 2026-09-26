@@ -66,20 +66,64 @@ def score_sc(records: list[tuple[dict, AgentChatResult]]) -> dict:
     }
 
 
-def _build_agent() -> ChannelVoiceAgent:
+def _build() -> tuple[ChannelVoiceAgent, ScToolsProvider, str]:
     config = load()
     toolsets = build_mcp_toolsets("channel_voice", config)
     sc_tools = ScToolsProvider(toolsets, health_url_for(config.sc_knowledge_url))
-    return ChannelVoiceAgent(
+    agent = ChannelVoiceAgent(
         config=config,
         orchestrator=FakeOrchestrator(),
         base_system_prompt=_BASE_PROMPT,
         sc_tools=sc_tools,
     )
+    return agent, sc_tools, config.sc_knowledge_url
+
+
+def _preflight_fail(url: str, reason: str) -> None:
+    print(f"eval_sc: PREFLIGHT FAILED -- {reason}", file=sys.stderr)
+    print(f"  SC_KNOWLEDGE_URL={url}", file=sys.stderr)
+    print("  Start the port-forward and retry:", file=sys.stderr)
+    print("    kubectl port-forward svc/sc-knowledge 18080:8080 -n discord-article-bot &", file=sys.stderr)
+    print("    export SC_KNOWLEDGE_URL=http://127.0.0.1:18080/mcp", file=sys.stderr)
+    sys.exit(2)
+
+
+async def _preflight(sc_tools: ScToolsProvider, sc_knowledge_url: str) -> None:
+    """Fail fast and loud, BEFORE any model call, if the sc-knowledge tools
+    aren't actually reachable. Without this, a forgotten port-forward (or
+    SC_KNOWLEDGE_ENABLED left unset) makes every turn silently run with
+    sc_state "unavailable" -- no sc_* tool attached at all -- and the run
+    finishes with a normal-looking 0% tool_hit_rate scorecard,
+    indistinguishable from a real model regression, only after burning real
+    GEAP spend on every prompt in the set. Exit code 2 (distinct from the
+    gate-failure exit 1) means "the eval itself couldn't run", not "the
+    model failed the eval"."""
+    if not sc_tools.enabled:
+        _preflight_fail(
+            sc_knowledge_url,
+            "sc tools disabled or unconfigured -- SC_KNOWLEDGE_ENABLED is not true, "
+            "or no sc-knowledge toolsets were built",
+        )
+    if not await sc_tools.available():
+        _preflight_fail(sc_knowledge_url, "health probe failed -- sc-knowledge is unreachable")
+
+
+def _sc_prompts_with_outage(records: list[tuple[dict, AgentChatResult]]) -> list[str]:
+    """Prompts among the *SC* prompts (expect_tool is not None) whose result
+    ran with sc_state != "available" -- i.e. sc-knowledge went unhealthy
+    partway through the run (the health-probe TTL expired into an outage
+    after preflight passed). Without this check these turns look like
+    ordinary tool misses in tool_hit_rate rather than the infra problem they
+    actually are."""
+    return [
+        c["prompt"] for c, r in records
+        if c.get("expect_tool") is not None and r.sc_state != "available"
+    ]
 
 
 async def _run(runs: int) -> list[tuple[dict, AgentChatResult]]:
-    agent = _build_agent()
+    agent, sc_tools, sc_knowledge_url = _build()
+    await _preflight(sc_tools, sc_knowledge_url)
     records: list[tuple[dict, AgentChatResult]] = []
     for case in SC_EVAL_SET:
         for _ in range(runs):
@@ -88,20 +132,22 @@ async def _run(runs: int) -> list[tuple[dict, AgentChatResult]]:
     return records
 
 
-def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hit: float, score: dict) -> None:
+def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hit: float,
+                   score: dict, outages: list[str]) -> None:
     print(f"\n=== per-prompt results (runs={runs}) ===")
     for case in SC_EVAL_SET:
         case_records = [r for c, r in records if c is case]
         expect = case["expect_tool"]
+        states = ",".join(sorted({r.sc_state for r in case_records})) if case_records else "?"
         if expect is not None:
             hit_n = sum(1 for r in case_records if expect in r.sc_tool_names)
             rate = hit_n / len(case_records) if case_records else 0.0
             flag = "  <-- MISS" if rate < 1.0 else ""
-            print(f"  [{expect:22}] {rate:4.0%}  {case['prompt'][:58]}{flag}")
+            print(f"  [{expect:22}] {rate:4.0%}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
         else:
             bad_n = sum(1 for r in case_records if r.sc_tool_names)
             flag = "  <-- FALSE SC CALL" if bad_n else ""
-            print(f"  [{'control':22}] {'--':>4}  {case['prompt'][:58]}{flag}")
+            print(f"  [{'control':22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
         sandbox_n = sum(r.sandbox_attempts for r in case_records)
         if sandbox_n:
             print(f"      sandbox_attempts={sandbox_n}  <-- HARD GATE VIOLATION")
@@ -110,6 +156,11 @@ def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hi
     print(f"  tool_hit_rate:          {score['tool_hit_rate']:5.1%}  (target >= {min_hit:.0%})")
     print(f"  control_false_sc_calls: {score['control_false_sc_calls']}  (target 0)")
     print(f"  sandbox_attempts_total: {score['sandbox_attempts_total']}  (hard gate: must be 0)")
+    if outages:
+        print(f"  WARNING: {len(outages)} SC prompt run(s) executed with sc tools NOT available "
+              f"(sc_state != 'available') -- these results are not a valid model measurement:")
+        for p in outages:
+            print(f"    - {p}")
 
 
 def main():
@@ -120,7 +171,14 @@ def main():
 
     records = asyncio.run(_run(args.runs))
     score = score_sc(records)
-    _print_report(records, args.runs, args.min_hit, score)
+    outages = _sc_prompts_with_outage(records)
+    _print_report(records, args.runs, args.min_hit, score, outages)
+
+    if outages:
+        # A mid-run outage invalidates the measurement itself -- report it
+        # distinctly from a gate failure (exit 1) so it's never mistaken for
+        # a model regression.
+        sys.exit(2)
 
     failed = (
         score["sandbox_attempts_total"] > 0
