@@ -88,8 +88,14 @@ Rate limits: Wiki <=60/min, UEX <=120/min. HTTP timeouts: connect 3s, total
 
 ## Run tests
 
+Test-only dependencies (pytest, pytest-asyncio) live in
+`requirements-dev.txt`, which includes `requirements.txt`; the production
+image installs `requirements.txt` only.
+
 ```bash
 cd sc-knowledge
+python3 -m venv .venv  # first time only
+.venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 ```
 
