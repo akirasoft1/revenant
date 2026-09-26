@@ -4,11 +4,17 @@ per-commodity price board.
 Controller ruling R2 (binding): resolve origin/destination FIRST against an
 index built only from terminals with type == "commodity" (the admin/commodity
 shop terminal, not every shop at the station). A unique exact/fuzzy match wins.
-If not unique, fall back to a normalised-SUBSTRING match against the terminal's
-location fields (space_station_name, city_name, outpost_name, planet_name,
-orbit_name, star_system_name) or its name/nickname, taking ALL matching
-commodity terminals. If still nothing, error out with candidates.
+If not unique, fall back to a normalised TOKEN-BOUNDARY match against the
+terminal's location fields (space_station_name, city_name, outpost_name,
+planet_name, orbit_name, star_system_name) or its name/nickname, taking ALL
+matching commodity terminals. If still nothing, error out with candidates.
+
+Fix-round-1 (binding): the fallback (and the commodity_prices location filter)
+must NOT use raw substring matching -- "l1" is a raw substring of "l19" (from
+"Admin - L19 Residences - Metro Center - Lorville"), which would silently
+merge an unrelated station into an "L1" query. See _token_match().
 """
+import re
 from datetime import datetime, timezone
 
 from .cache import TTLCache
@@ -21,7 +27,7 @@ _INDEX_TTL = 21600
 _ROUTES_TTL = 1800
 SOURCE = "uexcorp.space (crowd-sourced)"
 
-# Fields checked for both the R2 location-substring fallback (terminal dicts:
+# Fields checked for both the R2 location token-match fallback (terminal dicts:
 # name/nickname + location fields) and the commodity_prices location filter
 # (price rows: terminal_name + the same location fields). A dict missing a key
 # just yields None and is skipped, so one field tuple safely covers both shapes.
@@ -113,16 +119,42 @@ def _place(row: dict) -> str:
     return ", ".join(out)
 
 
-def _field_matches(fields: dict, query_norm: str, substring: bool) -> bool:
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(s: str) -> list[str]:
+    return _TOKEN_RE.findall((s or "").lower())
+
+
+def _token_match(field_value: str, query_norm: str) -> bool:
+    """True when `query_norm` (a fully-normalised query, e.g. normalise("MIC-L5")
+    == "micl5") equals the concatenation of some run of CONSECUTIVE lowercase
+    alnum tokens found in field_value.
+
+    This is deliberately NOT raw substring matching: query "l1" (tokens ["l1"])
+    matches field "Admin - ARC-L1" (tokens ["admin","arc","l1"], run ["l1"]
+    concatenates to "l1") but must NEVER match "Admin - L19 Residences - Metro
+    Center - Lorville" (tokens [...,"l19",...]) -- raw `"l1" in "l19"` is True
+    and would wrongly merge that unrelated station in.
+    """
+    if not query_norm or not field_value:
+        return False
+    toks = _tokens(field_value)
+    for i in range(len(toks)):
+        acc = ""
+        for j in range(i, len(toks)):
+            acc += toks[j]
+            if acc == query_norm:
+                return True
+            if len(acc) > len(query_norm):
+                break
+    return False
+
+
+def _field_matches(fields: dict, query_norm: str) -> bool:
     for f in _LOCATION_FIELDS:
         v = fields.get(f)
-        if not v:
-            continue
-        nv = normalise(v)
-        if substring:
-            if query_norm in nv:
-                return True
-        elif nv == query_norm:
+        if v and _token_match(v, query_norm):
             return True
     return False
 
@@ -167,7 +199,7 @@ class TradeTools:
             return [r.match.data], label, None, []
         q = normalise(query)
         if len(q) >= 2:
-            matches = [t for t in commodity_terminals if _field_matches(t, q, substring=True)]
+            matches = [t for t in commodity_terminals if _field_matches(t, q)]
             if matches:
                 return matches, _shared_label(matches, query), None, []
         return None, None, r.status, [c.name for c in r.candidates]
@@ -240,7 +272,7 @@ class TradeTools:
             notes.append(f"Only {', '.join(origin_commodities)} sold at {origin_label}")
 
         return {"source": SOURCE, "game_version": game_version, "origin": origin_label,
-                "routes": rows, "notes": notes}
+                "origin_terminal_count": len(origin_terminals), "routes": rows, "notes": notes}
 
     async def commodity_prices(self, commodity: str, location: str | None = None,
                                side: str = "sell", limit: int = 5) -> dict:
@@ -259,17 +291,13 @@ class TradeTools:
             res = await self._cache.get_or_fetch(
                 f"uex:cprices:{commodity_id}", _ROUTES_TTL,
                 lambda: self._uex.commodities_prices(commodity_id))
-            game_version = None
-            if not res.value:
-                gv = await self._uex.game_versions()
-                game_version = (gv or {}).get("live")
         except UpstreamError as e:
             return error("uex_unavailable", str(e))
 
         rows = res.value
         if location:
             q = normalise(location)
-            rows = [r for r in rows if _field_matches(r, q, substring=False)]
+            rows = [r for r in rows if _field_matches(r, q)]
 
         buy_side = side == "buy"
         price_key = "price_buy" if buy_side else "price_sell"
@@ -279,8 +307,18 @@ class TradeTools:
         rows.sort(key=lambda r: r[price_key], reverse=not buy_side)
         rows = rows[:max(1, limit)]
 
-        if rows and game_version is None:
-            game_version = rows[0].get("game_version")
+        # Fix-round-1 #3: fall back to game_versions()["live"] whenever
+        # game_version is still None -- not just when the pre-filter result was
+        # empty. A location filter that empties an otherwise non-empty result
+        # (or a commodity's rows that all lack "game_version") must not surface
+        # game_version: None when the live version is discoverable another way.
+        game_version = rows[0].get("game_version") if rows else None
+        if game_version is None:
+            try:
+                gv = await self._uex.game_versions()
+                game_version = (gv or {}).get("live")
+            except UpstreamError:
+                pass  # best-effort fallback; don't fail an otherwise-good result over it
 
         terminals = []
         for r in rows:

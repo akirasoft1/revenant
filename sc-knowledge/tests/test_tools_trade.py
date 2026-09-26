@@ -11,6 +11,7 @@ def _tools():
         "/2.0/commodities_routes": "uex_routes_mic_l5.json",
         "/2.0/commodities_prices": "uex_commodity_prices_79.json",
         "/2.0/commodities": "uex_commodities.json",
+        "/2.0/game_versions": "uex_game_versions.json",
     }))
     return TradeTools(uex, TTLCache())
 
@@ -102,6 +103,50 @@ async def test_routes_deduped_by_id():
         seen.add(key)
 
 
+async def test_routes_deduped_across_multiple_origin_terminals():
+    """Fix-round-1 #2: "MIC-L5" resolves to exactly ONE commodity terminal
+    (uniquely, via the primary index), so the dedup-by-id path above is never
+    actually exercised across multiple origin terminals. "Nyx" resolves via the
+    R2 location/name fallback to every commodity terminal in (or named after)
+    the Nyx system (>1, but well under the 120-call/60s UEX rate limit so the
+    test stays fast), and fixture_transport serves the SAME 43-route MIC-L5
+    fixture for any origin id -- so without de-duplication after concatenation,
+    routes would repeat once per origin terminal."""
+    from tests.conftest import load_fixture
+    total_routes = len(load_fixture("uex_routes_mic_l5.json")["data"])
+    r = await _tools().trade_routes("Nyx", limit=1000)
+    assert r["origin_terminal_count"] > 1, r
+    assert len(r["routes"]) <= total_routes
+    seen_ids = set()
+    for row in r["routes"]:
+        key = (row["commodity"], row["buy_at"], row["sell_at"], row["buy_price"], row["sell_price"])
+        assert key not in seen_ids, f"duplicate route surfaced: {key}"
+        seen_ids.add(key)
+
+
+async def test_l1_fallback_excludes_l19_residences():
+    """Fix-round-1 #1: raw substring matching let "l1" match "l19" (from "Admin
+    - L19 Residences - Metro Center - Lorville") because "l1" is literally a
+    substring of "l19". Token-boundary matching must not do that."""
+    t = _tools()
+    idx = await t._index()
+    commodity_terminals = [x for x in await t._terminals() if x.get("type") == "commodity"]
+    terminals, label, err, cands = t._resolve_terminal("L1", idx, commodity_terminals)
+    assert terminals is not None, (label, err, cands)
+    names = {x.get("name") for x in terminals}
+    assert not any("L19" in n for n in names), names
+    assert names & {"Admin - ARC-L1", "Admin - CRU-L1", "Admin - HUR-L1", "Admin - MIC-L1"}
+
+
+async def test_micl5_still_resolves_to_terminal_58():
+    t = _tools()
+    idx = await t._index()
+    commodity_terminals = [x for x in await t._terminals() if x.get("type") == "commodity"]
+    terminals, label, err, cands = t._resolve_terminal("micl5", idx, commodity_terminals)
+    assert terminals is not None, (label, err, cands)
+    assert any(x.get("id") == 58 for x in terminals)
+
+
 async def test_commodity_prices_sell_side_sorted_desc():
     r = await _tools().commodity_prices(commodity_name_for_79(), side="sell")
     prices = [x["price"] for x in r["terminals"]]
@@ -121,6 +166,28 @@ async def test_commodity_prices_buy_side_sorted_asc():
 async def test_commodity_prices_unknown_commodity():
     r = await _tools().commodity_prices("Zzqq Not A Commodity")
     assert r["error"] in ("not_found", "ambiguous")
+
+
+async def test_commodity_prices_location_filter():
+    """Fix-round-1 #4."""
+    from tests.conftest import load_fixture
+    rows = load_fixture("uex_commodity_prices_79.json")["data"]
+    planet = next(r["planet_name"] for r in rows if r.get("planet_name"))
+    expected = {r["terminal_name"] for r in rows if r.get("planet_name") == planet}
+
+    r = await _tools().commodity_prices(commodity_name_for_79(), location=planet, side="sell", limit=50)
+    assert r["terminals"], r
+    assert {t["terminal"] for t in r["terminals"]} <= expected
+    assert all(t["price"] > 0 for t in r["terminals"])
+
+
+async def test_commodity_prices_location_filter_game_version_fallback():
+    """Fix-round-1 #3: a location filter that empties an otherwise non-empty
+    result must not leave game_version as None -- fall back to
+    game_versions()['live']."""
+    r = await _tools().commodity_prices(commodity_name_for_79(), location="Zzqq Nowhere Place")
+    assert r["terminals"] == []
+    assert r["game_version"] == "4.10.1"
 
 
 def commodity_name_for_79():
