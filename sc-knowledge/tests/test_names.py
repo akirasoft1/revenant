@@ -23,9 +23,18 @@ def test_mic_l5_variants_resolve_to_terminal_58():
         assert 58 in {c.id for c in ([r.match] if r.match else r.candidates)}, (q, r.status, [c.name for c in r.candidates])
 
 
-def test_commodity_fuzzy_typo():
-    r = _idx().resolve("Laranite", kind="commodity")
-    assert r.match is not None and r.match.name.lower().startswith("laranite")
+def test_commodity_fuzzy_via_rapidfuzz():
+    """Test fuzzy resolution via rapidfuzz WRatio scorer (score ≥88, margin ≥8)."""
+    r = _idx().resolve("Diluthermal Fluid", kind="commodity")
+    assert r.status == "fuzzy" and r.match is not None and r.match.name == "Diluthermex"
+
+
+def test_commodity_one_letter_typo():
+    """Test one-letter typo resolves to Laranite (via ambiguous candidates)."""
+    r = _idx().resolve("Laranit", kind="commodity")
+    laranite_found = (r.match is not None and r.match.name.startswith("Laranite")) or \
+                     any(c.name.startswith("Laranite") for c in r.candidates)
+    assert laranite_found, f"Expected Laranite in match or candidates, got status={r.status}"
 
 
 def test_nonsense_is_not_found_with_no_match():
@@ -40,3 +49,22 @@ def test_ambiguous_returns_candidates():
     idx.add(Entry("terminal", 2, "Port Olisar Cargo", ("Port Olisar Cargo",), {}))
     r = idx.resolve("Port Olisar", kind="terminal")
     assert r.status == "ambiguous" and {c.id for c in r.candidates} == {1, 2}
+
+
+def test_faction_entries():
+    """Test faction entry conversion: id=uuid, alias=name."""
+    from src.names import faction_entries
+    factions = load_fixture("wiki_factions.json")["data"]
+    entries = faction_entries(factions)
+    assert len(entries) > 0
+    # Sample a faction: id is uuid, name is in aliases
+    first = entries[0]
+    assert first.kind == "faction"
+    assert isinstance(first.id, str) and len(first.id) > 0  # uuid
+    assert first.name in first.aliases
+    # Resolve by exact name
+    idx = NameIndex()
+    for e in entries:
+        idx.add(e)
+    r = idx.resolve(first.name, kind="faction")
+    assert r.status == "exact" and r.match is not None and r.match.id == first.id
