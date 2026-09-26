@@ -1,5 +1,5 @@
 # sandbox-base/Dockerfile
-FROM debian:12-slim
+FROM debian:13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv \
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # .NET 8 SDK
-RUN curl -fsSL https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb \
+RUN curl -fsSL https://packages.microsoft.com/config/debian/13/packages-microsoft-prod.deb \
       -o /tmp/ms.deb \
     && dpkg -i /tmp/ms.deb \
     && apt-get update \
