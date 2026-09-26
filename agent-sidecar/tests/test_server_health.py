@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
@@ -420,4 +421,4 @@ def test_breaker_threshold_of_zero_is_clamped_to_one():
 def test_asyncio_marker_smoke():
     # Guard: several tests above are coroutines; if the asyncio plugin ever
     # stops applying, they would silently pass without running.
-    assert asyncio.iscoroutinefunction(test_health_trips_after_threshold_chat_failures_and_recovers_on_success)
+    assert inspect.iscoroutinefunction(test_health_trips_after_threshold_chat_failures_and_recovers_on_success)
