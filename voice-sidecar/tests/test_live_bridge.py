@@ -400,7 +400,7 @@ class NonConformingSession:
 
 async def test_pump_server_guard_stops_a_session_that_returns_without_producing(caplog):
     """`_pump_server`'s `if not produced: break` is UNREACHABLE against
-    google-genai (verified against the installed 2.17.0: `receive()` loops
+    google-genai (verified against 2.17.0, re-verified on 2.25.0: `receive()` loops
     `while result := await self._receive():` over an always-truthy pydantic
     `LiveServerMessage`, and `_receive()` converts every ConnectionClosed
     into a raised APIError -- so it can only exit via turn_complete or by

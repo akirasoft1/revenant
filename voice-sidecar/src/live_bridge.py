@@ -51,7 +51,7 @@ def _is_normal_close(exc) -> bool:
     ordered strongest-first and the loosest one is anchored.
 
     The structured `code` check is the real one, and against the installed
-    google-genai (2.17.0, verified by executing it, not by reading it) it is
+    google-genai (2.17.0, re-verified on 2.25.0 -- by executing it, not by reading it) it is
     sufficient on its own: every path that turns a websocket close into an
     exception -- `AsyncSession._receive` and the one-shot connect in `live.py` --
     calls `errors.APIError.raise_error(code, reason, None)` with the ws close
@@ -615,16 +615,19 @@ class LiveBridge:
         # receive() ends per-turn on turn_complete; loop to span the whole session.
         #
         # How this loop REALLY terminates, verified against the installed
-        # google-genai 2.17.0 (requirements.txt pins >=; re-check on a bump):
-        # `AsyncSession.receive()` (live.py:445-449) is
+        # google-genai 2.17.0, re-verified by execution on 2.25.0 (2026-09-26;
+        # requirements.txt pins >=; re-check on a bump):
+        # `AsyncSession.receive()` (2.25.0 live.py:471-475) is
         # `while result := await self._receive():` over a `LiveServerMessage`.
         # That is a pydantic model with no `__bool__` and no `__len__`, so it
         # is ALWAYS truthy and the walrus condition can never end the loop.
         # `receive()` therefore has exactly two exits: the explicit `break`
-        # after a message carrying `server_content.turn_complete`, or an
-        # exception. And EVERY connection close arrives as an exception --
-        # clean 1000/1001 and abnormal 1006/1011 alike -- because `_receive()`
-        # (live.py:530-537) funnels every `ConnectionClosed` into
+        # after an "interaction complete" message (2.25: `interaction_status
+        # == IDLE` when the server sets it, else `server_content.turn_complete`
+        # -- this loop re-enters `receive()` either way), or an exception. And
+        # EVERY connection close arrives as an exception -- clean 1000/1001 and
+        # abnormal 1006/1011 alike -- because `_receive()` (2.25.0
+        # live.py:555-562) funnels every `ConnectionClosed` into
         # `errors.APIError.raise_error(...)`.
         #
         # So against the SDK this generator NEVER completes without producing
@@ -642,7 +645,7 @@ class LiveBridge:
         #
         # What would make it reachable: google-genai changing `receive()` to
         # swallow `ConnectionClosed` and return (its own `_receive_loop` at
-        # live.py:505-520 already does exactly that for its internal loop), or
+        # 2.25.0 live.py:520-540 already does exactly that for its internal loop), or
         # `LiveServerMessage` gaining a falsy `__bool__`/`__len__`. Either is
         # a silent behaviour change, which is why the branch logs at WARNING.
         while True:
