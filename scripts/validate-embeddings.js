@@ -236,7 +236,9 @@ async function validateDiscordMemories(client) {
   for (const point of sample.points) {
     const p = point.payload;
 
-    if (p.userId && p.userId.startsWith('channel:')) {
+    // mem0ai v3 writes user_id; v2-era points carry userId (see migrate-mem0-v3-payload.js).
+    const ownerId = p.user_id ?? p.userId;
+    if (ownerId && ownerId.startsWith('channel:')) {
       channelMemories++;
     } else {
       userMemories++;

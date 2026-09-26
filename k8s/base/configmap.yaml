@@ -16,7 +16,9 @@ data:
   BOT_ADMIN_USER_IDS: ""
   OPENAI_BASE_URL: "https://api.openai.com/v1"
   OPENAI_METHOD: "response"
-  OPENAI_MODEL: "gpt-4.1-mini"
+  OPENAI_MODEL: "gpt-6-luna"
+  # Reasoning effort for interactive direct-OpenAI chat (none|low|medium|high|xhigh|max)
+  OPENAI_REASONING_EFFORT: "low"
   DEBUG: "false"
   LOG_LEVEL: "info"
 
@@ -70,9 +72,9 @@ data:
 
   # Image Generation via Gemini
   IMAGEGEN_ENABLED: "true"
-  IMAGEGEN_MODEL: "gemini-3-pro-image-preview"
+  IMAGEGEN_MODEL: "gemini-3.1-flash-image"
   # Premium model for admin users (BOT_ADMIN_USER_IDS) - optional
-  IMAGEGEN_ADMIN_MODEL: ""
+  IMAGEGEN_ADMIN_MODEL: "gemini-3-pro-image"
   IMAGEGEN_DEFAULT_ASPECT_RATIO: "1:1"
   IMAGEGEN_MAX_PROMPT_LENGTH: "1000"
   IMAGEGEN_COOLDOWN_SECONDS: "30"

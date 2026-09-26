@@ -22,11 +22,11 @@ class Config:
     grpc_listen_addr: str
 
     # The LLM the ADK Agent uses. Format follows LiteLlm-style spec:
-    #   "gemini-3-flash"           -> native ADK Gemini (preferred default)
-    #   "gemini/gemini-3-flash"    -> same; explicit prefix tolerated
-    #   "openai/gpt-5.1"           -> OpenAI via LiteLlm wrapper
+    #   "gemini-3.8-flash"         -> native ADK Gemini (preferred default)
+    #   "gemini/gemini-3.8-flash"  -> same; explicit prefix tolerated
+    #   "openai/gpt-6-luna"        -> OpenAI via LiteLlm wrapper
     #   "anthropic/claude-opus-..."-> Anthropic via LiteLlm wrapper
-    # Empty/unrecognized values fall back to the default ("gemini-3-flash").
+    # Empty/unrecognized values fall back to the default ("gemini-3.8-flash").
     agent_model: str
 
     # OpenAI key/model are still loaded for backwards compat with anyone
@@ -77,9 +77,9 @@ class Config:
 def load() -> Config:
     return Config(
         grpc_listen_addr=os.environ.get("GRPC_LISTEN_ADDR", "0.0.0.0:50051"),
-        agent_model=os.environ.get("AGENT_MODEL", "gemini-3-flash-preview"),
+        agent_model=os.environ.get("AGENT_MODEL", "gemini-3.8-flash"),
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
-        openai_model=os.environ.get("OPENAI_MODEL", "gpt-5.1"),
+        openai_model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
         agent_health_failure_threshold=int(os.environ.get("AGENT_HEALTH_FAILURE_THRESHOLD", "3")),
         agent_health_cooldown_seconds=float(os.environ.get("AGENT_HEALTH_COOLDOWN_SECONDS", "60")),
         agent_chat_timeout_seconds=float(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", "540")),

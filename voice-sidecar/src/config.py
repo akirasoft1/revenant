@@ -19,8 +19,13 @@ class Config:
 def load() -> Config:
     return Config(
         grpc_listen_addr=os.environ.get("GRPC_LISTEN_ADDR", "0.0.0.0:50051"),
-        # Placeholder default; a later human step swaps in the id validated by
-        # the Task 1 live GEAP probe.
+        # DO NOT "upgrade" blindly (2026-09-26): gemini-3.8-live returns 404 on
+        # our GEAP project (revenant-discord-bot-2) in `global`, and 3.8-live
+        # does not support session resumption or context-window compression,
+        # both of which this sidecar depends on (see live_bridge._live_config).
+        # The [SPEAKER: ...] markers also need send_client_content with
+        # turn_complete=False, which is restricted on Gemini 3.x Live.
+        # Pinned by tests/test_config.py::test_live_model_default_stays_on_2_5_flash.
         voice_live_model=os.environ.get("VOICE_LIVE_MODEL", "gemini-live-2.5-flash"),
         default_voice_name=os.environ.get("VOICE_DEFAULT_VOICE", "Puck"),
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),

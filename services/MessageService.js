@@ -1,8 +1,10 @@
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 
 class MessageService {
-  constructor(openaiClient) {
+  constructor(openaiClient, config = null) {
     this.openaiClient = openaiClient;
+    this.config = config;
     this.DISCORD_MAX_LENGTH = 2000;
   }
 
@@ -100,9 +102,11 @@ ${content}
 
 Compressed version (MUST be under 2000 characters):`;
 
+      const model = this.config?.openai?.model || DEFAULT_OPENAI_MODEL;
       const response = await this.openaiClient.responses.create({
-        model: 'gpt-5.1',
+        model,
         input: compressionPrompt,
+        ...reasoningParams(model, 'none'),
       });
 
       const compressedContent = response.output_text.trim();

@@ -64,7 +64,7 @@
 - **Reply to Regenerate**: Reply to a generated image with feedback to create an enhanced version (aspect ratio directives are stripped to prevent conflicts with the image generation API)
 
 ### Video Generation (Veo)
-- **AI Video Generation**: Generate videos using Google's Veo 3.1
+- **AI Video Generation**: Generate videos using Google's Veo 3.1 (Vertex, via `@google/genai` in Vertex mode); safety-filtered results now tell the user why
 - **Text-to-Video Mode**: Generate video from text descriptions alone
 - **Single Image Mode**: Animate a single image into a video (image-to-video)
 - **Two Image Mode**: Provide first and last frame images for smooth transitions
@@ -75,7 +75,7 @@
 - **Usage Tracking**: All generations tracked in MongoDB
 
 ### Music Generation (`/musicgen`)
-- **Lyria 3 Pro Generation**: Generate music using Google's Lyria 3 Pro (`lyria-3-pro-preview`)
+- **Lyria 3.5 Generation**: Generate music using Google's Lyria 3.5 (`lyria-3.5`)
 - **Text Prompts**: Describe the music in natural language
 - **Lyrics Support**: Provide lyrics with `[Verse]`, `[Chorus]`, `[Bridge]` tags for structured composition
 - **Negative Prompts**: Specify what to avoid (e.g., "no vocals"). Composed into the prompt text since Lyria has no structured negative_prompt API field.
@@ -83,7 +83,7 @@
 - **MP3 Output**: Multi-minute audio attachments with duration controllable through the prompt
 - **Lyrics Rendering**: Generated lyrics and structure displayed in an embed when provided by the model
 - **Usage Tracking**: All generations recorded in MongoDB via CostService
-- **Configuration**: `MUSICGEN_ENABLED=true`, `LYRIA_MODEL` (default `lyria-3-pro-preview`), `LYRIA_PER_CALL_COST_USD` (default `0.06`, placeholder pending finalized Google pricing)
+- **Configuration**: `MUSICGEN_ENABLED=true`, `LYRIA_MODEL` (default `lyria-3.5`), `LYRIA_PER_CALL_COST_USD` (default `0.08`, Google's published per-song price)
 
 **Note on `/stats`**: Cost tracking per generation is recorded through CostService and surfaced in cumulative cost logs. The `/stats` command reads from MongoDB's token-usage leaderboard and does NOT include media-gen records today. Wiring media-gen rows into MongoDB for `/stats` display is part of the Approach B refactor (see `docs/superpowers/specs/2026-05-15-lyria-music-generation-design.md`).
 

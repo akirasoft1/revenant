@@ -66,7 +66,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 
 ### Music Generation
 
-- `/musicgen` — AI music generation (Google Lyria 3 Pro)
+- `/musicgen` — AI music generation (Google Lyria 3.5)
   - **Text-to-Music**: Create music from natural language descriptions
   - **Lyrics Support**: Provide structured lyrics with verse/chorus/bridge tags
   - **Visual Inspiration**: Up to 3 reference images to guide the generation style
@@ -104,7 +104,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 
 ## Prerequisites
 
-- Node.js v22.12.0 or higher (required by `@discordjs/voice` ^0.19.0 for the voice channel feature)
+- Node.js v22.12.0 or higher (required by `@discordjs/voice` ^0.19.0); the Docker image runs Node 24 LTS on Debian (glibc)
 - Discord Bot Token ([Discord Developer Portal](https://discord.com/developers/applications))
 - OpenAI API Key or Ollama instance
 - MongoDB database
@@ -138,7 +138,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 
    # Optional
    OPENAI_BASE_URL=https://api.openai.com/v1
-   OPENAI_MODEL=gpt-4o-mini
+   OPENAI_MODEL=gpt-6-luna
    DEBUG=false
    ```
 
@@ -232,7 +232,8 @@ discord-article-bot/
 | `DISCORD_CLIENT_ID` | `` | Discord application client ID (for slash commands) |
 | `DISCORD_TEST_GUILD_ID` | `` | Guild ID for instant command updates during development |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API endpoint |
-| `OPENAI_MODEL` | `gpt-5.1` | Model for summarization |
+| `OPENAI_MODEL` | `gpt-6-luna` | Default OpenAI model (chat fallback, summaries, catch-me-up, voice profile, Mem0) |
+| `OPENAI_REASONING_EFFORT` | `low` | Reasoning effort for chat calls (`none`/`low`/`medium`/`high`) |
 | `BOT_ADMIN_USER_IDS` | `` | Comma-separated Discord user IDs for bot admins |
 | `DEBUG` | `false` | Enable verbose logging |
 
@@ -255,7 +256,7 @@ discord-article-bot/
 | `MEM0_QDRANT_HOST` | `localhost` | Qdrant vector database host |
 | `MEM0_QDRANT_PORT` | `6333` | Qdrant port |
 | `MEM0_COLLECTION_NAME` | `discord_memories` | Vector collection name |
-| `MEM0_LLM_MODEL` | `gpt-4o-mini` | Model for memory extraction |
+| `MEM0_LLM_MODEL` | `gpt-6-luna` | Model for memory extraction |
 | `MEM0_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
 
 ### Qdrant IRC History Configuration
@@ -295,7 +296,7 @@ discord-article-bot/
 |----------|---------|-------------|
 | `IMAGEGEN_ENABLED` | `false` | Enable image generation |
 | `GEMINI_API_KEY` | `` | Gemini API key for image generation |
-| `IMAGEGEN_MODEL` | `gemini-2.5-flash-image` | Model for image generation |
+| `IMAGEGEN_MODEL` | `gemini-3.1-flash-image` | Model for image generation |
 | `IMAGEGEN_ADMIN_MODEL` | `` | Premium model for admin users (falls back to standard if empty) |
 | `IMAGEGEN_DEFAULT_ASPECT_RATIO` | `1:1` | Default aspect ratio |
 | `IMAGEGEN_MAX_PROMPT_LENGTH` | `1000` | Maximum prompt length in characters |

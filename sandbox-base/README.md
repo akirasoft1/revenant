@@ -29,6 +29,8 @@ Expected: HTML doctype line, exit 0.
 
 ## Image contents
 
+Base: `debian:13-slim` (trixie; moved from Debian 12 on 2026-09-26).
+
 - python3, node 20, go, rust stable, .NET 8 SDK
 - build-essential, git, jq, ripgrep
 - nmap, dig, nc
@@ -38,7 +40,7 @@ The image is ~8Gi. Pulled once per K8s node and cached. Plan node-pull time acco
 
 ## Security properties
 
-- Runs as uid 65534 (nobody).
+- Runs as uid 65534 (nobody). Every language runner genuinely works as that user under a read-only root with tmpfs `/tmp` and `/work`: rust is installed under `/usr/local` (it used to live under unreadable `/root`), and `HOME` plus the go/dotnet caches point at `/tmp` (nobody's home is `/nonexistent`). Before 2026-09-26 rust, go and csharp silently failed as uid 65534. .NET 8 SDK reaches EOL in November 2026 — move to .NET 10 LTS separately.
 - No shell-escape pre-baked configuration. The `executor` is the only entrypoint.
 - Image is consumed only by sandbox K8s pods that disable SA token automount,
   drop all capabilities, run with `readOnlyRootFilesystem: true`, and select

@@ -3,6 +3,7 @@
 
 const { AttachmentBuilder } = require('discord.js');
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 const TextUtils = require('../utils/textUtils');
 const { withRootSpan, withSpan, setSpanAttributes } = require('../tracing');
 const { DISCORD, REPLY, ERROR, SUMMARIZATION } = require('../tracing-attributes');
@@ -301,10 +302,12 @@ User feedback: "${userFeedback}"
 
 Create an enhanced prompt that incorporates this feedback:`;
 
+    const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
     const response = await this.openaiClient.responses.create({
-      model: this.config.openai.model || 'gpt-4.1-mini',
+      model,
       instructions: systemPrompt,
       input: userInput,
+      ...reasoningParams(model, 'none'),
     });
 
     return response.output_text.trim();
@@ -359,10 +362,12 @@ ${articleUrl ? `Original article URL: ${articleUrl}` : ''}
 Answer the user's follow-up question based on the summary provided. If the question cannot be answered from the summary alone, acknowledge this and provide what insight you can. Keep responses focused and under 500 words.`;
 
       try {
+        const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
         const response = await this.openaiClient.responses.create({
-          model: this.config.openai.model || 'gpt-5.1',
+          model,
           instructions: systemPrompt,
           input: userQuestion,
+          ...reasoningParams(model, 'low'),
         });
 
         const answer = response.output_text;
@@ -381,7 +386,7 @@ Answer the user's follow-up question based on the summary provided. If the quest
             response.usage?.input_tokens || 0,
             response.usage?.output_tokens || 0,
             'summarize_followup',
-            this.config.openai.model || 'gpt-5.1'
+            model
           );
         }
 

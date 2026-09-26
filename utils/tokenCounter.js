@@ -1,11 +1,30 @@
 // utils/tokenCounter.js
 // Token counting utility for chat memory management
 
-const { encoding_for_model } = require('tiktoken');
+const { encoding_for_model, get_encoding } = require('tiktoken');
 const logger = require('../logger');
 
 // Lazy-loaded encoder instance
 let encoder = null;
+
+/**
+ * Get a tiktoken encoder for a model. tiktoken's model table lags OpenAI's
+ * releases (it does not know gpt-6-*), and encoding_for_model THROWS for an
+ * unknown name — so fall back to o200k_base, the encoding every gpt-4o-and-
+ * later model uses, rather than losing token counting entirely.
+ * @param {string} model
+ * @returns {Object} tiktoken encoder
+ */
+function getEncoderForModel(model) {
+  if (model) {
+    try {
+      return encoding_for_model(model);
+    } catch {
+      logger.debug(`tiktoken does not know model "${model}"; using o200k_base`);
+    }
+  }
+  return get_encoding('o200k_base');
+}
 
 /**
  * Get or initialize the tiktoken encoder
@@ -15,8 +34,8 @@ function getEncoder() {
   if (encoder) return encoder;
 
   try {
-    encoder = encoding_for_model('gpt-4o');
-    logger.debug('Token counter encoder initialized (gpt-4o)');
+    encoder = getEncoderForModel('gpt-4o');
+    logger.debug('Token counter encoder initialized (o200k_base)');
     return encoder;
   } catch (error) {
     logger.error('Failed to initialize token counter encoder:', error.message);
@@ -109,6 +128,7 @@ function getRemainingBudget(currentCount, limit = 150000) {
 }
 
 module.exports = {
+  getEncoderForModel,
   countTokens,
   countMessageTokens,
   wouldExceedLimit,

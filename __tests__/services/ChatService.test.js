@@ -1496,3 +1496,81 @@ describe('ChatService', () => {
     });
   });
 });
+
+describe('ChatService — gpt-6 (reasoning model) request params', () => {
+  const FORBIDDEN = ['temperature', 'top_p', 'max_tokens', 'presence_penalty', 'frequency_penalty', 'max_output_tokens'];
+  const user = { id: 'user123', username: 'TestUser', tag: 'TestUser#1234' };
+  let client;
+  let mongo;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Earlier suites in this file leave the local-LLM mock "available"; these
+    // tests are about the direct-OpenAI path.
+    const localLlm = require('../../services/LocalLlmService');
+    localLlm.isAvailable.mockReturnValue(false);
+    localLlm.isEnabled.mockReturnValue(false);
+    // ...and leave the personality mocks pointed at other personalities.
+    const pm = require('../../personalities');
+    const testPersonality = {
+      id: 'test-personality', name: 'Test Character', emoji: '🧪',
+      description: 'A test personality', systemPrompt: 'You are a test character.'
+    };
+    pm.get.mockImplementation((id) => (id === 'test-personality' ? testPersonality : null));
+    pm.getRaw.mockImplementation((id) => (id === 'test-personality' ? testPersonality : null));
+    pm.checkAvailability.mockImplementation((id) => (id === 'test-personality'
+      ? { exists: true, available: true, reason: null }
+      : { exists: false, available: false, reason: null }));
+    pm.getSystemPrompt.mockImplementation((id) => (id === 'test-personality' ? testPersonality.systemPrompt : null));
+    client = {
+      responses: {
+        create: jest.fn().mockResolvedValue({ output_text: 'hi', usage: { input_tokens: 1, output_tokens: 1 } })
+      }
+    };
+    mongo = {
+      recordTokenUsage: jest.fn().mockResolvedValue(true),
+      getConversationStatus: jest.fn().mockResolvedValue({ exists: false }),
+      getOrCreateConversation: jest.fn().mockResolvedValue({ messages: [], status: 'active', messageCount: 0, totalTokens: 0 }),
+      addMessageToConversation: jest.fn().mockResolvedValue(true),
+      isConversationIdle: jest.fn().mockResolvedValue(false),
+      expireConversation: jest.fn().mockResolvedValue(true),
+      resumeConversation: jest.fn().mockResolvedValue(true),
+      resetConversation: jest.fn().mockResolvedValue(true)
+    };
+  });
+
+  const expectSafe = (params) => {
+    for (const k of FORBIDDEN) expect(params).not.toHaveProperty(k);
+    expect(params.tools).toEqual([{ type: 'web_search' }]);
+  };
+
+  test('stateless chat pins the configured reasoning effort', async () => {
+    const svc = new ChatService(client, { openai: { model: 'gpt-6-luna', reasoningEffort: 'medium' } }, mongo);
+    await svc.chat('test-personality', 'Hello!', user);
+    const params = client.responses.create.mock.calls[0][0];
+    expectSafe(params);
+    expect(params.model).toBe('gpt-6-luna');
+    expect(params.reasoning).toEqual({ effort: 'medium' });
+  });
+
+  test('stateful (direct OpenAI) chat defaults to effort low when none configured', async () => {
+    const svc = new ChatService(client, { openai: { model: 'gpt-6-luna' } }, mongo);
+    await svc.chat('test-personality', 'Hello!', user, 'channel123', 'guild456');
+    const params = client.responses.create.mock.calls[0][0];
+    expectSafe(params);
+    expect(params.reasoning).toEqual({ effort: 'low' });
+  });
+
+  test('with no configured model, requests and records gpt-6-luna (not deprecated gpt-5.1)', async () => {
+    const svc = new ChatService(client, { openai: {} }, mongo);
+    await svc.chat('test-personality', 'Hello!', user, 'channel123', 'guild456');
+    expect(client.responses.create.mock.calls[0][0].model).toBe('gpt-6-luna');
+    expect(mongo.recordTokenUsage.mock.calls[0][5]).toBe('gpt-6-luna');
+  });
+
+  test('a non-reasoning OPENAI_MODEL override gets no reasoning param (it would 400)', async () => {
+    const svc = new ChatService(client, { openai: { model: 'gpt-4.1-mini', reasoningEffort: 'low' } }, mongo);
+    await svc.chat('test-personality', 'Hello!', user);
+    expect(client.responses.create.mock.calls[0][0]).not.toHaveProperty('reasoning');
+  });
+});

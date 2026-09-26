@@ -15,12 +15,12 @@ data:
   AGENT_ENABLED: "true"
   AGENT_GRPC_ADDR: "discord-article-bot-agent.discord-article-bot.svc.cluster.local:50051"
   # AGENT_MODEL is the LLM the ADK Agent uses.
-  #   "gemini-3-flash"            -> native ADK Gemini path (preferred default)
-  #   "openai/gpt-5.1"            -> OpenAI via LiteLlm wrapper
+  #   "gemini-3.8-flash"          -> native ADK Gemini path (preferred default)
+  #   "openai/gpt-6-luna"         -> OpenAI via LiteLlm wrapper
   #   "anthropic/claude-opus-..." -> Anthropic via LiteLlm wrapper
   # GEMINI_API_KEY is read from the discord-article-bot-secrets Secret;
   # OPENAI_API_KEY likewise (only used when AGENT_MODEL=openai/...).
-  AGENT_MODEL: "gemini-3.6-flash"
+  AGENT_MODEL: "gemini-3.8-flash"
   # Dynatrace MCP gateway URL — used by the agent sidecar to reach the
   # dynatrace-mcp server over the platform-reserved MCP gateway endpoint.
   # Non-secret (no token embedded); DT_PLATFORM_TOKEN (Secret) authenticates.

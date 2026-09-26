@@ -23,7 +23,7 @@ def test_returns_empty_when_dt_env_missing():
 
 def test_builds_one_toolset_when_configured():
     cfg = _cfg(dt_mcp_url="https://x/mcp", dt_platform_token="tok")
-    with patch.object(mcp_registry, "MCPToolset") as MockToolset:
+    with patch.object(mcp_registry, "McpToolset") as MockToolset:
         result = mcp_registry.build_mcp_toolsets("observability", cfg)
     assert len(result) == 1
     MockToolset.assert_called_once()

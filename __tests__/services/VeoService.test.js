@@ -9,24 +9,34 @@ jest.mock('../../logger', () => ({
   warn: jest.fn()
 }));
 
-// Mock @google-cloud/vertexai
-jest.mock('@google-cloud/vertexai', () => ({
-  VertexAI: jest.fn().mockImplementation(() => ({
-    preview: {
-      getGenerativeModel: jest.fn().mockReturnValue({})
-    }
-  }))
-}));
+// Mock @google/genai (Vertex mode): generateVideos starts the LRO,
+// operations.getVideosOperation polls it.
+jest.mock('@google/genai', () => {
+  const generateVideos = jest.fn();
+  const getVideosOperation = jest.fn();
+  return {
+    GoogleGenAI: jest.fn().mockImplementation(() => ({
+      models: { generateVideos },
+      operations: { getVideosOperation }
+    })),
+    __mocks: { generateVideos, getVideosOperation }
+  };
+});
+const { GoogleGenAI, __mocks: genaiMocks } = require('@google/genai');
+const mockGenerateVideos = genaiMocks.generateVideos;
+const mockGetVideosOperation = genaiMocks.getVideosOperation;
 
 // Mock @google-cloud/storage
+const mockGcsFile = jest.fn();
+const mockGcsBucket = jest.fn();
 jest.mock('@google-cloud/storage', () => ({
   Storage: jest.fn().mockImplementation(() => ({
-    bucket: jest.fn().mockReturnValue({
-      file: jest.fn().mockReturnValue({
+    bucket: mockGcsBucket.mockImplementation(() => ({
+      file: mockGcsFile.mockImplementation(() => ({
         download: jest.fn().mockResolvedValue([Buffer.from('fake-video-data')]),
         exists: jest.fn().mockResolvedValue([true])
-      })
-    })
+      }))
+    }))
   }))
 }));
 
@@ -74,6 +84,14 @@ describe('VeoService', () => {
     it('should throw error if projectId is missing', () => {
       const noProjectConfig = { veo: { ...mockConfig.veo, projectId: '' } };
       expect(() => new VeoService(noProjectConfig)).toThrow('GOOGLE_CLOUD_PROJECT is required');
+    });
+
+    it('should create a Vertex-mode @google/genai client for the configured project/location', () => {
+      expect(GoogleGenAI).toHaveBeenCalledWith({
+        vertexai: true,
+        project: 'test-project',
+        location: 'us-central1'
+      });
     });
 
     it('should throw error if gcsBucket is missing', () => {
@@ -581,7 +599,7 @@ describe('VeoService', () => {
       });
 
       // Mock the API call to fail so we can inspect the call
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const result = await veoService.generateVideoFromImage(
         'A valid prompt',
@@ -598,7 +616,7 @@ describe('VeoService', () => {
         headers: { 'content-type': 'image/png' }
       });
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const result = await veoService.generateVideoFromImage(
         'A valid prompt',
@@ -614,7 +632,7 @@ describe('VeoService', () => {
         headers: { 'content-type': 'image/png' }
       });
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -641,7 +659,7 @@ describe('VeoService', () => {
         headers: { 'content-type': 'image/png' }
       });
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const user = { id: 'user123', tag: 'testuser#1234' };
 
@@ -673,7 +691,7 @@ describe('VeoService', () => {
         headers: { 'content-type': 'image/png' }
       });
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -696,7 +714,7 @@ describe('VeoService', () => {
         headers: { 'content-type': 'image/png' }
       });
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -743,7 +761,7 @@ describe('VeoService', () => {
     });
 
     it('should use default aspect ratio when not specified', async () => {
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const result = await veoService.generateVideoFromText('A valid prompt');
 
@@ -752,7 +770,7 @@ describe('VeoService', () => {
     });
 
     it('should use default duration when not specified', async () => {
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const result = await veoService.generateVideoFromText('A valid prompt');
 
@@ -760,7 +778,7 @@ describe('VeoService', () => {
     });
 
     it('should call progress callback during generation', async () => {
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -781,7 +799,7 @@ describe('VeoService', () => {
 
       const serviceWithMongo = new VeoService(mockConfig, mockMongoService);
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const user = { id: 'user123', tag: 'testuser#1234' };
 
@@ -805,7 +823,7 @@ describe('VeoService', () => {
     });
 
     it('should not require any image URLs', async () => {
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -825,7 +843,7 @@ describe('VeoService', () => {
 
   describe('generateVideo routing (text vs image modes)', () => {
     it('should route to text-only mode when no image URLs provided', async () => {
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -850,7 +868,7 @@ describe('VeoService', () => {
         headers: { 'content-type': 'image/png' }
       });
 
-      axios.post.mockRejectedValue(new Error('API error'));
+      mockGenerateVideos.mockRejectedValue(new Error('API error'));
 
       const onProgress = jest.fn();
 
@@ -864,6 +882,179 @@ describe('VeoService', () => {
       );
 
       expect(onProgress).toHaveBeenCalledWith('Fetching image...');
+    });
+  });
+  describe('generation via @google/genai (Vertex)', () => {
+    const doneOp = (uri = 'gs://test-bucket/veo-output/123/sample_0.mp4') => ({
+      name: 'projects/test-project/locations/us-central1/publishers/google/models/veo/operations/op-1',
+      done: true,
+      response: { generatedVideos: [{ video: { uri, mimeType: 'video/mp4' } }] }
+    });
+
+    beforeEach(() => {
+      // Keep polling tests fast.
+      mockConfig.veo.pollIntervalMs = 1;
+      veoService = new VeoService(mockConfig);
+    });
+
+    it('text-to-video: calls generateVideos with prompt, GCS output, ratio and duration', async () => {
+      mockGenerateVideos.mockResolvedValue(doneOp());
+
+      const result = await veoService.generateVideoFromText('A sunset', { duration: 6, aspectRatio: '9:16' });
+
+      expect(mockGenerateVideos).toHaveBeenCalledWith({
+        model: 'veo-3.1-fast-generate-001',
+        source: { prompt: 'A sunset' },
+        config: {
+          numberOfVideos: 1,
+          outputGcsUri: expect.stringMatching(/^gs:\/\/test-bucket\/veo-output\/\d+\/$/),
+          aspectRatio: '9:16',
+          durationSeconds: 6
+        }
+      });
+      expect(mockGcsBucket).toHaveBeenCalledWith('test-bucket');
+      expect(mockGcsFile).toHaveBeenCalledWith('veo-output/123/sample_0.mp4');
+      expect(result).toEqual({
+        success: true,
+        buffer: Buffer.from('fake-video-data'),
+        prompt: 'A sunset',
+        duration: 6,
+        aspectRatio: '9:16'
+      });
+    });
+
+    it('image-to-video: passes the fetched image as source.image (base64 + mime)', async () => {
+      axios.get.mockResolvedValue({ data: Buffer.from('img'), headers: { 'content-type': 'image/png' } });
+      mockGenerateVideos.mockResolvedValue(doneOp());
+
+      const result = await veoService.generateVideoFromImage('Animate it', 'https://example.com/a.png');
+
+      expect(result.success).toBe(true);
+      const params = mockGenerateVideos.mock.calls[0][0];
+      expect(params.source).toEqual({
+        prompt: 'Animate it',
+        image: { imageBytes: Buffer.from('img').toString('base64'), mimeType: 'image/png' }
+      });
+      expect(params.config.lastFrame).toBeUndefined();
+    });
+
+    it('first/last frame: passes the last frame as config.lastFrame', async () => {
+      axios.get
+        .mockResolvedValueOnce({ data: Buffer.from('first'), headers: { 'content-type': 'image/png' } })
+        .mockResolvedValueOnce({ data: Buffer.from('last'), headers: { 'content-type': 'image/jpeg' } });
+      mockGenerateVideos.mockResolvedValue(doneOp());
+
+      const result = await veoService.generateVideo('Morph', 'https://example.com/f.png', 'https://example.com/l.jpg');
+
+      expect(result.success).toBe(true);
+      const params = mockGenerateVideos.mock.calls[0][0];
+      expect(params.source.image).toEqual({ imageBytes: Buffer.from('first').toString('base64'), mimeType: 'image/png' });
+      expect(params.config.lastFrame).toEqual({ imageBytes: Buffer.from('last').toString('base64'), mimeType: 'image/jpeg' });
+    });
+
+    it('polls operations.getVideosOperation until done and reports progress', async () => {
+      const pending = { name: 'op-1', done: false };
+      mockGenerateVideos.mockResolvedValue(pending);
+      mockGetVideosOperation
+        .mockResolvedValueOnce({ name: 'op-1', done: false })
+        .mockResolvedValueOnce(doneOp());
+      const onProgress = jest.fn();
+
+      const result = await veoService.generateVideoFromText('A cat', {}, null, onProgress);
+
+      expect(result.success).toBe(true);
+      expect(mockGetVideosOperation).toHaveBeenCalledTimes(2);
+      expect(mockGetVideosOperation).toHaveBeenCalledWith({ operation: pending });
+      expect(onProgress).toHaveBeenCalledWith('Generating video (this may take a few minutes)...');
+      expect(onProgress).toHaveBeenCalledWith('Downloading generated video...');
+    });
+
+    it('returns the operation error message when the LRO fails', async () => {
+      mockGenerateVideos.mockResolvedValue({ name: 'op-1', done: true, error: { code: 3, message: 'Prompt rejected' } });
+
+      const result = await veoService.generateVideoFromText('A cat');
+
+      expect(result).toEqual({ success: false, error: 'Prompt rejected' });
+    });
+
+    it('reports RAI filtering when no video comes back', async () => {
+      mockGenerateVideos.mockResolvedValue({
+        name: 'op-1', done: true,
+        response: { generatedVideos: [], raiMediaFilteredCount: 1, raiMediaFilteredReasons: ['celebrity'] }
+      });
+
+      const result = await veoService.generateVideoFromText('A cat');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('safety filters');
+      expect(result.error).toContain('celebrity');
+    });
+
+    it('fails with "No video was generated" when the response is empty', async () => {
+      mockGenerateVideos.mockResolvedValue({ name: 'op-1', done: true, response: { generatedVideos: [] } });
+
+      const result = await veoService.generateVideoFromText('A cat');
+
+      expect(result).toEqual({ success: false, error: 'No video was generated' });
+    });
+
+    it('keeps polling through transient poll errors', async () => {
+      mockGenerateVideos.mockResolvedValue({ name: 'op-1', done: false });
+      mockGetVideosOperation
+        .mockRejectedValueOnce(Object.assign(new Error('socket hang up'), { status: 503 }))
+        .mockResolvedValueOnce(doneOp());
+
+      const result = await veoService.generateVideoFromText('A cat');
+
+      expect(result.success).toBe(true);
+      expect(mockGetVideosOperation).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops polling when the operation is not found (404)', async () => {
+      mockGenerateVideos.mockResolvedValue({ name: 'op-1', done: false });
+      mockGetVideosOperation.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
+
+      const result = await veoService.generateVideoFromText('A cat');
+
+      expect(result).toEqual({ success: false, error: 'Operation not found' });
+    });
+
+    it('times out after maxWaitSeconds', async () => {
+      mockConfig.veo.maxWaitSeconds = 0;
+      veoService = new VeoService(mockConfig);
+      mockGenerateVideos.mockResolvedValue({ name: 'op-1', done: false });
+
+      const result = await veoService.generateVideoFromText('A cat');
+
+      expect(result).toEqual({ success: false, error: 'Video generation timed out after 0 seconds' });
+    });
+
+    it('maps a 429 from the SDK to the rate-limit message and records the failure', async () => {
+      const mongo = { recordVideoGeneration: jest.fn().mockResolvedValue() };
+      veoService = new VeoService(mockConfig, mongo);
+      mockGenerateVideos.mockRejectedValue(Object.assign(new Error('Resource exhausted'), { status: 429 }));
+
+      const result = await veoService.generateVideoFromText('A cat', {}, { id: 'u1', username: 'bob' });
+
+      expect(result).toEqual({ success: false, error: 'API rate limit exceeded. Please try again later.' });
+      expect(mongo.recordVideoGeneration).toHaveBeenCalledWith(
+        'u1', 'bob', 'A cat', 8, '16:9', 'veo-3.1-fast-generate-001', false,
+        'API rate limit exceeded. Please try again later.', 0
+      );
+    });
+
+    it('records a successful generation with the video size and sets the cooldown', async () => {
+      const mongo = { recordVideoGeneration: jest.fn().mockResolvedValue() };
+      veoService = new VeoService(mockConfig, mongo);
+      mockGenerateVideos.mockResolvedValue(doneOp());
+
+      await veoService.generateVideoFromText('A cat', {}, { id: 'u1', tag: 'bob#1' });
+
+      expect(mongo.recordVideoGeneration).toHaveBeenCalledWith(
+        'u1', 'bob#1', 'A cat', 8, '16:9', 'veo-3.1-fast-generate-001', true, null,
+        Buffer.from('fake-video-data').length
+      );
+      expect(veoService.isOnCooldown('u1')).toBe(true);
     });
   });
 });

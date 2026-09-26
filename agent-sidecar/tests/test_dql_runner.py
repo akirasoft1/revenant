@@ -1,17 +1,26 @@
 import asyncio
 import json
-from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock
 from src.dql_runner import run_dql
 from tests.test_mcp_registry import _cfg
 
 
 def _result(*, structured=None, texts=None, is_error=False):
-    """Build a fake MCP tool result. Uses SimpleNamespace (not MagicMock) so
-    unset attributes are genuinely absent/None rather than truthy mocks —
-    critical for isError/structuredContent checks in run_dql."""
-    content = [SimpleNamespace(text=t) for t in (texts or [])]
-    return SimpleNamespace(structuredContent=structured, content=content, isError=is_error)
+    """Build a REAL mcp 2.x CallToolResult from its wire (camelCase) form.
+
+    Deliberately not SimpleNamespace: the fake used to expose the 1.x
+    camelCase attributes (isError/structuredContent), which mcp 2.x renamed
+    to snake_case — so the fake kept these tests green while production
+    silently read None for both. Validating the wire payload through the
+    SDK's own model keeps the attribute names honest."""
+    import mcp.types as t
+    payload = {
+        "content": [{"type": "text", "text": x} for x in (texts or [])],
+        "isError": is_error,
+    }
+    if structured is not None:
+        payload["structuredContent"] = structured
+    return t.CallToolResult.model_validate(payload)
 
 
 def _run_with(cfg, query, result):
