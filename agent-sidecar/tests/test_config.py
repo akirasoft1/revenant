@@ -40,18 +40,18 @@ def test_resolve_mongo_uri_leaves_placeholder_when_no_password_env(monkeypatch):
     assert "${MONGO_PASSWORD}" in cfg.mongo_uri
 
 
-def test_agent_model_defaults_to_gemini_3_flash_preview(monkeypatch):
+def test_agent_model_defaults_to_gemini_3_8_flash(monkeypatch):
     monkeypatch.setenv("MONGO_URI", "mongodb://x")
     monkeypatch.delenv("AGENT_MODEL", raising=False)
     cfg = config_mod.load()
-    assert cfg.agent_model == "gemini-3-flash-preview"
+    assert cfg.agent_model == "gemini-3.8-flash"
 
 
 def test_agent_model_overridable(monkeypatch):
     monkeypatch.setenv("MONGO_URI", "mongodb://x")
-    monkeypatch.setenv("AGENT_MODEL", "openai/gpt-5.1")
+    monkeypatch.setenv("AGENT_MODEL", "openai/gpt-6-luna")
     cfg = config_mod.load()
-    assert cfg.agent_model == "openai/gpt-5.1"
+    assert cfg.agent_model == "openai/gpt-6-luna"
 
 
 def test_openai_api_key_now_optional(monkeypatch):
@@ -61,6 +61,15 @@ def test_openai_api_key_now_optional(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     cfg = config_mod.load()
     assert cfg.openai_api_key is None
+
+
+def test_openai_model_defaults_to_gpt_6_luna(monkeypatch):
+    # gpt-5.1 is deprecated; the OpenAI alternative default moved with the
+    # 2026-09 model refresh.
+    monkeypatch.setenv("MONGO_URI", "mongodb://x")
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    cfg = config_mod.load()
+    assert cfg.openai_model == "gpt-6-luna"
 
 
 def test_load_reads_dynatrace_mcp_env(monkeypatch):

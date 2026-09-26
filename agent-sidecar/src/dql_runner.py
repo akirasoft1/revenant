@@ -6,16 +6,14 @@ import json
 import logging
 from dataclasses import dataclass
 
+import httpx2
 from mcp import ClientSession
-try:
-    # mcp < 1.16 exposed this as streamablehttp_client; newer releases renamed
-    # it to streamable_http_client. Support both so an unpinned `mcp>=1.13.0`
-    # floor can't break the sidecar on rebuild.
-    from mcp.client.streamable_http import streamablehttp_client
-except ImportError:  # pragma: no cover - depends on installed mcp version
-    from mcp.client.streamable_http import (
-        streamable_http_client as streamablehttp_client,
-    )
+# mcp 2.x API. 2.0 removed the 1.x `streamablehttp_client(url, headers=...)`:
+# headers/timeouts now live on a caller-supplied httpx2.AsyncClient, and the
+# transport yields a 2-tuple (read, write) with no get_session_id callback.
+# Result attributes are snake_case too (`is_error`, `structured_content`).
+# Pinned by tests/test_mcp_v2_compat.py against a real in-process MCP server.
+from mcp.client.streamable_http import streamable_http_client
 
 from .config import Config
 
@@ -46,10 +44,11 @@ def _join_text(content) -> str:
 def _extract_records(resp) -> list:
     """Pull the record list from an execute-dql tool result.
 
-    Primary source is MCP structuredContent (a dict with a "records" list).
+    Primary source is MCP structuredContent (a dict with a "records" list),
+    which mcp 2.x exposes as the snake_case `structured_content` attribute.
     Fallback parses the "Query result records:" text part in case a response
     arrives without structuredContent."""
-    structured = getattr(resp, "structuredContent", None)
+    structured = getattr(resp, "structured_content", None)
     if isinstance(structured, dict) and isinstance(structured.get("records"), list):
         return structured["records"]
     for c in (resp.content or []):
@@ -64,13 +63,29 @@ def _extract_records(resp) -> list:
     return []
 
 
+def _make_http_client(token: str, **kwargs) -> httpx2.AsyncClient:
+    """The HTTP client carrying the Dynatrace bearer token.
+
+    Timeouts mirror mcp's own `create_mcp_http_client` defaults (30s
+    connect/write/pool, 300s read for held-open response streams). Built
+    directly rather than via that helper so tests can inject an ASGI
+    `transport=` and drive the real MCP client stack in-process."""
+    return httpx2.AsyncClient(
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=httpx2.Timeout(30.0, read=300.0),
+        **kwargs,
+    )
+
+
 @contextlib.asynccontextmanager
 async def _open_session(url: str, token: str):
-    headers = {"Authorization": f"Bearer {token}"}
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+    # streamable_http_client does NOT close a caller-supplied client, so this
+    # function owns its lifecycle.
+    async with _make_http_client(token) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
 
 async def run_dql(config: Config, query: str) -> RunDqlResult:
@@ -79,7 +94,7 @@ async def run_dql(config: Config, query: str) -> RunDqlResult:
     try:
         async with _open_session(config.dt_mcp_url, config.dt_platform_token) as session:
             resp = await session.call_tool(_EXECUTE_DQL_TOOL, {_DQL_ARG: query})
-        if getattr(resp, "isError", False):
+        if getattr(resp, "is_error", False):
             msg = _join_text(resp.content) or "execute-dql returned an error"
             return RunDqlResult("", "", msg[:500])
         records = _extract_records(resp)

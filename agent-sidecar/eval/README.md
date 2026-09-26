@@ -26,8 +26,8 @@ GOOGLE_CLOUD_LOCATION=global \
 ```
 
 Exits nonzero if false-invocation exceeds `--threshold`. `AGENT_MODEL` defaults to
-the production model (`gemini-3.6-flash`); override via env to test another.
-Cost: ~30 prompts × N runs of `gemini-3.6-flash` — a few cents. Do NOT wire into
+the production model (`gemini-3.8-flash`); override via env to test another.
+Cost: ~30 prompts × N runs of `gemini-3.8-flash` — a few cents. Do NOT wire into
 CI (needs creds + spend); it's an on-demand tuning tool.
 
 ## Context-dependent classes (2026-08-08, unified-chat-context)

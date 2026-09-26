@@ -18,7 +18,7 @@ import sys
 # defaults to the production model so the eval measures the real decision.
 os.environ.setdefault("MONGO_URI", "mongodb://unused/eval")
 os.environ.setdefault("SANDBOX_BASE_IMAGE", "unused")
-os.environ.setdefault("AGENT_MODEL", "gemini-3.6-flash")
+os.environ.setdefault("AGENT_MODEL", "gemini-3.8-flash")
 
 from src.agent import ChannelVoiceAgent  # noqa: E402
 from src.config import load  # noqa: E402
