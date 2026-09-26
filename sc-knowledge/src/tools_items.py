@@ -1,18 +1,23 @@
 """find_item / compare_components over the Star Citizen Wiki API (which embeds UEX shop prices)."""
+import logging
+import re
 from datetime import datetime, timezone
 
-from .cache import TTLCache
+from .cache import CacheResult, TTLCache
 from .envelope import error, freshness
 from .http import UpstreamError
 from .names import Entry, NameIndex, normalise, vehicle_entries
 from .uex import UexClient
 from .wiki import WikiClient
 
+logger = logging.getLogger("sc_knowledge.tools_items")
+
 _TTL = 43200
 SOURCE = "star-citizen.wiki (+UEX prices)"
 _VEHICLE_SOURCE = "uexcorp.space (crowd-sourced)"
 _VEHICLE_INDEX_TTL = 21600
 _VEHICLE_PRICES_TTL = 7200
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 # Dotted stat paths below were confirmed against live samples captured via
 # scripts/capture_fixtures.py (vehicle-items?filter[type]=<T>&filter[size]=<one
@@ -183,20 +188,41 @@ def _vehicle_alternatives(vehicles: list[dict], resolved: dict, limit: int = 3) 
     return out
 
 
+def _tokens(s: str) -> set[str]:
+    """Whole lowercased alphanumeric tokens of length >= 3. Used to reject
+    NameIndex's generic WRatio fuzzy-ambiguous vehicle candidates that share
+    no real word with the query (fix round 1: "asdf" was matching
+    ['Hammerhead', 'HoverQuad', ...] on pure string-similarity noise -- a
+    plainly unrelated set of ships for an unrecognised name, which is the
+    opposite of this task's anti-hallucination goal)."""
+    return {t for t in _TOKEN_RE.findall((s or "").lower()) if len(t) >= 3}
+
+
+def _merge_freshness(*results: CacheResult) -> dict:
+    """Like freshness(), but across several CacheResults feeding one output
+    (the vehicle index fetch and the per-vehicle price fetch) -- stale if
+    EITHER was stale, reporting the older age."""
+    stale = [r for r in results if r.status == "stale"]
+    if not stale:
+        return {}
+    worst = max(stale, key=lambda r: r.age_s)
+    return {"stale": True, "age_minutes": round(worst.age_s / 60)}
+
+
 class ItemTools:
     def __init__(self, wiki: WikiClient, cache: TTLCache, uex: UexClient | None = None) -> None:
         self._wiki = wiki
         self._cache = cache
         self._uex = uex
 
-    async def _vehicle_index(self) -> tuple[NameIndex, list[dict]]:
+    async def _vehicle_index(self) -> tuple[NameIndex, list[dict], CacheResult]:
         res = await self._cache.get_or_fetch("uex:vehicles", _VEHICLE_INDEX_TTL, self._uex.vehicles)
         index = NameIndex()
         for e in vehicle_entries(res.value):
             index.add(e)
-        return index, res.value
+        return index, res.value, res
 
-    async def _vehicle_result(self, entry: Entry, vehicles: list[dict]) -> dict:
+    async def _vehicle_result(self, entry: Entry, vehicles: list[dict], index_res: CacheResult) -> dict:
         v = entry.data
         pres = await self._cache.get_or_fetch(
             f"uex:vprices:{v['id']}", _VEHICLE_PRICES_TTL,
@@ -204,39 +230,64 @@ class ItemTools:
         shops = _vehicle_shops(pres.value)
         out = {"source": _VEHICLE_SOURCE, "game_version": v.get("game_version"),
                "item": _vehicle_summary(v), "where_to_buy": shops,
-               "alternatives": _vehicle_alternatives(vehicles, v), **freshness(pres)}
+               "alternatives": _vehicle_alternatives(vehicles, v),
+               **_merge_freshness(index_res, pres)}
         if not shops:
             out["note"] = ("No player-reported dealer listings on UEX (may be "
                            "pledge-store only or not sold in game).")
         return out
 
     async def _resolve_vehicle(self, name: str):
-        """Returns (resolution, vehicles) on success, or None if the vehicle
-        index itself couldn't be fetched (UpstreamError) -- callers treat
-        None exactly like "no vehicle path available" and fall through to
-        Wiki, per task-14 brief: any vehicle-path UpstreamError falls through,
-        never raises."""
+        """Returns (resolution, vehicles, index_res) on success, or None if
+        the vehicle path can't be used at all -- callers treat None exactly
+        like "no vehicle path available" and fall through to Wiki. Per
+        task-14 brief this must never raise: any exception (an UpstreamError
+        from the fetch, or e.g. a KeyError from a malformed record missing
+        "id" inside vehicle_entries()) is caught and logged, not just
+        UpstreamError -- a bad vehicle record must not surface as sc_find_item
+        returning error("internal", ...) when the Wiki path could still
+        answer."""
         if self._uex is None:
             return None
         try:
-            index, vehicles = await self._vehicle_index()
-        except UpstreamError:
+            index, vehicles, index_res = await self._vehicle_index()
+        except Exception:
+            logger.warning("vehicle index unavailable for '%s'; falling back to Wiki path",
+                           name, exc_info=True)
             return None
-        return index.resolve(name, kind="vehicle"), vehicles
+        return index.resolve(name, kind="vehicle"), vehicles, index_res
 
     async def find_item(self, name: str) -> dict:
         vehicle_ambiguous: list[str] | None = None
         if self._uex is not None:
             resolved = await self._resolve_vehicle(name)
             if resolved is not None:
-                resolution, vehicles = resolved
+                resolution, vehicles, index_res = resolved
                 if resolution.status in ("exact", "fuzzy"):
                     try:
-                        return await self._vehicle_result(resolution.match, vehicles)
-                    except UpstreamError:
-                        pass  # fall through to the Wiki item path
+                        return await self._vehicle_result(resolution.match, vehicles, index_res)
+                    except Exception:
+                        # Any failure building the vehicle result (price fetch
+                        # UpstreamError, or a malformed record) falls through
+                        # to the Wiki item path rather than raising.
+                        logger.warning("vehicle result failed for '%s'; falling back to Wiki path",
+                                       name, exc_info=True)
                 elif resolution.status == "ambiguous":
-                    vehicle_ambiguous = [c.name for c in resolution.candidates[:5]]
+                    # Fix round 1: NameIndex's generic WRatio fuzzy scoring
+                    # returns "ambiguous" for practically any input once
+                    # nothing scores high enough to be unique -- against the
+                    # real 282-vehicle fixture, "asdf" and "random nonsense
+                    # zzz" both come back "ambiguous" with a handful of
+                    # totally unrelated ship names. Only keep candidates that
+                    # share a whole token with the query; a genuinely unknown
+                    # name is left with NO vehicle candidates and falls
+                    # through to the Wiki path's own not_found/ambiguous,
+                    # rather than fabricating an "ambiguous vehicle" answer.
+                    query_tokens = _tokens(name)
+                    matched = [c.name for c in resolution.candidates
+                              if query_tokens & _tokens(c.name)]
+                    if matched:
+                        vehicle_ambiguous = matched[:5]
 
         wiki_result = await self._find_wiki_item(name)
         if vehicle_ambiguous is not None and wiki_result.get("error") == "not_found":

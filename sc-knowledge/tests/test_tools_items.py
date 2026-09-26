@@ -1,9 +1,23 @@
+import httpx
+
 from src.cache import TTLCache
 from src.config import load
-from src.tools_items import ItemTools
+from src.tools_items import _VEHICLE_INDEX_TTL, ItemTools
 from src.uex import build_uex
 from src.wiki import build_wiki
 from tests.conftest import fixture_transport, load_fixture
+
+_EMPTY_WIKI_ROUTES = {"/api/v2/items": "wiki_items_search_empty.json"}
+
+
+class _Clock:
+    """Manually-advanceable clock for TTLCache staleness tests (mirrors
+    tests/test_cache.py's Clock)."""
+    def __init__(self, t: float = 1000.0):
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
 
 
 def _tools():
@@ -170,13 +184,104 @@ async def test_find_item_ambiguous_vehicle_with_no_wiki_match_returns_vehicle_am
     assert set(r["candidates"]) == {"Freelancer MAX", "Freelancer MIS"}
 
 
+# --- Fix round 1: reject unrelated fuzzy-ambiguous vehicle noise ------------
+
+async def test_find_item_nonsense_queries_are_not_found_not_ambiguous_vehicle():
+    """Controller ruling, fix round 1: against the REAL 282-vehicle fixture,
+    NameIndex's generic WRatio fuzzy scoring calls "asdf", "random nonsense
+    zzz" and "CF-227 Badger Repeater" all "ambiguous", each with a handful of
+    totally unrelated real ship names (e.g. "asdf" -> Hammerhead/HoverQuad/
+    Nomad/Ironclad/Asgard) -- pure string-similarity noise on words that share
+    no real token with any of those ships. None of these candidates share a
+    whole alphanumeric token (len >= 3) with the query, so with the Wiki path
+    also finding nothing, find_item must return an honest not_found, never a
+    fabricated "ambiguous" vehicle answer with unrelated ships listed."""
+    for query in ("asdf", "random nonsense zzz", "CF-227 Badger Repeater"):
+        r = await _tools_with_uex(wiki_routes=_EMPTY_WIKI_ROUTES).find_item(query)
+        assert r.get("error") == "not_found", (query, r)
+
+
+async def test_find_item_hornet_family_ambiguous_with_real_shared_token():
+    """Contrast case for the token filter above: "Hornet" is a real
+    multi-variant family in the fixture (F7A Hornet Mk I, F7C Hornet Mk II,
+    F7C-M Super Hornet Mk I, ...) and every one of NameIndex's ambiguous
+    candidates genuinely shares the "hornet" token with the query -- this must
+    still surface as an honest ambiguous vehicle answer (with the Wiki path
+    also finding nothing), not be swept into not_found by the same filter."""
+    r = await _tools_with_uex(wiki_routes=_EMPTY_WIKI_ROUTES).find_item("Hornet")
+    assert r["error"] == "ambiguous"
+    assert r["candidates"]
+    assert all("hornet" in c.lower() for c in r["candidates"])
+
+
+async def test_find_item_scorpius_shield_v801_unchanged_by_token_filter():
+    """The token filter must not disturb any of the already-covered
+    resolutions: exact vehicle match, and Wiki-path fallthrough for a generic
+    component word or a real Wiki-only item name."""
+    r_scorpius = await _tools_with_uex().find_item("Scorpius")
+    assert r_scorpius["item"]["name"] == "RSI Scorpius"
+
+    r_antares = await _tools_with_uex().find_item("Scorpius Antares")
+    assert r_antares["item"]["name"] == "RSI Scorpius Antares"
+
+    r_shield = await _tools_with_uex().find_item("Shield")
+    assert (r_shield.get("item") or {}).get("type") != "Vehicle"
+
+    r_v801 = await _tools_with_uex().find_item("V801-12")
+    assert r_v801["item"]["type"] == "Radar"
+
+
+async def test_find_item_malformed_vehicle_record_falls_back_to_wiki():
+    """A vehicles fixture with one record missing "id" must not surface as
+    error("internal", ...) -- vehicle_entries() raises KeyError building the
+    index, the whole vehicle path is treated as unavailable (logged, not
+    raised), and the Wiki path still answers for a real Wiki item."""
+    r = await _tools_with_uex(uex_routes={
+        "/2.0/vehicles": "uex_vehicles_missing_id.json",
+    }).find_item("V801-12")
+    assert "error" not in r
+    assert r["item"]["type"] == "Radar"
+    assert r["source"] == "star-citizen.wiki (+UEX prices)"
+
+
+async def test_find_item_vehicle_result_reports_stale_index_freshness():
+    """When the vehicle index refetch fails and TTLCache serves the stale
+    entry, the vehicle result must surface that staleness (freshness() is
+    normally only applied to the price fetch; it must also cover the index
+    fetch feeding the same result)."""
+    clk = _Clock()
+    cache = TTLCache(clock=clk)
+    vehicles = load_fixture("uex_vehicles.json")["data"]
+    prices = load_fixture("uex_vehicle_prices_scorpius.json")["data"]
+
+    calls = {"n": 0}
+
+    class _FlakyUex:
+        async def vehicles(self):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise RuntimeError("uex down")
+            return vehicles
+
+        async def vehicles_purchases_prices(self, id_vehicle):
+            return prices
+
+    wiki = build_wiki(load(), transport=fixture_transport({}))
+    tools = ItemTools(wiki, cache, uex=_FlakyUex())
+
+    r1 = await tools.find_item("Scorpius")
+    assert r1.get("stale") is not True
+
+    clk.t += _VEHICLE_INDEX_TTL + 10  # expire both index and price cache entries
+    r2 = await tools.find_item("Scorpius")
+    assert calls["n"] == 2  # the second vehicles() call is the one that raised
+    assert r2["stale"] is True
+    assert r2["age_minutes"] == round((_VEHICLE_INDEX_TTL + 10) / 60)
+
+
 async def test_find_item_vehicle_upstream_error_falls_back_to_wiki_path():
     """Any vehicle-path UpstreamError (e.g. the vehicles list 500s) must fall
     through to the existing Wiki path rather than raising or erroring out."""
-    import httpx
-
-    from src.uex import build_uex
-
     def _500(req):
         return httpx.Response(500, text="boom")
 
@@ -196,10 +301,6 @@ async def test_find_item_vehicle_price_upstream_error_falls_back_to_wiki_path():
     must still fall through to Wiki rather than erroring (only V801-12 is a
     real Wiki item here, so a non-fallback result would show a Vehicle type
     or an error, not a Radar)."""
-    import httpx
-
-    from src.uex import build_uex
-
     def handler(req):
         if req.url.path == "/2.0/vehicles":
             return httpx.Response(200, json=load_fixture("uex_vehicles.json"))

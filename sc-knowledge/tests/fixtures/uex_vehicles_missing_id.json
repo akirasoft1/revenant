@@ -1,0 +1,29 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {
+   "name": "BrokenRecord",
+   "name_full": "Broken Record",
+   "slug": "broken-record",
+   "company_name": "Nobody",
+   "scu": 0,
+   "crew": "1",
+   "pad_type": "S",
+   "game_version": "4.10.1"
+  },
+  {
+   "id": 174,
+   "id_parent": 174,
+   "name": "Scorpius",
+   "name_full": "RSI Scorpius",
+   "slug": "scorpius",
+   "company_name": "Roberts Space Industries",
+   "scu": 0,
+   "crew": "2",
+   "pad_type": "S",
+   "game_version": "4.10.1"
+  }
+ ],
+ "message": ""
+}
