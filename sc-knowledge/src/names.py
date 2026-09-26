@@ -101,6 +101,12 @@ def commodity_entries(commodities: list[dict]) -> list[Entry]:
             for c in commodities]
 
 
+def vehicle_entries(vehicles: list[dict]) -> list[Entry]:
+    return [Entry("vehicle", v["id"], v.get("name") or "",
+                  tuple(a for a in {v.get("name"), v.get("name_full"), v.get("slug")} if a), v)
+            for v in vehicles]
+
+
 def faction_entries(factions: list[dict]) -> list[Entry]:
     return [Entry("faction", f.get("uuid") or f.get("name"), f.get("name") or "",
                   tuple(a for a in {f.get("name")} if a), f)

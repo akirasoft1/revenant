@@ -40,6 +40,12 @@ class UexClient:
     async def items_prices(self, id_item: int) -> list[dict]:
         return await self._data("items_prices", {"id_item": id_item})
 
+    async def vehicles(self) -> list[dict]:
+        return await self._data("vehicles")
+
+    async def vehicles_purchases_prices(self, id_vehicle: int) -> list[dict]:
+        return await self._data("vehicles_purchases_prices", {"id_vehicle": id_vehicle})
+
 
 def build_uex(config: Config, transport: httpx.AsyncBaseTransport | None = None) -> UexClient:
     headers = {

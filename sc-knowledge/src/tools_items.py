@@ -1,12 +1,18 @@
 """find_item / compare_components over the Star Citizen Wiki API (which embeds UEX shop prices)."""
+from datetime import datetime, timezone
+
 from .cache import TTLCache
 from .envelope import error, freshness
 from .http import UpstreamError
-from .names import normalise
+from .names import Entry, NameIndex, normalise, vehicle_entries
+from .uex import UexClient
 from .wiki import WikiClient
 
 _TTL = 43200
 SOURCE = "star-citizen.wiki (+UEX prices)"
+_VEHICLE_SOURCE = "uexcorp.space (crowd-sourced)"
+_VEHICLE_INDEX_TTL = 21600
+_VEHICLE_PRICES_TTL = 7200
 
 # Dotted stat paths below were confirmed against live samples captured via
 # scripts/capture_fixtures.py (vehicle-items?filter[type]=<T>&filter[size]=<one
@@ -126,12 +132,119 @@ def _summary(item: dict) -> dict:
             "manufacturer": mfr.get("name"), "key_stats": stats}
 
 
+def _iso(epoch) -> str | None:
+    if not epoch:
+        return None
+    try:
+        return datetime.fromtimestamp(int(epoch), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _vehicle_summary(v: dict) -> dict:
+    return {"name": v.get("name_full") or v.get("name"), "type": "Vehicle",
+            "manufacturer": v.get("company_name"), "scu": v.get("scu"),
+            "crew": v.get("crew"), "pad_type": v.get("pad_type")}
+
+
+def _vehicle_shops(prices: list[dict]) -> list[dict]:
+    out = []
+    for p in prices:
+        price = p.get("price_buy")
+        if not price:
+            continue
+        try:
+            # Same defensive skip as _shops(): never let a malformed upstream
+            # price_buy raise across the MCP boundary.
+            price_auec = int(price)
+        except (TypeError, ValueError):
+            continue
+        specific = p.get("city_name") or p.get("space_station_name") or p.get("outpost_name")
+        location = ", ".join(x for x in (specific, p.get("planet_name")) if x)
+        out.append({"shop": p.get("terminal_name"), "location": location,
+                    "system": p.get("star_system_name"), "price_auec": price_auec,
+                    "reported_at": _iso(p.get("date_modified"))})
+    return sorted(out, key=lambda s: s["price_auec"])
+
+
+def _vehicle_alternatives(vehicles: list[dict], resolved: dict, limit: int = 3) -> list[str]:
+    """Other vehicle names sharing the resolved vehicle's family (grouped by
+    id_parent -- a variant's own id_parent points at its base ship, and the
+    base ship's id_parent points at itself)."""
+    base_id = resolved.get("id_parent") or resolved.get("id")
+    out = []
+    for v in vehicles:
+        if v.get("id") == resolved.get("id"):
+            continue
+        if (v.get("id_parent") or v.get("id")) == base_id:
+            out.append(v.get("name"))
+            if len(out) >= limit:
+                break
+    return out
+
+
 class ItemTools:
-    def __init__(self, wiki: WikiClient, cache: TTLCache) -> None:
+    def __init__(self, wiki: WikiClient, cache: TTLCache, uex: UexClient | None = None) -> None:
         self._wiki = wiki
         self._cache = cache
+        self._uex = uex
+
+    async def _vehicle_index(self) -> tuple[NameIndex, list[dict]]:
+        res = await self._cache.get_or_fetch("uex:vehicles", _VEHICLE_INDEX_TTL, self._uex.vehicles)
+        index = NameIndex()
+        for e in vehicle_entries(res.value):
+            index.add(e)
+        return index, res.value
+
+    async def _vehicle_result(self, entry: Entry, vehicles: list[dict]) -> dict:
+        v = entry.data
+        pres = await self._cache.get_or_fetch(
+            f"uex:vprices:{v['id']}", _VEHICLE_PRICES_TTL,
+            lambda: self._uex.vehicles_purchases_prices(v["id"]))
+        shops = _vehicle_shops(pres.value)
+        out = {"source": _VEHICLE_SOURCE, "game_version": v.get("game_version"),
+               "item": _vehicle_summary(v), "where_to_buy": shops,
+               "alternatives": _vehicle_alternatives(vehicles, v), **freshness(pres)}
+        if not shops:
+            out["note"] = ("No player-reported dealer listings on UEX (may be "
+                           "pledge-store only or not sold in game).")
+        return out
+
+    async def _resolve_vehicle(self, name: str):
+        """Returns (resolution, vehicles) on success, or None if the vehicle
+        index itself couldn't be fetched (UpstreamError) -- callers treat
+        None exactly like "no vehicle path available" and fall through to
+        Wiki, per task-14 brief: any vehicle-path UpstreamError falls through,
+        never raises."""
+        if self._uex is None:
+            return None
+        try:
+            index, vehicles = await self._vehicle_index()
+        except UpstreamError:
+            return None
+        return index.resolve(name, kind="vehicle"), vehicles
 
     async def find_item(self, name: str) -> dict:
+        vehicle_ambiguous: list[str] | None = None
+        if self._uex is not None:
+            resolved = await self._resolve_vehicle(name)
+            if resolved is not None:
+                resolution, vehicles = resolved
+                if resolution.status in ("exact", "fuzzy"):
+                    try:
+                        return await self._vehicle_result(resolution.match, vehicles)
+                    except UpstreamError:
+                        pass  # fall through to the Wiki item path
+                elif resolution.status == "ambiguous":
+                    vehicle_ambiguous = [c.name for c in resolution.candidates[:5]]
+
+        wiki_result = await self._find_wiki_item(name)
+        if vehicle_ambiguous is not None and wiki_result.get("error") == "not_found":
+            return error("ambiguous", f"'{name}' matches several vehicles",
+                         candidates=vehicle_ambiguous)
+        return wiki_result
+
+    async def _find_wiki_item(self, name: str) -> dict:
         try:
             res = await self._cache.get_or_fetch(f"wiki:item:{normalise(name)}", _TTL,
                                                  lambda: self._wiki.item(name))

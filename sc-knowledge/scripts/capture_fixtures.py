@@ -20,6 +20,9 @@ CAPTURES = {
     "uex_routes_mic_l5.json": f"{UEX}/commodities_routes?id_terminal_origin=58",
     "uex_commodity_prices_79.json": f"{UEX}/commodities_prices?id_commodity=79",
     "uex_items_prices_5601.json": f"{UEX}/items_prices?id_item=5601",
+    # Task 14: ship/vehicle purchases for sc_find_item.
+    "uex_vehicles.json": f"{UEX}/vehicles",
+    "uex_vehicle_prices_scorpius.json": f"{UEX}/vehicles_purchases_prices?id_vehicle=174",
     "wiki_item_v801_12.json": f"{WIKI}/v2/items/V801-12",
     "wiki_items_search_v801.json": f"{WIKI}/v2/items?" + urllib.parse.urlencode({"filter[name]": "V801", "limit": 10}),
     "wiki_vehicle_items_shield_s2.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Shield", "filter[size]": 2, "limit": 200}),

@@ -1,0 +1,31 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {
+   "id": 901,
+   "id_parent": 901,
+   "name": "Freelancer MAX",
+   "name_full": "MISC Freelancer MAX",
+   "slug": "freelancer-max",
+   "company_name": "Musashi Industrial and Starflight Concern",
+   "scu": 120,
+   "crew": "2",
+   "pad_type": "M",
+   "game_version": "4.10.1"
+  },
+  {
+   "id": 902,
+   "id_parent": 902,
+   "name": "Freelancer MIS",
+   "name_full": "MISC Freelancer MIS",
+   "slug": "freelancer-mis",
+   "company_name": "Musashi Industrial and Starflight Concern",
+   "scu": 12,
+   "crew": "3",
+   "pad_type": "M",
+   "game_version": "4.10.1"
+  }
+ ],
+ "message": ""
+}

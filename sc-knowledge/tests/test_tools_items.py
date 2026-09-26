@@ -1,6 +1,7 @@
 from src.cache import TTLCache
 from src.config import load
 from src.tools_items import ItemTools
+from src.uex import build_uex
 from src.wiki import build_wiki
 from tests.conftest import fixture_transport, load_fixture
 
@@ -12,6 +13,22 @@ def _tools():
         "/api/vehicle-items": "wiki_vehicle_items_shield_s2.json",
     }))
     return ItemTools(wiki, TTLCache())
+
+
+def _tools_with_uex(wiki_routes=None, uex_routes=None):
+    wiki = build_wiki(load(), transport=fixture_transport(wiki_routes if wiki_routes is not None else {
+        "/api/v2/items/V801-12": "wiki_item_v801_12.json",
+        "/api/v2/items": "wiki_items_search_v801.json",
+    }))
+    uex = build_uex(load(), transport=fixture_transport({
+        # Longest-prefix routing: "/2.0/vehicles_purchases_prices" would
+        # otherwise be swallowed by the "/2.0/vehicles" prefix, so both are
+        # registered explicitly (task-14 brief).
+        "/2.0/vehicles_purchases_prices": "uex_vehicle_prices_scorpius.json",
+        "/2.0/vehicles": "uex_vehicles.json",
+        **(uex_routes or {}),
+    }))
+    return ItemTools(wiki, TTLCache(), uex=uex)
 
 
 async def test_find_item_v801_12_where_to_buy():
@@ -81,6 +98,128 @@ async def test_compare_excludes_missing_stat_and_reports_count():
 async def test_compare_unknown_type_is_bad_request():
     r = await _tools().compare_components("banana", 2)
     assert r["error"] == "bad_request" and "shield" in r["detail"]
+
+
+# --- Task 14: ship/vehicle purchases in sc_find_item ------------------------
+
+async def test_find_item_scorpius_resolves_to_base_vehicle_with_uex_price():
+    """'Scorpius' must resolve to the base Scorpius (id 174), not 'Scorpius
+    Antares' (id 175), and return the real New Deal / Lorville / 5,171,040
+    aUEC listing from the captured UEX fixture (live-eval regression)."""
+    r = await _tools_with_uex().find_item("Scorpius")
+    assert "error" not in r
+    assert r["source"] == "uexcorp.space (crowd-sourced)"
+    assert r["game_version"] == "4.10.1"
+    assert r["item"]["name"] == "RSI Scorpius"
+    assert r["item"]["type"] == "Vehicle"
+    assert r["item"]["manufacturer"] == "Roberts Space Industries"
+    assert r["item"]["crew"] == "2"
+    top = r["where_to_buy"][0]
+    assert top["shop"] == "New Deal - Teasa Spaceport - Lorville"
+    assert top["price_auec"] == 5171040
+    assert top["location"] == "Lorville, Hurston"
+    assert top["system"] == "Stanton"
+    assert top["reported_at"] == "2026-09-11T05:11:36+00:00"
+    assert r["alternatives"] == ["Scorpius Antares"]
+
+
+async def test_find_item_scorpius_antares_resolves_to_antares_not_base():
+    r = await _tools_with_uex().find_item("Scorpius Antares")
+    assert "error" not in r
+    assert r["item"]["name"] == "RSI Scorpius Antares"
+    assert r["alternatives"] == ["Scorpius"]
+
+
+async def test_find_item_v801_12_still_resolves_via_wiki_with_uex_present():
+    """A real Wiki-only item name must not be captured by vehicle resolution
+    just because a uex client is wired in."""
+    r = await _tools_with_uex().find_item("V801-12")
+    assert "error" not in r
+    assert r["item"]["type"] == "Radar" and r["item"]["size"] == 2
+    assert r["source"] == "star-citizen.wiki (+UEX prices)"
+
+
+async def test_find_item_generic_word_does_not_fuzzy_match_vehicle():
+    """A generic word like 'Shield' must not resolve as an exact/fuzzy vehicle
+    match against the real 282-vehicle fixture (which would fabricate a wrong
+    'Vehicle' result for what is really a component-type query) -- it must
+    fall through to the existing Wiki item path, whatever that path returns."""
+    from src.names import NameIndex, vehicle_entries
+
+    vehicles = load_fixture("uex_vehicles.json")["data"]
+    idx = NameIndex()
+    for e in vehicle_entries(vehicles):
+        idx.add(e)
+    assert idx.resolve("Shield", kind="vehicle").status not in ("exact", "fuzzy")
+
+    r = await _tools_with_uex().find_item("Shield")
+    assert r.get("source") != "uexcorp.space (crowd-sourced)"
+    assert (r.get("item") or {}).get("type") != "Vehicle"
+
+
+async def test_find_item_ambiguous_vehicle_with_no_wiki_match_returns_vehicle_ambiguous():
+    """Two vehicles sharing a fuzzy-ambiguous alias, with no Wiki match at
+    all, surface the vehicle candidates as an 'ambiguous' error rather than a
+    plain not_found."""
+    uex_routes = {"/2.0/vehicles": "uex_vehicles_ambiguous_pair.json"}
+    r = await _tools_with_uex(wiki_routes={
+        "/api/v2/items/Freelancer": "wiki_items_search_empty.json",
+        "/api/v2/items": "wiki_items_search_empty.json",
+    }, uex_routes=uex_routes).find_item("Freelancer")
+    assert r["error"] == "ambiguous"
+    assert set(r["candidates"]) == {"Freelancer MAX", "Freelancer MIS"}
+
+
+async def test_find_item_vehicle_upstream_error_falls_back_to_wiki_path():
+    """Any vehicle-path UpstreamError (e.g. the vehicles list 500s) must fall
+    through to the existing Wiki path rather than raising or erroring out."""
+    import httpx
+
+    from src.uex import build_uex
+
+    def _500(req):
+        return httpx.Response(500, text="boom")
+
+    wiki = build_wiki(load(), transport=fixture_transport({
+        "/api/v2/items/V801-12": "wiki_item_v801_12.json",
+        "/api/v2/items": "wiki_items_search_v801.json",
+    }))
+    uex = build_uex(load(), transport=httpx.MockTransport(_500))
+    r = await ItemTools(wiki, TTLCache(), uex=uex).find_item("V801-12")
+    assert "error" not in r
+    assert r["item"]["type"] == "Radar"
+    assert r["source"] == "star-citizen.wiki (+UEX prices)"
+
+
+async def test_find_item_vehicle_price_upstream_error_falls_back_to_wiki_path():
+    """A vehicle name resolves, but the per-vehicle price fetch itself 500s --
+    must still fall through to Wiki rather than erroring (only V801-12 is a
+    real Wiki item here, so a non-fallback result would show a Vehicle type
+    or an error, not a Radar)."""
+    import httpx
+
+    from src.uex import build_uex
+
+    def handler(req):
+        if req.url.path == "/2.0/vehicles":
+            return httpx.Response(200, json=load_fixture("uex_vehicles.json"))
+        return httpx.Response(500, text="boom")
+
+    wiki = build_wiki(load(), transport=fixture_transport({
+        "/api/v2/items/Scorpius": "wiki_items_search_empty.json",
+        "/api/v2/items": "wiki_items_search_empty.json",
+    }))
+    uex = build_uex(load(), transport=httpx.MockTransport(handler))
+    r = await ItemTools(wiki, TTLCache(), uex=uex).find_item("Scorpius")
+    assert r.get("error") == "not_found"
+
+
+async def test_find_item_vehicle_with_no_uex_listings_reports_note():
+    r = await _tools_with_uex(uex_routes={
+        "/2.0/vehicles_purchases_prices": "uex_vehicle_prices_empty.json",
+    }).find_item("Scorpius")
+    assert r["where_to_buy"] == []
+    assert "note" in r
 
 
 def _tools_for(sample_fixture: str):

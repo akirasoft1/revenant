@@ -67,7 +67,7 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     uex = build_uex(config, uex_transport)
     wiki = build_wiki(config, wiki_transport)
 
-    item_tools = ItemTools(wiki, cache)
+    item_tools = ItemTools(wiki, cache, uex=uex)
     mission_tools = MissionTools(wiki, cache)
     trade_tools = TradeTools(uex, cache)
     guide_tools = GuideTools(GuideStore(guides_dir or config.guides_dir))
@@ -96,7 +96,9 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
                 if not isinstance(result, dict):
                     result = error("internal", f"non-dict tool result: {result!r}")
             except Exception as e:  # tools never raise across the MCP boundary
-                logger.exception("sc_%s raised unexpectedly", name)
+                # `name` is already the full tool name (e.g. "sc_find_item") --
+                # a "sc_%s" format here doubled the prefix to "sc_sc_find_item".
+                logger.exception("%s raised unexpectedly", name)
                 result = error("internal", repr(e))
 
             if "error" in result:
@@ -116,13 +118,14 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
 
     @mcp.tool(name="sc_find_item")
     async def sc_find_item(name: str) -> dict:
-        """Look up a single Star Citizen item/component by name (fuzzy match
-        on partial or slightly-misspelled names, e.g. "V801-12" or "greatsword
-        cannon") and return its stats plus every player-reported shop selling
-        it, cheapest first, with location and report date. Numbers (prices,
-        stats) are pre-computed from live game data -- prefer this over
-        memory, and mention the data's age; the game changes every patch. Do
-        NOT compute this yourself or use the sandbox."""
+        """Look up a single Star Citizen item/component OR ship/vehicle by
+        name (fuzzy match on partial or slightly-misspelled names, e.g.
+        "V801-12", "greatsword cannon", or a ship like "Scorpius") and return
+        its stats plus every player-reported shop/dealer selling it, cheapest
+        first, with location and report date. Numbers (prices, stats) are
+        pre-computed from live game data -- prefer this over memory, and
+        mention the data's age; the game changes every patch. Do NOT compute
+        this yourself or use the sandbox."""
         return await _guarded("sc_find_item", lambda: item_tools.find_item(name))
 
     @mcp.tool(name="sc_compare_components")

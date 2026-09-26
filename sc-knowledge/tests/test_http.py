@@ -52,3 +52,27 @@ async def test_preserves_long_error_body_intact():
     with pytest.raises(UpstreamError) as ei:
         await _client(handler).get_json("/x")
     assert ei.value.detail == long_body and len(ei.value.detail) == 1000
+
+
+async def test_non_json_success_body_raises_upstream_error():
+    """Task 14: a 200 whose body isn't valid JSON (some upstream outage pages
+    return an HTML error page with a 200 status) must not raise a raw
+    JSONDecodeError across the client boundary -- it becomes an UpstreamError
+    naming the full, untruncated body."""
+    body = "<html>not json at all</html>"
+    def handler(req):
+        return httpx.Response(200, text=body)
+    with pytest.raises(UpstreamError) as ei:
+        await _client(handler).get_json("/x")
+    assert ei.value.upstream == "uex" and ei.value.status == 200
+    assert ei.value.detail == f"non-JSON response body: {body}"
+
+
+async def test_non_json_success_body_is_not_retried():
+    n = {"i": 0}
+    def handler(req):
+        n["i"] += 1
+        return httpx.Response(200, text="nope")
+    with pytest.raises(UpstreamError):
+        await _client(handler).get_json("/x")
+    assert n["i"] == 1

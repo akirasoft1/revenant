@@ -44,7 +44,15 @@ class UpstreamClient:
                 last = UpstreamError(self.name, None, f"{type(e).__name__}: {e}")
             else:
                 if resp.status_code < 400:
-                    return resp.json()
+                    try:
+                        return resp.json()
+                    except ValueError:
+                        # A success status with a non-JSON body (e.g. an HTML
+                        # outage page served with a 200) is not retryable --
+                        # raise immediately, full body, no truncation.
+                        raise UpstreamError(
+                            self.name, resp.status_code,
+                            f"non-JSON response body: {resp.text}") from None
                 last = UpstreamError(self.name, resp.status_code, resp.text)
                 if resp.status_code not in _RETRY_STATUS:
                     raise last
