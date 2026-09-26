@@ -19,7 +19,7 @@ if (missing.length > 0) {
 const optionalEnvVars = {
   OPENAI_BASE_URL: 'https://api.openai.com/v1',
   OPENAI_METHOD: 'completion',
-  OPENAI_MODEL: 'gpt-4.1-mini',
+  OPENAI_MODEL: 'gpt-6-luna',
   DEBUG: 'false'
 };
 
@@ -154,7 +154,10 @@ module.exports = {
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || optionalEnvVars.OPENAI_BASE_URL,
     method: process.env.OPENAI_METHOD || optionalEnvVars.OPENAI_METHOD,
-    model: process.env.OPENAI_MODEL || optionalEnvVars.OPENAI_MODEL
+    model: process.env.OPENAI_MODEL || optionalEnvVars.OPENAI_MODEL,
+    // Reasoning effort for interactive direct-OpenAI chat (none|low|medium|high|xhigh|max).
+    // gpt-6-* are reasoning models; utility calls pin their own effort per call site.
+    reasoningEffort: process.env.OPENAI_REASONING_EFFORT || 'low'
   },
   bot: {
     maxSummaryLength: 1500,
@@ -279,9 +282,9 @@ module.exports = {
     // Gemini API key for image generation
     apiKey: process.env.GEMINI_API_KEY || '',
     // Model to use for image generation
-    // Options: 'gemini-3-pro-image-preview' (preferred), 'gemini-2.5-flash-image' (fallback)
-    model: process.env.IMAGEGEN_MODEL || 'gemini-2.5-flash-image',
-    // Premium model for admin users (BOT_ADMIN_USER_IDS) - falls back to standard model if not set
+    // Options: 'gemini-3.1-flash-image' (default, GA), 'gemini-3-pro-image' (premium, GA)
+    model: process.env.IMAGEGEN_MODEL || 'gemini-3.1-flash-image',
+    // Premium model for admin users (BOT_ADMIN_USER_IDS), e.g. 'gemini-3-pro-image' - falls back to standard model if not set
     adminModel: process.env.IMAGEGEN_ADMIN_MODEL || '',
     // Default aspect ratio for generated images
     // Options: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
@@ -325,8 +328,8 @@ module.exports = {
     enabled: process.env.MUSICGEN_ENABLED === 'true',
     // Gemini API key (falls back to GEMINI_API_KEY since they are the same credential)
     apiKey: process.env.LYRIA_API_KEY || process.env.GEMINI_API_KEY || '',
-    // Model to use. Pro is the only supported option today.
-    model: process.env.LYRIA_MODEL || 'lyria-3-pro-preview',
+    // Model to use: 'lyria-3.5' (default, full-length songs), 'lyria-3-pro-preview' (legacy)
+    model: process.env.LYRIA_MODEL || 'lyria-3.5',
     // Max reference images per request (Discord slash command exposes 3 slots)
     maxImagesPerRequest: 3,
     // Max prompt / lyrics / negative-prompt lengths
@@ -336,7 +339,7 @@ module.exports = {
     // Cooldown between music generations per user (in seconds)
     cooldownSeconds: parseInt(process.env.LYRIA_COOLDOWN_SECONDS || '60', 10),
     // Per-call flat cost (USD) used to seed CostService.mediaPricing override at runtime
-    perCallCostUsd: parseFloat(process.env.LYRIA_PER_CALL_COST_USD || '0.06')
+    perCallCostUsd: parseFloat(process.env.LYRIA_PER_CALL_COST_USD || '0.08')
   },
   // ElevenLabs - music generation via @elevenlabs/elevenlabs-js
   elevenlabs: {
@@ -360,7 +363,7 @@ module.exports = {
     // OpenAI API key (uses the main one if not specified)
     openaiApiKey: process.env.MEM0_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
     // LLM model for memory extraction (use cheap model)
-    llmModel: process.env.MEM0_LLM_MODEL || 'gpt-4o-mini',
+    llmModel: process.env.MEM0_LLM_MODEL || 'gpt-6-luna',
     // Embedding model
     embeddingModel: process.env.MEM0_EMBEDDING_MODEL || 'text-embedding-3-small'
   },
@@ -435,7 +438,7 @@ module.exports = {
     regenIntervalHours: parseInt(process.env.VOICE_PROFILE_REGEN_HOURS || '24', 10),
     samplesPerDecade: parseInt(process.env.VOICE_PROFILE_SAMPLES_PER_DECADE || '50', 10),
     discordSampleSize: parseInt(process.env.VOICE_PROFILE_DISCORD_SAMPLES || '100', 10),
-    analysisModel: process.env.VOICE_PROFILE_ANALYSIS_MODEL || 'gpt-4.1-mini',
+    analysisModel: process.env.VOICE_PROFILE_ANALYSIS_MODEL || 'gpt-6-luna',
     abLogging: process.env.VOICE_PROFILE_AB_LOGGING === 'true',
   },
   // Local LLM - Ollama integration for uncensored chat mode

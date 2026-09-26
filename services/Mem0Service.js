@@ -45,7 +45,7 @@ class Mem0Service {
         provider: 'openai',
         config: {
           apiKey: this.config.openaiApiKey,
-          model: this.config.llmModel || 'gpt-4o-mini',
+          model: this.config.llmModel || 'gpt-6-luna',
           temperature: 0.1, // Low temperature for consistent memory extraction
         },
       },

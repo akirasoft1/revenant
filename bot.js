@@ -121,7 +121,7 @@ class DiscordBot {
 
     // Core services - MongoService is a top-level dependency
     this.mongoService = new MongoService(config.mongo.uri);
-    this.messageService = new MessageService(this.openaiClient);
+    this.messageService = new MessageService(this.openaiClient, config);
     this.summarizationService = new SummarizationService(this.openaiClient, config, this.client, this.messageService, this.mongoService);
     // SandboxTraceService is initialized lazily after Mongo connects (this.mongoService.db
     // is null until then). The first reaction reveal will fetch traces directly from Mongo.

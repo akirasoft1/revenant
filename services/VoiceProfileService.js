@@ -2,6 +2,7 @@
 // Analyzes channel conversation history to build a dynamic voice profile
 
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 
 const DECADES = ['1990s', '2000s', '2010s', '2020s'];
 const BATCH_SIZE = 20; // Conversation chunks per LLM analysis call
@@ -167,7 +168,7 @@ class VoiceProfileService {
       profile.metadata = {
         ircSamplesUsed: ircSamples.length,
         discordSamplesUsed: discordSamples.length,
-        analysisModel: this.config.analysisModel || 'gpt-4.1-mini',
+        analysisModel: this.config.analysisModel || DEFAULT_OPENAI_MODEL,
         batchCount: batchResults.length
       };
 
@@ -235,10 +236,12 @@ class VoiceProfileService {
     if (!batchText.trim()) return null;
 
     try {
+      const model = this.config.analysisModel || DEFAULT_OPENAI_MODEL;
       const response = await this.openai.responses.create({
-        model: this.config.analysisModel || 'gpt-4.1-mini',
+        model,
         instructions: ANALYSIS_PROMPT,
-        input: `CONVERSATIONS:\n${batchText}`
+        input: `CONVERSATIONS:\n${batchText}`,
+        ...reasoningParams(model, 'medium')
       });
 
       try {
@@ -260,10 +263,12 @@ class VoiceProfileService {
    */
   async _synthesizeProfile(batchResults) {
     try {
+      const model = this.config.analysisModel || DEFAULT_OPENAI_MODEL;
       const response = await this.openai.responses.create({
-        model: this.config.analysisModel || 'gpt-4.1-mini',
+        model,
         instructions: SYNTHESIS_PROMPT,
-        input: `INDIVIDUAL ANALYSES:\n${JSON.stringify(batchResults, null, 2)}`
+        input: `INDIVIDUAL ANALYSES:\n${JSON.stringify(batchResults, null, 2)}`,
+        ...reasoningParams(model, 'medium')
       });
 
       const parsed = JSON.parse(response.output_text);

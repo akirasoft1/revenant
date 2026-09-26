@@ -83,7 +83,7 @@ describe('MongoService', () => {
 
       expect(mockCollection.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: 'gpt-5.1'
+          model: 'gpt-6-luna'
         })
       );
     });

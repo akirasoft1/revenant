@@ -11,6 +11,10 @@
 
 const DEFAULT_OPENAI_MODEL = 'gpt-6-luna';
 
+// Interactive chat (direct-OpenAI fallback path) — latency matters, and the
+// web_search tool already supplies grounding. Override via OPENAI_REASONING_EFFORT.
+const DEFAULT_CHAT_REASONING_EFFORT = 'low';
+
 const REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
 
 // gpt-5*, gpt-6*, and the o-series are reasoning models; gpt-4.x / gpt-4o are not.
@@ -64,6 +68,7 @@ function getTokenPricing(model) {
 
 module.exports = {
   DEFAULT_OPENAI_MODEL,
+  DEFAULT_CHAT_REASONING_EFFORT,
   REASONING_EFFORTS,
   isReasoningModel,
   reasoningParams,

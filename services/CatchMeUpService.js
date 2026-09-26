@@ -2,6 +2,7 @@
 // Synthesizes a "catch me up" summary of what happened while a user was away
 
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 
 // Default lookback when no last-seen record exists (3 days)
 const DEFAULT_LOOKBACK_DAYS = 3;
@@ -137,10 +138,12 @@ Your task:
       logger.info(`Catch-up LLM input for user ${userId}: ${contextLines} context lines, ${gatheredContext.length} chars`);
       logger.debug(`Catch-up raw context:\n${gatheredContext}`);
 
+      const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
       const response = await this.openaiClient.responses.create({
-        model: this.config.openai.model || 'gpt-4.1-mini',
+        model,
         instructions: systemPrompt,
-        input: gatheredContext
+        input: gatheredContext,
+        ...reasoningParams(model, 'low')
       });
 
       logger.info(`Catch-up generated for user ${userId}: ${response.usage?.input_tokens || 0} input tokens, ${response.usage?.output_tokens || 0} output tokens`);

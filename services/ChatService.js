@@ -6,6 +6,7 @@ const personalityManager = require('../personalities');
 const { countTokens, wouldExceedLimit } = require('../utils/tokenCounter');
 const { withSpan } = require('../tracing');
 const localLlmService = require('./LocalLlmService');
+const { DEFAULT_OPENAI_MODEL, DEFAULT_CHAT_REASONING_EFFORT, reasoningParams } = require('../utils/openaiModels');
 
 // Conversation limits
 const LIMITS = {
@@ -26,6 +27,16 @@ class ChatService {
     this.agentClient = agentClient;
     // v2 centralized ranked recall (RecallService); null disables the v2 path.
     this.recallService = recallService;
+  }
+
+  /**
+   * Reasoning effort for the interactive direct-OpenAI chat paths
+   * (OPENAI_REASONING_EFFORT, default low). Omitted for non-reasoning models.
+   * @private
+   */
+  _chatReasoningParams(model) {
+    const effort = (this.config && this.config.openai && this.config.openai.reasoningEffort) || DEFAULT_CHAT_REASONING_EFFORT;
+    return reasoningParams(model, effort);
   }
 
   /**
@@ -735,7 +746,7 @@ ${context}`;
         // sidecar). This repo has been bitten by silent model substitution
         // before, so both the log and the user-visible notice name what
         // actually answered.
-        const directModel = (this.config && this.config.openai && this.config.openai.model) || 'gpt-5.1';
+        const directModel = (this.config && this.config.openai && this.config.openai.model) || DEFAULT_OPENAI_MODEL;
         const emptyTurn = err && err.agentEmptyTurn === true;
         if (emptyTurn) {
           logger.warn(`Agent returned an empty turn (${err.message}) — the sidecar was reachable and the call succeeded, it simply produced no text; falling through to direct OpenAI: this turn is answered by ${directModel} via the OpenAI API instead of the agent sidecar, so it has no sandbox tool access and a different model's voice`);
@@ -950,7 +961,7 @@ ${context}`;
             const fallbackSystemPrompt = this._buildGroupSystemPrompt(fallbackPers, memoryContext, channelContext, sharedContext);
             const apiInput = this._buildApiInput(inputText, imageUrl);
 
-            const model = this.config.openai.model || 'gpt-5.1';
+            const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
             const response = await withSpan('openai.responses.create', {
               'gen_ai.system': 'openai',
               'gen_ai.operation.name': 'chat',
@@ -969,7 +980,8 @@ ${context}`;
                 model: model,
                 instructions: fallbackSystemPrompt,
                 input: apiInput,
-                tools: [{ type: 'web_search' }]
+                tools: [{ type: 'web_search' }],
+                ...this._chatReasoningParams(model)
               });
 
               span.setAttributes({
@@ -1006,7 +1018,7 @@ ${context}`;
           logger.info(`Including image in chat request: ${imageUrl}`);
         }
 
-        const model = this.config.openai.model || 'gpt-5.1';
+        const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
         const response = await withSpan('openai.responses.create', {
           // GenAI semantic conventions
           'gen_ai.system': 'openai',
@@ -1028,7 +1040,8 @@ ${context}`;
             model: model,
             instructions: systemPrompt,
             input: apiInput,
-            tools: [{ type: 'web_search' }]
+            tools: [{ type: 'web_search' }],
+            ...this._chatReasoningParams(model)
           });
 
           // Add response attributes
@@ -1081,7 +1094,7 @@ ${context}`;
         inputTokens,
         outputTokens,
         `chat_${personalityId}`,
-        this.config.openai.model || 'gpt-5.1'
+        this.config.openai.model || DEFAULT_OPENAI_MODEL
       );
 
       // Store conversation in Mem0 for long-term memory extraction
@@ -1150,7 +1163,7 @@ ${context}`;
         logger.info(`Including image in stateless chat request: ${imageUrl}`);
       }
 
-      const model = this.config.openai.model || 'gpt-5.1';
+      const model = this.config.openai.model || DEFAULT_OPENAI_MODEL;
       const response = await withSpan('openai.responses.create', {
         // GenAI semantic conventions
         'gen_ai.system': 'openai',
@@ -1169,7 +1182,8 @@ ${context}`;
           model: model,
           instructions: personality.systemPrompt,
           input: apiInput,
-          tools: [{ type: 'web_search' }]
+          tools: [{ type: 'web_search' }],
+          ...this._chatReasoningParams(model)
         });
 
         // Add response attributes
@@ -1198,7 +1212,7 @@ ${context}`;
           inputTokens,
           outputTokens,
           `chat_${personality.id}`,
-          this.config.openai.model || 'gpt-5.1'
+          this.config.openai.model || DEFAULT_OPENAI_MODEL
         );
       }
 

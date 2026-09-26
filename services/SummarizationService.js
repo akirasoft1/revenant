@@ -1,6 +1,7 @@
 // ===== services/SummarizationService.js =====
 const axios = require('axios');
 const logger = require('../logger');
+const { DEFAULT_OPENAI_MODEL, reasoningParams } = require('../utils/openaiModels');
 const UrlUtils = require('../utils/urlUtils');
 const TokenService = require('./TokenService');
 const CostService = require('./CostService');
@@ -35,6 +36,24 @@ class SummarizationService {
     
 
     
+  }
+
+  /**
+   * Model for every summarization call. The helpers below used to hardcode
+   * 'gpt-5.1' (now deprecated); they follow OPENAI_MODEL so the next model
+   * migration is a one-line config change.
+   */
+  _model() {
+    return this.config?.openai?.model || DEFAULT_OPENAI_MODEL;
+  }
+
+  /**
+   * Responses API params for a summarization helper call.
+   * @param {string} effort - reasoning effort for this call site
+   */
+  _requestBase(effort) {
+    const model = this._model();
+    return { model, ...reasoningParams(model, effort) };
   }
 
   setSystemPrompt(prompt) {
@@ -563,7 +582,7 @@ class SummarizationService {
     const startTime = Date.now();
     
     const response = await this.openaiClient.responses.create({
-      model: this.config.openai.model, // Use model from config
+      ...this._requestBase('low'),
       tools: [{ type: "web_search_preview" }],
       instructions: systemPrompt,
       input: inputText,
@@ -584,7 +603,7 @@ class SummarizationService {
     const inputText = userMessages.map(m => m.content).join('\n\n');
 
     const response = await this.openaiClient.responses.create({
-      model: this.config.openai.model, // Use model from config
+      ...this._requestBase('low'),
       instructions: systemMessage?.content || '',
       input: inputText,
     });
@@ -608,7 +627,7 @@ class SummarizationService {
     }
     
     // Calculate costs
-    const costs = this.costService.calculateCosts(usage);
+    const costs = this.costService.calculateCosts(usage, this._model());
     this.costService.logCostBreakdown(costs, {
       regular: inputTokens - cachedTokens,
       cached: cachedTokens
@@ -670,7 +689,7 @@ class SummarizationService {
 Text: """${summary}"""`;
 
       const response = await this.openaiClient.responses.create({
-        model: 'gpt-5.1',
+        ...this._requestBase('none'),
         input: enhancementPrompt,
       });
 
@@ -702,7 +721,7 @@ Text: """${text}"""
 Bias Analysis:`;
 
       const response = await this.openaiClient.responses.create({
-        model: 'gpt-5.1',
+        ...this._requestBase('low'),
         input: biasPrompt,
       });
 
@@ -747,7 +766,7 @@ Text: """${text}"""
 Quote:`;
 
       const response = await this.openaiClient.responses.create({
-        model: 'gpt-5.1',
+        ...this._requestBase('none'),
         input: quotePrompt,
       });
 
@@ -801,7 +820,7 @@ Quote:`;
     try {
       const contextPrompt = `${this.config.bot.contextProvider.prompt} ${topic}`;
       const response = await this.openaiClient.responses.create({
-        model: 'gpt-5.1',
+        ...this._requestBase('low'),
         input: contextPrompt,
       });
       return response.output_text.trim();
@@ -822,7 +841,7 @@ Quote:`;
 Text: """${text}"""`;
 
       const langResponse = await this.openaiClient.responses.create({
-        model: 'gpt-5.1',
+        ...this._requestBase('none'),
         input: languageDetectionPrompt,
       });
       const detectedLanguage = langResponse.output_text.trim();
@@ -834,7 +853,7 @@ Text: """${text}"""`;
 Text: """${text}"""`;
 
         const transResponse = await this.openaiClient.responses.create({
-          model: 'gpt-5.1',
+          ...this._requestBase('none'),
           input: translationPrompt,
         });
         const translatedText = transResponse.output_text.trim();
@@ -859,7 +878,7 @@ Text: """${text}"""`;
       try {
         const translationPrompt = `Summarize the following article in ${lang}.\n\nArticle: """${content}"""`;
         const response = await this.openaiClient.responses.create({
-          model: 'gpt-5.1',
+          ...this._requestBase('low'),
           input: translationPrompt,
         });
         summaries[lang] = response.output_text.trim();
