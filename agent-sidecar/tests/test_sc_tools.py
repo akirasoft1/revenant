@@ -36,22 +36,101 @@ def test_registry_skips_sc_toolset_when_disabled():
     assert mcp_registry.build_mcp_toolsets("channel_voice", Off()) == []
 
 
+class _NamedTool:
+    def __init__(self, name): self.name = name
+
+
+class _ListingToolset:
+    """Minimal toolset stand-in: get_tools() returns tools with these names
+    (or raises `exc`), counting calls."""
+
+    def __init__(self, names=("sc_find_item",), exc=None):
+        self._names, self._exc, self.calls = names, exc, 0
+
+    async def get_tools(self, readonly_context=None):
+        self.calls += 1
+        if self._exc is not None:
+            raise self._exc
+        return [_NamedTool(n) for n in self._names]
+
+
 async def test_provider_caches_probe_for_ttl():
     calls = []
     async def probe(url):
         calls.append(url); return True
     clk = Clock()
-    p = ScToolsProvider(["ts"], "http://sc.test:8080/healthz", probe=probe, clock=clk, ttl_s=30)
+    ts = _ListingToolset()
+    p = ScToolsProvider([ts], "http://sc.test:8080/healthz", probe=probe, clock=clk, ttl_s=30)
     assert await p.available() and await p.available()
     clk.t += 31
     assert await p.available()
     assert len(calls) == 2
+    assert ts.calls == 2  # the tool listing shares the probe's TTL cache
 
 
 async def test_provider_probe_exception_means_unavailable():
     async def probe(url): raise OSError("refused")
-    p = ScToolsProvider(["ts"], "http://x/healthz", probe=probe)
+    ts = _ListingToolset()
+    p = ScToolsProvider([ts], "http://x/healthz", probe=probe)
     assert await p.available() is False
+    assert ts.calls == 0  # health failed -> the MCP path is never touched
+
+
+# --- final-review I2: /healthz alone is not "available" -- the MCP path must
+# actually list sc_* tools (a C1-style 421 on /mcp left /healthz green while
+# every tool silently failed to load under a preamble promising them). -----
+
+
+async def test_provider_health_ok_but_tool_listing_raises_is_unavailable():
+    ts = _ListingToolset(exc=RuntimeError("421 Invalid Host header"))
+    p = ScToolsProvider([ts], "http://x/healthz", probe=_always_up)
+    assert await p.available() is False
+
+
+async def test_provider_health_ok_but_no_sc_tools_is_unavailable():
+    ts = _ListingToolset(names=("something_else",))
+    p = ScToolsProvider([ts], "http://x/healthz", probe=_always_up)
+    assert await p.available() is False
+
+
+async def test_provider_health_ok_but_empty_listing_is_unavailable():
+    ts = _ListingToolset(names=())
+    p = ScToolsProvider([ts], "http://x/healthz", probe=_always_up)
+    assert await p.available() is False
+
+
+async def test_provider_health_ok_and_sc_tools_listed_is_available():
+    ts = _ListingToolset(names=("sc_find_item", "sc_org_guides"))
+    p = ScToolsProvider([ts], "http://x/healthz", probe=_always_up)
+    assert await p.available() is True
+
+
+async def test_provider_caches_negative_tool_listing_for_ttl():
+    clk = Clock()
+    ts = _ListingToolset(exc=RuntimeError("boom"))
+    p = ScToolsProvider([ts], "http://x/healthz", probe=_always_up, clock=clk, ttl_s=30)
+    assert await p.available() is False
+    assert await p.available() is False
+    assert ts.calls == 1
+    clk.t += 31
+    ts._exc = None
+    assert await p.available() is True
+    assert ts.calls == 2
+
+
+async def test_provider_hung_tool_listing_is_unavailable_not_a_hang():
+    class _Hung:
+        async def get_tools(self, readonly_context=None):
+            await asyncio.Event().wait()
+    p = ScToolsProvider([_Hung()], "http://x/healthz", probe=_always_up, list_timeout_s=0.1)
+    assert await asyncio.wait_for(p.available(), timeout=2.0) is False
+
+
+async def test_sc_tools_state_unavailable_when_listing_fails(monkeypatch):
+    provider = ScToolsProvider([_ListingToolset(exc=RuntimeError("421"))],
+                               "http://sc.test:8080/healthz", probe=_always_up)
+    ag = _agent_with_sc(monkeypatch, provider)
+    assert await ag.sc_tools_state() == "unavailable"
 
 
 def test_instruction_off_is_byte_identical_to_today():
@@ -104,10 +183,19 @@ class _SpyToolset(BaseToolset):
 
     async def get_tools(self, readonly_context=None):
         self.get_tools_calls += 1
-        return []
+        return [_sc_function_tool()]
 
     async def close(self):
         self.close_calls += 1
+
+
+def _sc_function_tool():
+    from google.adk.tools.function_tool import FunctionTool
+
+    async def sc_find_item(name: str) -> dict:
+        """Look up an item."""
+        return {"name": name}
+    return FunctionTool(sc_find_item)
 
 
 async def test_process_chat_never_closes_the_shared_toolset_and_reuses_it_across_turns(monkeypatch):
@@ -133,13 +221,23 @@ async def test_process_chat_never_closes_the_shared_toolset_and_reuses_it_across
     assert r1.message_text == "the reply"
     assert r2.message_text == "the reply"
     assert spy.close_calls == 0
-    assert spy.get_tools_calls == 2
+    # 1 availability check (cached for the TTL, so the second turn reuses
+    # it) + 1 per turn -- the SAME shared toolset each time, never rebuilt.
+    assert spy.get_tools_calls == 3
 
 
 class _RaisingToolset(BaseToolset):
-    """A toolset whose tool listing always fails (e.g. a broken MCP session)."""
+    """A toolset whose tool listing succeeds for the availability check and
+    then fails inside the turn (e.g. the MCP session breaks between the two)."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
 
     async def get_tools(self, readonly_context=None):
+        self.calls += 1
+        if self.calls == 1:
+            return [_sc_function_tool()]
         raise RuntimeError("mcp session broken")
 
 
@@ -148,12 +246,14 @@ async def test_process_chat_survives_a_toolset_that_fails_to_list_tools(monkeypa
     # catches a toolset's get_tools() exception, logs it, and runs the agent
     # without that toolset's tools) against the REAL ADK code path, so a
     # broken sc-knowledge session can never turn into a failed Chat turn.
-    provider = ScToolsProvider([_RaisingToolset()], "http://sc.test:8080/healthz", probe=_always_up)
+    raising = _RaisingToolset()
+    provider = ScToolsProvider([raising], "http://sc.test:8080/healthz", probe=_always_up)
     ag = _agent_with_sc(monkeypatch, provider)
 
     res = await ag.process_chat(user_id="u", user_message="hi")
 
     assert res.message_text == "the reply"
+    assert raising.calls >= 2  # the in-turn listing really ran (and failed)
 
 
 # --- I2 review fix: sc-knowledge gets tighter MCP transport timeouts than

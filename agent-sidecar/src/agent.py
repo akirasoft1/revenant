@@ -277,14 +277,15 @@ class AgentChatResult:
     # (e.g. ["sc_find_item"]). Empty when sc tools were off/unavailable or the
     # model didn't call any.
     sc_tool_names: list[str] = field(default_factory=list)
-    # How many run_in_sandbox executions were attempted this turn, INCLUDING
-    # ones that failed/errored before producing an execution_id (budget-
-    # exceeded, concurrency caps). Until Task 10 adds a real `tool.attempts`
-    # counter to RunInSandboxTool, this is len(execution_ids) — an
-    # undercount for those failure paths, called out here rather than hidden.
+    # How many times run_in_sandbox was called this turn: RunInSandboxTool's
+    # `attempts` counter, incremented first thing on EVERY call -- including
+    # SC-data-host refusals (exit_code -4 / use_sc_tools, no pod spawned) and
+    # calls that fail before producing an execution_id (budget-exceeded,
+    # concurrency caps). So it can exceed len(execution_ids); the SC eval
+    # gate relies on refusals being counted here.
     sandbox_attempts: int = 0
-    # "off" (sc tools disabled entirely), "available" (probe passed, attached
-    # this turn), or "unavailable" (probe failed; turn ran without them).
+    # "off" (sc tools disabled entirely), "available" (health + sc_* tool listing passed, attached
+    # this turn), or "unavailable" (either check failed; turn ran without them).
     sc_state: str = "off"
 
 
@@ -343,9 +344,10 @@ class ChannelVoiceAgent:
 
     async def sc_tools_state(self) -> str:
         """This turn's Star Citizen tools state, derived from the provider's
-        cached health probe (never a fresh network call on the hot path —
-        see ScToolsProvider): "off" when sc tools are disabled/not wired at
-        all, else "available"/"unavailable" from the cached probe result.
+        cached availability check (health probe + MCP tool listing, at most
+        one real check per TTL — see ScToolsProvider): "off" when sc tools
+        are disabled/not wired at all, else "available"/"unavailable" from
+        the cached result.
 
         Exposed as its own method (rather than inlined in process_chat) so
         the gRPC servicer can call it BEFORE dispatching a turn and record
@@ -374,7 +376,8 @@ class ChannelVoiceAgent:
         # toolset is simply left off the Agent for this turn.
         sc_state = await self.sc_tools_state()
         if sc_state == "unavailable":
-            log.info("sc_tools=unavailable (probe failed); turn runs without Star Citizen tools")
+            log.info("sc_tools=unavailable (health probe or MCP tool listing failed); "
+                     "turn runs without Star Citizen tools")
 
         async def run_in_sandbox(
             language: str,

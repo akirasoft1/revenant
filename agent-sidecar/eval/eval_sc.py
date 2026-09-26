@@ -105,7 +105,7 @@ async def _preflight(sc_tools: ScToolsProvider, sc_knowledge_url: str) -> None:
             "or no sc-knowledge toolsets were built",
         )
     if not await sc_tools.available():
-        _preflight_fail(sc_knowledge_url, "health probe failed -- sc-knowledge is unreachable")
+        _preflight_fail(sc_knowledge_url, "health probe or MCP sc_* tool listing failed -- sc-knowledge is unreachable or its /mcp path is rejecting requests")
 
 
 def _sc_prompts_with_outage(records: list[tuple[dict, AgentChatResult]]) -> list[str]:
