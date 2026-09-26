@@ -1,10 +1,35 @@
 // services/Mem0Service.js
 // Memory management service using Mem0 SDK for persistent AI conversation memory
 
+// mem0ai phones home to PostHog (usage events + a per-call "notice" flag fetch
+// with a 500ms timeout) unless MEM0_TELEMETRY=false. It reads the variable once,
+// at module load, so the default has to be set before the require below. An
+// explicit operator setting still wins.
+if (process.env.MEM0_TELEMETRY === undefined) {
+  process.env.MEM0_TELEMETRY = 'false';
+}
+
 const { Memory } = require('mem0ai/oss');
 const logger = require('../logger');
 const { withSpan } = require('../tracing');
 const { MEMORY, DISCORD, ERROR } = require('../tracing-attributes');
+
+// mem0ai v3 getAll() defaults to topK 20; v2 defaulted to 100. Keep 100 so
+// /memories and /forget listings are not silently truncated.
+const DEFAULT_GET_ALL_LIMIT = 100;
+
+/**
+ * Build mem0ai v3 read filters. v3 rejects top-level userId/agentId/runId on
+ * search()/getAll() and wants snake_case entity ids inside `filters`.
+ * (add() and deleteAll() still take the top-level camelCase entity params.)
+ */
+function entityFilters({ userId, agentId, runId }) {
+  const filters = {};
+  if (userId) filters.user_id = userId;
+  if (agentId) filters.agent_id = agentId;
+  if (runId) filters.run_id = runId;
+  return filters;
+}
 
 class Mem0Service {
   /**
@@ -46,7 +71,9 @@ class Mem0Service {
         config: {
           apiKey: this.config.openaiApiKey,
           model: this.config.llmModel || 'gpt-4o-mini',
-          temperature: 0.1, // Low temperature for consistent memory extraction
+          // No temperature/maxTokens/topP: mem0ai v3's OpenAI provider never
+          // forwards them, and gpt-6-* models reject them outright. Pinned by
+          // __tests__/services/Mem0Service.llmRequest.test.js.
         },
       },
       // Disable local SQLite history - we manage history in MongoDB
@@ -139,20 +166,25 @@ class Mem0Service {
       'memory.limit': options.limit || 5,
     }, async (span) => {
       try {
-        const searchConfig = {
-          userId: userId,
-          limit: options.limit || 5,
-        };
-
-        // Add optional filters
+        // Optional filters
         if (options.personalityId) {
-          searchConfig.agentId = options.personalityId;
           span.setAttribute(MEMORY.AGENT_ID, options.personalityId);
         }
         if (options.channelId) {
-          searchConfig.runId = options.channelId;
           span.setAttribute(DISCORD.CHANNEL_ID, options.channelId);
         }
+
+        const searchConfig = {
+          topK: options.limit || 5,
+          // v3 drops results scoring < 0.1 by default; 0 keeps v2's plain top-k
+          // behaviour and leaves relevance ranking to RecallService.
+          threshold: 0,
+          filters: entityFilters({
+            userId,
+            agentId: options.personalityId,
+            runId: options.channelId,
+          }),
+        };
 
         const result = await this.memory.search(query, searchConfig);
 
@@ -190,18 +222,17 @@ class Mem0Service {
       [MEMORY.USER_ID]: userId,
     }, async (span) => {
       try {
-        const config = {
-          userId: userId,
-        };
-
         if (options.limit) {
-          config.limit = options.limit;
           span.setAttribute('memory.limit', options.limit);
         }
         if (options.personalityId) {
-          config.agentId = options.personalityId;
           span.setAttribute(MEMORY.AGENT_ID, options.personalityId);
         }
+
+        const config = {
+          topK: options.limit || DEFAULT_GET_ALL_LIMIT,
+          filters: entityFilters({ userId, agentId: options.personalityId }),
+        };
 
         const result = await this.memory.getAll(config);
         span.setAttribute(MEMORY.MEMORIES_COUNT, result.results?.length || 0);
@@ -356,9 +387,9 @@ class Mem0Service {
     }, async (span) => {
       try {
         const result = await this.memory.search(query, {
-          userId: `channel:${channelId}`,
-          agentId: 'shared_channel',
-          limit: options.limit || 5,
+          topK: options.limit || 5,
+          threshold: 0,
+          filters: entityFilters({ userId: `channel:${channelId}`, agentId: 'shared_channel' }),
         });
 
         const memoriesCount = result.results?.length || 0;
@@ -395,15 +426,14 @@ class Mem0Service {
       'memory.is_shared': true,
     }, async (span) => {
       try {
-        const config = {
-          userId: `channel:${channelId}`,
-          agentId: 'shared_channel',
-        };
-
         if (options.limit) {
-          config.limit = options.limit;
           span.setAttribute('memory.limit', options.limit);
         }
+
+        const config = {
+          topK: options.limit || DEFAULT_GET_ALL_LIMIT,
+          filters: entityFilters({ userId: `channel:${channelId}`, agentId: 'shared_channel' }),
+        };
 
         const result = await this.memory.getAll(config);
         span.setAttribute(MEMORY.MEMORIES_COUNT, result.results?.length || 0);
