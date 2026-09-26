@@ -25,6 +25,14 @@ CAPTURES = {
     "wiki_vehicle_items_shield_s2.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Shield", "filter[size]": 2, "limit": 200}),
     "wiki_missions_foxwell.json": f"{WIKI}/missions?" + urllib.parse.urlencode({"filter[mission_giver]": "Foxwell Enforcement", "limit": 200}),
     "wiki_factions.json": f"{WIKI}/factions?limit=200",
+    # Live samples for Task 4 compare_components non-shield COMPONENT_TYPES: used to
+    # confirm real dotted stat paths (never guessed) and as fixtures for per-type tests.
+    "wiki_vehicle_items_power_plant_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "PowerPlant", "limit": 3}),
+    "wiki_vehicle_items_cooler_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Cooler", "limit": 3}),
+    "wiki_vehicle_items_quantum_drive_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "QuantumDrive", "limit": 3}),
+    "wiki_vehicle_items_radar_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Radar", "limit": 3}),
+    "wiki_vehicle_items_weapon_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "WeaponGun", "limit": 3}),
+    "wiki_vehicle_items_missile_sample.json": f"{WIKI}/vehicle-items?" + urllib.parse.urlencode({"filter[type]": "Missile", "limit": 3}),
 }
 
 

@@ -1,0 +1,2203 @@
+{
+ "data": [
+  {
+   "uuid": "02a7f68a-5bdd-4887-a256-20c985a65bda",
+   "slug": "10-series-greatsword-cannon",
+   "name": "10-Series Greatsword Cannon",
+   "class_name": "KBAR_BallisticCannon_S2",
+   "classification": "Ship.Weapon.Gun",
+   "classification_label": "Gun",
+   "description": {
+    "en_EN": "KnightBridge Arms knows that when it comes to battle, having the right weapon can make all the difference. With its powerful ballistic rounds, the versatile, size two 10-Series Greatsword will see you through to the conflict's end thanks to it long range and high damage potential.",
+    "de_DE": "Hersteller: KnightBridge Arms\nTyp (En): Ballistic Cannon\nTyp (De): Ballistische Kanone\n\nGr\u00f6\u00dfe: S2\n\nKnightBridge Arms wei\u00df, dass es im Kampf auf die richtige Waffe ankommt. Mit seinen leistungsstarken ballistischen Geschossen wird die vielseitige S2-S10-Series Greatsword dich bis zum Ende des Konflikts begleiten, dank ihrer Reichweite und hohen Schadenspotenzials.",
+    "zh_CN": "\u5236\u9020\u5546\uff1a\u9a91\u58eb\u6865\u519b\u5907 (KnightBridge Arms)\n\u7269\u54c1\u7c7b\u578b\uff1a\u5b9e\u5f39\u52a0\u519c\u70ae\n\u5c3a\u5bf8\uff1a2\n\n\u9a91\u58eb\u6865\u519b\u5907\u660e\u767d\u5728\u6218\u6597\u4e2d\uff0c\u4f7f\u7528\u5408\u9002\u7684\u6b66\u5668\u80fd\u6539\u53d8\u4e00\u5207\u3002\u51ed\u501f\u7740\u5a01\u529b\u5f3a\u5927\u7684\u5b9e\u5f39\u5f39\u836f\uff0c\u957f\u5c04\u7a0b\u548c\u9ad8\u4f24\u5bb3\uff0c\u7075\u6d3b\u591a\u53d8\u7684S2\u6b66\u566810\u7cfb\u5217\u201c\u5927\u5251\u201d\u80fd\u8ba9\u4f60\u5b58\u6d3b\u5230\u6218\u6597\u7684\u7ed3\u675f\u3002",
+    "fr_FR": "Fabricant: KnightBridge Arms\nType d'article: Canon balistique\nTaille: 2\n\nKnightBridge Arms sait qu'en mati\u00e8re de combat, avoir la bonne arme peut faire toute la diff\u00e9rence. Avec ses puissants projectiles balistiques, le polyvalent Greatsword 10-Series, taille deux, vous accompagnera jusqu'\u00e0 la fin du conflit gr\u00e2ce \u00e0 sa longue port\u00e9e et son potentiel de d\u00e9g\u00e2ts \u00e9lev\u00e9."
+   },
+   "size": 2,
+   "mass": 192,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "b04aff42-d892-4ca9-991e-101c869a7caa",
+     "name": "10-Series Greatsword Cannon",
+     "link": "https://api.star-citizen.wiki/api/blueprints/b04aff42-d892-4ca9-991e-101c869a7caa"
+    }
+   ],
+   "grade": "A",
+   "class": null,
+   "description_data": [
+    {
+     "name": "Item Type",
+     "value": "Ballistic Cannon",
+     "type": "Ballistic Cannon"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "KnightBridge Arms",
+     "type": "KnightBridge Arms"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "KnightBridge Arms",
+   "manufacturer": {
+    "name": "KnightBridge Arms",
+    "code": "KBAR",
+    "uuid": "7b4402a1-f17f-4125-afcc-4a159dcd29e0",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/KBAR"
+   },
+   "type": "WeaponGun",
+   "type_label": "Weapon Gun",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=WeaponGun",
+   "sub_type": "Gun",
+   "sub_type_label": "Gun",
+   "vehicle_weapon": {
+    "class": "Gun",
+    "type": "Ballistic Cannon",
+    "capacity": 492,
+    "range": 2703,
+    "damage_per_shot": 73,
+    "regeneration": null,
+    "rpm": 250,
+    "damages": [
+     {
+      "type": "impact",
+      "name": "physical",
+      "damage": 72.99
+     }
+    ],
+    "modes": [
+     {
+      "mode": "Single",
+      "localised": "[AUTO]",
+      "type": "sequence",
+      "rpm": 250,
+      "rounds_per_minute": 250,
+      "ammo_per_shot": 1,
+      "pellets_per_shot": 1,
+      "damage_per_second": 304.1,
+      "heat_per_shot": 2.4,
+      "wear_per_shot": 0,
+      "heat_per_second": null,
+      "wear_per_second": null,
+      "fire_during_spin_up": null,
+      "shot_count": null,
+      "cooldown_time": null,
+      "sequence_mode": "Looping",
+      "charge_up_time": null,
+      "charge_down_time": null,
+      "full_damage_range": null,
+      "zero_damage_range": null,
+      "hit_type": null,
+      "hit_radius": null,
+      "min_energy_draw": null,
+      "max_energy_draw": null,
+      "healing_mode": null,
+      "healing_per_second": null,
+      "ammo_per_mscu": null,
+      "medical_ammo_type": null,
+      "external_healing": null,
+      "toggle": null,
+      "max_distance": null,
+      "max_sensor_distance": null,
+      "auto_dosage_modifier": null,
+      "healing_break_time": null,
+      "max_dose_for_auto_adjustment": null,
+      "battery_drain_per_second": null,
+      "material_efficiency": null,
+      "max_health_repair_rate": null,
+      "max_damage_map_repair_rate": null,
+      "health_to_ammo_ratio": null,
+      "ramp_up_time": null,
+      "ramp_down_time": null,
+      "max_vehicle_damage_ratio": null,
+      "repaired_material_ratio": null,
+      "salvage_can_fire_on_full": null,
+      "damage_threshold": null,
+      "minimum_distance": null,
+      "maximum_distance": null,
+      "beam_radius": null,
+      "collection_rate": null,
+      "energy_draw": null,
+      "mining_extractor_tag": null,
+      "toggle_mode": null
+     }
+    ],
+    "damage": {
+     "sustained_60s": 213.3,
+     "burst": 304.1,
+     "alpha_total": 73,
+     "max": 35911.1,
+     "maximum": 35911.1,
+     "dps": {
+      "physical": 304.1,
+      "energy": 0,
+      "distortion": 0,
+      "thermal": 0,
+      "biochemical": 0,
+      "stun": 0
+     },
+     "alpha": {
+      "physical": 72.99,
+      "energy": 0,
+      "distortion": 0,
+      "thermal": 0,
+      "biochemical": 0,
+      "stun": 0
+     }
+    },
+    "spread": {
+     "min": 0.5,
+     "max": 0.5,
+     "minimum": 0.5,
+     "maximum": 0.5,
+     "first_attack": 0.025,
+     "per_attack": 0.025,
+     "decay": 0.05
+    },
+    "heat": {
+     "per_shot": 2.4,
+     "cooling_delay": 0.838,
+     "cooling_per_second": 30.6,
+     "overheat_max_shots": 41,
+     "overheat_max_time": 9.84,
+     "overheat_cooldown": 4.26
+    },
+    "ammunition": {
+     "uuid": "aed3a2be-75ef-495b-8406-81bbcc8fce28",
+     "size": 1,
+     "lifetime": 2.26,
+     "speed": 1196,
+     "range": 2703,
+     "capacity": 492,
+     "initial_capacity": 492,
+     "damage_falloff_level_1": 0,
+     "damage_falloff_level_2": 0,
+     "damage_falloff_level_3": 0,
+     "max_penetration_thickness": 0.5,
+     "penetration": {
+      "base_distance": 1.275,
+      "near_radius": 0.06,
+      "far_radius": 0.06,
+      "angle": null
+     },
+     "impact_damage": [
+      {
+       "type": "impact",
+       "name": "Physical",
+       "damage": 72.99
+      }
+     ],
+     "impact_damage_map": {
+      "physical": 72.99
+     },
+     "conversion_rate": 503,
+     "impulse_scale": 1,
+     "bullet_type": -1
+    },
+    "magazine_volume": {
+     "micro_scu": 247476,
+     "scu": 0.247476
+    }
+   },
+   "ammunition": {
+    "uuid": "aed3a2be-75ef-495b-8406-81bbcc8fce28",
+    "size": 1,
+    "lifetime": 2.26,
+    "speed": 1196,
+    "range": 2703,
+    "capacity": 492,
+    "initial_capacity": 492,
+    "damage_falloff_level_1": 0,
+    "damage_falloff_level_2": 0,
+    "damage_falloff_level_3": 0,
+    "max_penetration_thickness": 0.5,
+    "penetration": {
+     "base_distance": 1.275,
+     "near_radius": 0.06,
+     "far_radius": 0.06,
+     "angle": null
+    },
+    "impact_damage": [
+     {
+      "type": "impact",
+      "name": "Physical",
+      "damage": 72.99
+     }
+    ],
+    "impact_damage_map": {
+     "physical": 72.99
+    },
+    "conversion_rate": 503,
+    "impulse_scale": 1,
+    "bullet_type": -1
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 1.5,
+    "volume": 0.252,
+    "volume_converted": 252000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 0.372,
+     "height": 0.547,
+     "length": 2.632
+    },
+    "dimensions": {
+     "width": 0.372,
+     "height": 0.547,
+     "length": 2.632
+    },
+    "cargo_dimension": {
+     "width": 0.45,
+     "height": 0.8,
+     "length": 3.32
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 1.5
+    }
+   },
+   "tags": [
+    "KBAR",
+    "BallisticCannon",
+    "flightReady",
+    "weaponMountUsable"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "magazine_attach",
+     "display_name": "Weapon Magazine",
+     "position": "magazine_well",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "Barrel"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.Barrel"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "Barrel",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "MEC",
+     "display_name": "M E C",
+     "position": "MEC",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "FiringMechanism"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.FiringMechanism"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "FiringMechanism",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "POW",
+     "display_name": "P O W",
+     "position": "POW",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "PowerArray"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.PowerArray"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "PowerArray",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "VEN",
+     "display_name": "V E N",
+     "position": "VEN",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "Ventilation"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.Ventilation"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "Ventilation",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "durability": {
+    "health": 850,
+    "lifetime": null,
+    "max_lifetime": null,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 1,
+     "thermal": 1,
+     "physical": 0.6,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 500000,
+    "decay_delay": 0,
+    "max": 500000,
+    "maximum": 500000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 1
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 37.5,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 0.1,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 34.9,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 0.1,
+      "max": 0.1,
+      "minimum": 0.1,
+      "maximum": 0.1
+     },
+     "coolant": {
+      "min": 0.1,
+      "max": 0.1,
+      "minimum": 0.1,
+      "maximum": 0.1
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 0,
+    "em_max": 37.5,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "starcitizen.tools",
+     "original_url": "https://media.starcitizen.tools/9/9a/10-Series_Greatsword_-_Shop_Display_Cutout.png?s8p7j",
+     "thumbnail_url": "https://media.starcitizen.tools/thumb/9/9a/10-Series_Greatsword_-_Shop_Display_Cutout.png/600px-10-Series_Greatsword_-_Shop_Display_Cutout.png.webp?s8p7j",
+     "original_width": 3840,
+     "original_height": 2160,
+     "thumbnail_width": 600,
+     "thumbnail_height": 338
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 27287,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 108,
+      "terminal_code": "CMNEW",
+      "terminal_name": "CenterMass - New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=10-series-greatsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 23905,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 191,
+      "terminal_code": "SWHL3",
+      "terminal_name": "Ship Weapons - HUR-L3",
+      "starmap_location": {
+       "uuid": "de5f2d1d-78e5-4273-8028-c06690c03685",
+       "name": "HUR-L3 Thundering Express Station",
+       "slug": "hur-l3-thundering-express-station",
+       "type_name": "Manmade_VisibleOnInteraction",
+       "parent_name": "Stanton",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/de5f2d1d-78e5-4273-8028-c06690c03685",
+       "web_url": "https://api.star-citizen.wiki/locations/de5f2d1d-78e5-4273-8028-c06690c03685"
+      },
+      "date_updated": "2026-09-12T12:55:58+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=10-series-greatsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 27287,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 107,
+      "terminal_code": "CMA18",
+      "terminal_name": "CenterMass - IO North Tower - Area 18",
+      "starmap_location": {
+       "uuid": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+       "name": "Area18",
+       "slug": "area18",
+       "type_name": "LandingZone",
+       "parent_name": "ArcCorp",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/c6535844-c615-494e-9dc1-c2d0c6e7190a",
+       "web_url": "https://api.star-citizen.wiki/locations/c6535844-c615-494e-9dc1-c2d0c6e7190a"
+      },
+      "date_updated": "2026-08-29T19:30:06+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=10-series-greatsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 23905,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 194,
+      "terminal_code": "SWML2",
+      "terminal_name": "Ship Weapons - MIC-L2",
+      "starmap_location": {
+       "uuid": "f602528f-acf3-4564-960c-fc344269a7a9",
+       "name": "MIC-L2 Long Forest Station",
+       "slug": "mic-l2-long-forest-station",
+       "type_name": "Manmade_VisibleOnInteraction",
+       "parent_name": "Stanton",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/f602528f-acf3-4564-960c-fc344269a7a9",
+       "web_url": "https://api.star-citizen.wiki/locations/f602528f-acf3-4564-960c-fc344269a7a9"
+      },
+      "date_updated": "2026-08-28T19:24:39+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=10-series-greatsword-cannon&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/10-series-greatsword-cannon",
+   "link": "https://api.star-citizen.wiki/api/items/02a7f68a-5bdd-4887-a256-20c985a65bda",
+   "updated_at": "2026-09-26T00:10:53.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "f03daac4-28e2-405c-b226-c258151cb9f1",
+   "slug": "11-series-broadsword-cannon",
+   "name": "11-Series Broadsword Cannon",
+   "class_name": "KBAR_BallisticCannon_S3",
+   "classification": "Ship.Weapon.Gun",
+   "classification_label": "Gun",
+   "description": {
+    "en_EN": "The 11-Series Broadsword from KnightBridge Arms is the size three ballistic autocannon pilots come to when they want the 3 D's: distance, dependability and damage.",
+    "de_DE": "Hersteller: KnightBridge Arms\nTyp (En): Ballistic Cannon\nTyp (De): Ballistische Kanone\n\nGr\u00f6\u00dfe: S3\n\nDie 11-Series Broadsword von KnightBridge Arms ist die S3-ballistische Autokanone, zu der Piloten greifen, wenn sie die 3 Ds wollen: Distanz, Zuverl\u00e4ssigkeit und Schaden.",
+    "zh_CN": "\u5236\u9020\u5546\uff1a\u9a91\u58eb\u6865\u519b\u5907 (KnightBridge Arms)\n\u7269\u54c1\u7c7b\u578b\uff1a\u5b9e\u5f39\u52a0\u519c\u70ae\n\u5c3a\u5bf8\uff1a3\n\n\u9a91\u58eb\u6865\u519b\u5907\u768411\u7cfb\u5217\u201c\u9614\u5251\u201d\u662f\u98de\u884c\u5458\u4eec\u5728\u60f3\u8981\u4fdd\u6301\u5b89\u5168\u8ddd\u79bb\u3001\u53ef\u9760\u6027\u548c\u4f24\u5bb3\u65f6\u9700\u8981\u7684S3\u5b9e\u5f39\u81ea\u52a8\u706b\u70ae\u3002",
+    "fr_FR": "Fabricant: KnightBridge Arms\nType d'article: Canon balistique\nTaille: 3\n\nLe Broadsword 11-Series de KnightBridge Arms est le canon automatique balistique de taille trois vers lequel les pilotes se tournent lorsqu'ils recherchent : distance, fiabilit\u00e9 et d\u00e9gats."
+   },
+   "size": 3,
+   "mass": 480,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "a8c6afe2-0920-43ca-a62f-01bf6908c93e",
+     "name": "11-Series Broadsword Cannon",
+     "link": "https://api.star-citizen.wiki/api/blueprints/a8c6afe2-0920-43ca-a62f-01bf6908c93e"
+    }
+   ],
+   "grade": "A",
+   "class": null,
+   "description_data": [
+    {
+     "name": "Item Type",
+     "value": "Ballistic Cannon",
+     "type": "Ballistic Cannon"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "KnightBridge Arms",
+     "type": "KnightBridge Arms"
+    },
+    {
+     "name": "Size",
+     "value": "3",
+     "type": "3"
+    }
+   ],
+   "manufacturer_description": "KnightBridge Arms",
+   "manufacturer": {
+    "name": "KnightBridge Arms",
+    "code": "KBAR",
+    "uuid": "7b4402a1-f17f-4125-afcc-4a159dcd29e0",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/KBAR"
+   },
+   "type": "WeaponGun",
+   "type_label": "Weapon Gun",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=WeaponGun",
+   "sub_type": "Gun",
+   "sub_type_label": "Gun",
+   "vehicle_weapon": {
+    "class": "Gun",
+    "type": "Ballistic Cannon",
+    "capacity": 489,
+    "range": 2996,
+    "damage_per_shot": 109.3,
+    "regeneration": null,
+    "rpm": 250,
+    "damages": [
+     {
+      "type": "impact",
+      "name": "physical",
+      "damage": 109.26
+     }
+    ],
+    "modes": [
+     {
+      "mode": "Single",
+      "localised": "[AUTO]",
+      "type": "sequence",
+      "rpm": 250,
+      "rounds_per_minute": 250,
+      "ammo_per_shot": 1,
+      "pellets_per_shot": 1,
+      "damage_per_second": 455.3,
+      "heat_per_shot": 2.4,
+      "wear_per_shot": 0,
+      "heat_per_second": null,
+      "wear_per_second": null,
+      "fire_during_spin_up": null,
+      "shot_count": null,
+      "cooldown_time": null,
+      "sequence_mode": "Looping",
+      "charge_up_time": null,
+      "charge_down_time": null,
+      "full_damage_range": null,
+      "zero_damage_range": null,
+      "hit_type": null,
+      "hit_radius": null,
+      "min_energy_draw": null,
+      "max_energy_draw": null,
+      "healing_mode": null,
+      "healing_per_second": null,
+      "ammo_per_mscu": null,
+      "medical_ammo_type": null,
+      "external_healing": null,
+      "toggle": null,
+      "max_distance": null,
+      "max_sensor_distance": null,
+      "auto_dosage_modifier": null,
+      "healing_break_time": null,
+      "max_dose_for_auto_adjustment": null,
+      "battery_drain_per_second": null,
+      "material_efficiency": null,
+      "max_health_repair_rate": null,
+      "max_damage_map_repair_rate": null,
+      "health_to_ammo_ratio": null,
+      "ramp_up_time": null,
+      "ramp_down_time": null,
+      "max_vehicle_damage_ratio": null,
+      "repaired_material_ratio": null,
+      "salvage_can_fire_on_full": null,
+      "damage_threshold": null,
+      "minimum_distance": null,
+      "maximum_distance": null,
+      "beam_radius": null,
+      "collection_rate": null,
+      "energy_draw": null,
+      "mining_extractor_tag": null,
+      "toggle_mode": null
+     }
+    ],
+    "damage": {
+     "sustained_60s": 311.8,
+     "burst": 455.3,
+     "alpha_total": 109.3,
+     "max": 53428.1,
+     "maximum": 53428.1,
+     "dps": {
+      "physical": 455.3,
+      "energy": 0,
+      "distortion": 0,
+      "thermal": 0,
+      "biochemical": 0,
+      "stun": 0
+     },
+     "alpha": {
+      "physical": 109.26,
+      "energy": 0,
+      "distortion": 0,
+      "thermal": 0,
+      "biochemical": 0,
+      "stun": 0
+     }
+    },
+    "spread": {
+     "min": 0.5,
+     "max": 0.5,
+     "minimum": 0.5,
+     "maximum": 0.5,
+     "first_attack": 0.025,
+     "per_attack": 0.025,
+     "decay": 0.05
+    },
+    "heat": {
+     "per_shot": 2.4,
+     "cooling_delay": 0.88,
+     "cooling_per_second": 29.1,
+     "overheat_max_shots": 41,
+     "overheat_max_time": 9.84,
+     "overheat_cooldown": 4.6
+    },
+    "ammunition": {
+     "uuid": "59ec0156-7d62-4a2a-af5e-b357a3abe35c",
+     "size": 1,
+     "lifetime": 2.53,
+     "speed": 1184,
+     "range": 2996,
+     "capacity": 489,
+     "initial_capacity": 489,
+     "damage_falloff_level_1": 0,
+     "damage_falloff_level_2": 0,
+     "damage_falloff_level_3": 0,
+     "max_penetration_thickness": 0.5,
+     "penetration": {
+      "base_distance": 1.445,
+      "near_radius": 0.07,
+      "far_radius": 0.07,
+      "angle": null
+     },
+     "impact_damage": [
+      {
+       "type": "impact",
+       "name": "Physical",
+       "damage": 109.26
+      }
+     ],
+     "impact_damage_map": {
+      "physical": 109.26
+     },
+     "conversion_rate": 1360,
+     "impulse_scale": 1,
+     "bullet_type": -1
+    },
+    "magazine_volume": {
+     "micro_scu": 665040,
+     "scu": 0.66504
+    }
+   },
+   "ammunition": {
+    "uuid": "59ec0156-7d62-4a2a-af5e-b357a3abe35c",
+    "size": 1,
+    "lifetime": 2.53,
+    "speed": 1184,
+    "range": 2996,
+    "capacity": 489,
+    "initial_capacity": 489,
+    "damage_falloff_level_1": 0,
+    "damage_falloff_level_2": 0,
+    "damage_falloff_level_3": 0,
+    "max_penetration_thickness": 0.5,
+    "penetration": {
+     "base_distance": 1.445,
+     "near_radius": 0.07,
+     "far_radius": 0.07,
+     "angle": null
+    },
+    "impact_damage": [
+     {
+      "type": "impact",
+      "name": "Physical",
+      "damage": 109.26
+     }
+    ],
+    "impact_damage_map": {
+     "physical": 109.26
+    },
+    "conversion_rate": 1360,
+    "impulse_scale": 1,
+    "bullet_type": -1
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 1.5,
+    "volume": 0.756,
+    "volume_converted": 756000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 0.519,
+     "height": 0.76,
+     "length": 3.677
+    },
+    "dimensions": {
+     "width": 0.519,
+     "height": 0.76,
+     "length": 3.677
+    },
+    "cargo_dimension": {
+     "width": 0.67,
+     "height": 1.2,
+     "length": 4.42
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 1.5
+    }
+   },
+   "tags": [
+    "KBAR",
+    "BallisticCannon",
+    "flightReady",
+    "weaponMountUsable"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "magazine_attach",
+     "display_name": "Weapon Magazine",
+     "position": "magazine_well",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "Barrel"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.Barrel"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "Barrel",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "MEC",
+     "display_name": "M E C",
+     "position": "MEC",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "FiringMechanism"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.FiringMechanism"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "FiringMechanism",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "POW",
+     "display_name": "P O W",
+     "position": "POW",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "PowerArray"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.PowerArray"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "PowerArray",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "VEN",
+     "display_name": "V E N",
+     "position": "VEN",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "Ventilation"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.Ventilation"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "Ventilation",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "durability": {
+    "health": 2850,
+    "lifetime": null,
+    "max_lifetime": null,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 1,
+     "thermal": 1,
+     "physical": 0.6,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 500000,
+    "decay_delay": 0,
+    "max": 500000,
+    "maximum": 500000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 1
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 37.5,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 0.1,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 57.6,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 0.1,
+      "max": 0.1,
+      "minimum": 0.1,
+      "maximum": 0.1
+     },
+     "coolant": {
+      "min": 0.1,
+      "max": 0.1,
+      "minimum": 0.1,
+      "maximum": 0.1
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 0,
+    "em_max": 37.5,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "starcitizen.tools",
+     "original_url": "https://media.starcitizen.tools/8/87/Broadsword.png?drnpc",
+     "thumbnail_url": "https://media.starcitizen.tools/thumb/8/87/Broadsword.png/600px-Broadsword.png.webp?drnpc",
+     "original_width": 1920,
+     "original_height": 1080,
+     "thumbnail_width": 600,
+     "thumbnail_height": 338
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 53790,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 687,
+      "terminal_code": "FALLOW",
+      "terminal_name": "Shop Terminal - Fallow Field",
+      "starmap_location": {
+       "uuid": "ffab0e7d-7874-412b-8894-7b310880af1b",
+       "name": "Fallow Field",
+       "slug": "fallow-field",
+       "type_name": "Outpost",
+       "parent_name": "Pyro IV",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/ffab0e7d-7874-412b-8894-7b310880af1b",
+       "web_url": "https://api.star-citizen.wiki/locations/ffab0e7d-7874-412b-8894-7b310880af1b"
+      },
+      "date_updated": "2026-09-02T09:47:25+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=11-series-broadsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 53790,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 508,
+      "terminal_code": "SHOPASH",
+      "terminal_name": "Shop Terminal - Ashland",
+      "starmap_location": {
+       "uuid": "8d7e2b47-d27b-4e0d-9760-7bb502ae02e1",
+       "name": "Ashland",
+       "slug": "ashland",
+       "type_name": "Outpost",
+       "parent_name": "Ignis",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/8d7e2b47-d27b-4e0d-9760-7bb502ae02e1",
+       "web_url": "https://api.star-citizen.wiki/locations/8d7e2b47-d27b-4e0d-9760-7bb502ae02e1"
+      },
+      "date_updated": "2026-09-01T23:46:15+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=11-series-broadsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 61400,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 108,
+      "terminal_code": "CMNEW",
+      "terminal_name": "CenterMass - New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=11-series-broadsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 61400,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 107,
+      "terminal_code": "CMA18",
+      "terminal_name": "CenterMass - IO North Tower - Area 18",
+      "starmap_location": {
+       "uuid": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+       "name": "Area18",
+       "slug": "area18",
+       "type_name": "LandingZone",
+       "parent_name": "ArcCorp",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/c6535844-c615-494e-9dc1-c2d0c6e7190a",
+       "web_url": "https://api.star-citizen.wiki/locations/c6535844-c615-494e-9dc1-c2d0c6e7190a"
+      },
+      "date_updated": "2026-08-29T19:30:06+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=11-series-broadsword-cannon&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/11-series-broadsword-cannon",
+   "link": "https://api.star-citizen.wiki/api/items/f03daac4-28e2-405c-b226-c258151cb9f1",
+   "updated_at": "2026-09-26T00:10:53.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "85fd75f8-6c6c-4d3f-839f-988ae7660617",
+   "slug": "9-series-longsword-cannon",
+   "name": "9-Series Longsword Cannon",
+   "class_name": "KBAR_BallisticCannon_S1",
+   "classification": "Ship.Weapon.Gun",
+   "classification_label": "Gun",
+   "description": {
+    "en_EN": "The entry level autocannon of the KnightBridge Arms Sword-line, the 9-Series Longsword fires a ballistic round designed for use against a variety of armored hostiles while allowing pilots to keep a healthy distance from targets.",
+    "de_DE": "Hersteller: KnightBridge Arms\nTyp (En): Ballistic Cannon\nTyp (De): Ballistische Kanone\n\nGr\u00f6\u00dfe: S1\n\nDie Einstiegs-Autokanone der KnightBridge Arms Sword-Reihe, die 9-Series Longsword, feuert ein ballistisches Geschoss ab, das gegen eine Vielzahl gepanzerter Feinde eingesetzt werden kann, w\u00e4hrend Piloten einen sicheren Abstand zu den Zielen halten k\u00f6nnen.",
+    "zh_CN": "\u5236\u9020\u5546\uff1a\u9a91\u58eb\u6865\u519b\u5907 (KnightBridge Arms)\n\u7269\u54c1\u7c7b\u578b\uff1a\u5b9e\u5f39\u52a0\u519c\u70ae\n\u5c3a\u5bf8\uff1a1\n\n\u9a91\u58eb\u6865\u519b\u5907\u5165\u95e8\u7ea7\u7684\u5251\u7cfb\u5217\u81ea\u52a8\u706b\u70ae\uff0c9\u7cfb\u5217\u201c\u957f\u5251\u201d\u4f7f\u7528\u5b9e\u5f39\u5f39\u836f\uff0c\u65e8\u5728\u4fdd\u6301\u4e0e\u76ee\u6807\u7684\u5b89\u5168\u8ddd\u79bb\u7684\u60c5\u51b5\u5bf9\u6297\u6b66\u88c5\u4efd\u5b50\u3002",
+    "fr_FR": "Fabricant: KnightBridge Arms\nType d'article: Canon balistique\nTaille: 1\n\nLe Longsword 9-Series, le canon automatique d'entr\u00e9e de gamme de la ligne Sword de KnightBridge Arms, tire un projectile balistique con\u00e7u pour \u00eatre utilis\u00e9 contre diverses cibles blind\u00e9es tout en permettant aux pilotes de maintenir une distance de s\u00e9curit\u00e9 avec les cibles."
+   },
+   "size": 1,
+   "mass": 76.8,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "ad0494d5-ca83-4f6a-a4c0-f29b7b221a20",
+     "name": "9-Series Longsword Cannon",
+     "link": "https://api.star-citizen.wiki/api/blueprints/ad0494d5-ca83-4f6a-a4c0-f29b7b221a20"
+    }
+   ],
+   "grade": "A",
+   "class": null,
+   "description_data": [
+    {
+     "name": "Item Type",
+     "value": "Ballistic Cannon",
+     "type": "Ballistic Cannon"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "KnightBridge Arms",
+     "type": "KnightBridge Arms"
+    },
+    {
+     "name": "Size",
+     "value": "1",
+     "type": "1"
+    }
+   ],
+   "manufacturer_description": "KnightBridge Arms",
+   "manufacturer": {
+    "name": "KnightBridge Arms",
+    "code": "KBAR",
+    "uuid": "7b4402a1-f17f-4125-afcc-4a159dcd29e0",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/KBAR"
+   },
+   "type": "WeaponGun",
+   "type_label": "Weapon Gun",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=WeaponGun",
+   "sub_type": "Gun",
+   "sub_type_label": "Gun",
+   "vehicle_weapon": {
+    "class": "Gun",
+    "type": "Ballistic Cannon",
+    "capacity": 495,
+    "range": 2496,
+    "damage_per_shot": 48.6,
+    "regeneration": null,
+    "rpm": 250,
+    "damages": [
+     {
+      "type": "impact",
+      "name": "physical",
+      "damage": 48.6
+     }
+    ],
+    "modes": [
+     {
+      "mode": "Single",
+      "localised": "[AUTO]",
+      "type": "sequence",
+      "rpm": 250,
+      "rounds_per_minute": 250,
+      "ammo_per_shot": 1,
+      "pellets_per_shot": 1,
+      "damage_per_second": 202.5,
+      "heat_per_shot": 2.4,
+      "wear_per_shot": 0,
+      "heat_per_second": null,
+      "wear_per_second": null,
+      "fire_during_spin_up": null,
+      "shot_count": null,
+      "cooldown_time": null,
+      "sequence_mode": "Looping",
+      "charge_up_time": null,
+      "charge_down_time": null,
+      "full_damage_range": null,
+      "zero_damage_range": null,
+      "hit_type": null,
+      "hit_radius": null,
+      "min_energy_draw": null,
+      "max_energy_draw": null,
+      "healing_mode": null,
+      "healing_per_second": null,
+      "ammo_per_mscu": null,
+      "medical_ammo_type": null,
+      "external_healing": null,
+      "toggle": null,
+      "max_distance": null,
+      "max_sensor_distance": null,
+      "auto_dosage_modifier": null,
+      "healing_break_time": null,
+      "max_dose_for_auto_adjustment": null,
+      "battery_drain_per_second": null,
+      "material_efficiency": null,
+      "max_health_repair_rate": null,
+      "max_damage_map_repair_rate": null,
+      "health_to_ammo_ratio": null,
+      "ramp_up_time": null,
+      "ramp_down_time": null,
+      "max_vehicle_damage_ratio": null,
+      "repaired_material_ratio": null,
+      "salvage_can_fire_on_full": null,
+      "damage_threshold": null,
+      "minimum_distance": null,
+      "maximum_distance": null,
+      "beam_radius": null,
+      "collection_rate": null,
+      "energy_draw": null,
+      "mining_extractor_tag": null,
+      "toggle_mode": null
+     }
+    ],
+    "damage": {
+     "sustained_60s": 145.3,
+     "burst": 202.5,
+     "alpha_total": 48.6,
+     "max": 24057,
+     "maximum": 24057,
+     "dps": {
+      "physical": 202.5,
+      "energy": 0,
+      "distortion": 0,
+      "thermal": 0,
+      "biochemical": 0,
+      "stun": 0
+     },
+     "alpha": {
+      "physical": 48.6,
+      "energy": 0,
+      "distortion": 0,
+      "thermal": 0,
+      "biochemical": 0,
+      "stun": 0
+     }
+    },
+    "spread": {
+     "min": 0.5,
+     "max": 0.5,
+     "minimum": 0.5,
+     "maximum": 0.5,
+     "first_attack": 0.025,
+     "per_attack": 0.025,
+     "decay": 0.05
+    },
+    "heat": {
+     "per_shot": 2.4,
+     "cooling_delay": 0.798,
+     "cooling_per_second": 32.1,
+     "overheat_max_shots": 41,
+     "overheat_max_time": 9.84,
+     "overheat_cooldown": 3.94
+    },
+    "ammunition": {
+     "uuid": "6764916d-2c17-40f7-81b8-2cffa0bdf85f",
+     "size": 1,
+     "lifetime": 2.08,
+     "speed": 1200,
+     "range": 2496,
+     "capacity": 495,
+     "initial_capacity": 495,
+     "damage_falloff_level_1": 0,
+     "damage_falloff_level_2": 0,
+     "damage_falloff_level_3": 0,
+     "max_penetration_thickness": 0.5,
+     "penetration": {
+      "base_distance": 1.19,
+      "near_radius": 0.06,
+      "far_radius": 0.06,
+      "angle": null
+     },
+     "impact_damage": [
+      {
+       "type": "impact",
+       "name": "Physical",
+       "damage": 48.6
+      }
+     ],
+     "impact_damage_map": {
+      "physical": 48.6
+     },
+     "conversion_rate": 137,
+     "impulse_scale": 1,
+     "bullet_type": -1
+    },
+    "magazine_volume": {
+     "micro_scu": 67815,
+     "scu": 0.067815
+    }
+   },
+   "ammunition": {
+    "uuid": "6764916d-2c17-40f7-81b8-2cffa0bdf85f",
+    "size": 1,
+    "lifetime": 2.08,
+    "speed": 1200,
+    "range": 2496,
+    "capacity": 495,
+    "initial_capacity": 495,
+    "damage_falloff_level_1": 0,
+    "damage_falloff_level_2": 0,
+    "damage_falloff_level_3": 0,
+    "max_penetration_thickness": 0.5,
+    "penetration": {
+     "base_distance": 1.19,
+     "near_radius": 0.06,
+     "far_radius": 0.06,
+     "angle": null
+    },
+    "impact_damage": [
+     {
+      "type": "impact",
+      "name": "Physical",
+      "damage": 48.6
+     }
+    ],
+    "impact_damage_map": {
+     "physical": 48.6
+    },
+    "conversion_rate": 137,
+    "impulse_scale": 1,
+    "bullet_type": -1
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 1.5,
+    "volume": 0.084,
+    "volume_converted": 84000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 0.257,
+     "height": 0.379,
+     "length": 1.822
+    },
+    "dimensions": {
+     "width": 0.257,
+     "height": 0.379,
+     "length": 1.822
+    },
+    "cargo_dimension": {
+     "width": 0.45,
+     "height": 1.11,
+     "length": 0.8
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 1.5
+    }
+   },
+   "tags": [
+    "KBAR",
+    "BallisticCannon",
+    "flightReady",
+    "weaponMountUsable"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "magazine_attach",
+     "display_name": "Weapon Magazine",
+     "position": "magazine_well",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "Barrel"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.Barrel"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "Barrel",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "MEC",
+     "display_name": "M E C",
+     "position": "MEC",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "FiringMechanism"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.FiringMechanism"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "FiringMechanism",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "POW",
+     "display_name": "P O W",
+     "position": "POW",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "PowerArray"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.PowerArray"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "PowerArray",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    },
+    {
+     "name": "VEN",
+     "display_name": "V E N",
+     "position": "VEN",
+     "size": 1,
+     "sizes": {
+      "min": 1,
+      "max": 1
+     },
+     "compatible_types": [
+      {
+       "type": "WeaponAttachment",
+       "sub_types": [
+        "Ventilation"
+       ]
+      }
+     ],
+     "types": [
+      "WeaponAttachment.Ventilation"
+     ],
+     "type": "WeaponAttachment",
+     "sub_type": "Ventilation",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "uneditable"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "durability": {
+    "health": 850,
+    "lifetime": null,
+    "max_lifetime": null,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 1,
+     "thermal": 1,
+     "physical": 0.6,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 500000,
+    "decay_delay": 0,
+    "max": 500000,
+    "maximum": 500000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 1
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 37.5,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 0.1,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 21.2,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 0.1,
+      "max": 0.1,
+      "minimum": 0.1,
+      "maximum": 0.1
+     },
+     "coolant": {
+      "min": 0.1,
+      "max": 0.1,
+      "minimum": 0.1,
+      "maximum": 0.1
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 0,
+    "em_max": 37.5,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "starcitizen.tools",
+     "original_url": "https://media.starcitizen.tools/3/34/Longsword.png?2g9e8",
+     "thumbnail_url": "https://media.starcitizen.tools/thumb/3/34/Longsword.png/600px-Longsword.png.webp?2g9e8",
+     "original_width": 1920,
+     "original_height": 1080,
+     "thumbnail_width": 600,
+     "thumbnail_height": 338
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 542,
+      "terminal_code": "SSUNS",
+      "terminal_name": "Shop Terminal - Sunset Mesa",
+      "starmap_location": {
+       "uuid": "15f00205-1b3a-49ec-9b21-d74b60cf2b86",
+       "name": "Sunset Mesa",
+       "slug": "sunset-mesa",
+       "type_name": "Outpost",
+       "parent_name": "Monox",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/15f00205-1b3a-49ec-9b21-d74b60cf2b86",
+       "web_url": "https://api.star-citizen.wiki/locations/15f00205-1b3a-49ec-9b21-d74b60cf2b86"
+      },
+      "date_updated": "2026-09-05T12:21:50+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 539,
+      "terminal_code": "SJACK",
+      "terminal_name": "Shop Terminal - Jackson's Swap",
+      "starmap_location": {
+       "uuid": "57a9e4e4-477a-40c8-971c-5b4129f6b73b",
+       "name": "Jackson's Swap",
+       "slug": "jacksons-swap",
+       "type_name": "Outpost",
+       "parent_name": "Monox",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/57a9e4e4-477a-40c8-971c-5b4129f6b73b",
+       "web_url": "https://api.star-citizen.wiki/locations/57a9e4e4-477a-40c8-971c-5b4129f6b73b"
+      },
+      "date_updated": "2026-09-05T11:10:36+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 550,
+      "terminal_code": "SBUEN",
+      "terminal_name": "Shop Terminal - Bueno Ravine",
+      "starmap_location": {
+       "uuid": "399b5e2a-603b-4c4e-a1f8-c86f8e00713a",
+       "name": "Bueno Ravine",
+       "slug": "bueno-ravine",
+       "type_name": "Outpost",
+       "parent_name": "Bloom",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/399b5e2a-603b-4c4e-a1f8-c86f8e00713a",
+       "web_url": "https://api.star-citizen.wiki/locations/399b5e2a-603b-4c4e-a1f8-c86f8e00713a"
+      },
+      "date_updated": "2026-09-04T10:01:42+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 534,
+      "terminal_code": "SRUST",
+      "terminal_name": "Shop Terminal - Rustville",
+      "starmap_location": {
+       "uuid": "b7732f5f-8ad0-416e-bc4b-8e8329a73ba8",
+       "name": "Rustville",
+       "slug": "rustville",
+       "type_name": "Outpost",
+       "parent_name": "Pyro I",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/b7732f5f-8ad0-416e-bc4b-8e8329a73ba8",
+       "web_url": "https://api.star-citizen.wiki/locations/b7732f5f-8ad0-416e-bc4b-8e8329a73ba8"
+      },
+      "date_updated": "2026-09-03T11:06:21+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 509,
+      "terminal_code": "SCHAW",
+      "terminal_name": "Shop Terminal - Chawla's Beach",
+      "starmap_location": {
+       "uuid": "6654a246-09af-4e6a-bbab-764dce07d635",
+       "name": "Chawla's Beach",
+       "slug": "chawlas-beach",
+       "type_name": "Outpost",
+       "parent_name": "Pyro IV",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/6654a246-09af-4e6a-bbab-764dce07d635",
+       "web_url": "https://api.star-citizen.wiki/locations/6654a246-09af-4e6a-bbab-764dce07d635"
+      },
+      "date_updated": "2026-09-02T19:22:26+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 728,
+      "terminal_code": "STSACR",
+      "terminal_name": "Shop Terminal - Sacren's Plot",
+      "starmap_location": {
+       "uuid": "310f1f19-11f7-45b1-b897-0685b01ab570",
+       "name": "Sacren's Plot",
+       "slug": "sacrens-plot",
+       "type_name": "Outpost",
+       "parent_name": "Pyro IV",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/310f1f19-11f7-45b1-b897-0685b01ab570",
+       "web_url": "https://api.star-citizen.wiki/locations/310f1f19-11f7-45b1-b897-0685b01ab570"
+      },
+      "date_updated": "2026-09-02T17:38:12+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 687,
+      "terminal_code": "FALLOW",
+      "terminal_name": "Shop Terminal - Fallow Field",
+      "starmap_location": {
+       "uuid": "ffab0e7d-7874-412b-8894-7b310880af1b",
+       "name": "Fallow Field",
+       "slug": "fallow-field",
+       "type_name": "Outpost",
+       "parent_name": "Pyro IV",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/ffab0e7d-7874-412b-8894-7b310880af1b",
+       "web_url": "https://api.star-citizen.wiki/locations/ffab0e7d-7874-412b-8894-7b310880af1b"
+      },
+      "date_updated": "2026-09-02T09:47:25+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 508,
+      "terminal_code": "SHOPASH",
+      "terminal_name": "Shop Terminal - Ashland",
+      "starmap_location": {
+       "uuid": "8d7e2b47-d27b-4e0d-9760-7bb502ae02e1",
+       "name": "Ashland",
+       "slug": "ashland",
+       "type_name": "Outpost",
+       "parent_name": "Ignis",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/8d7e2b47-d27b-4e0d-9760-7bb502ae02e1",
+       "web_url": "https://api.star-citizen.wiki/locations/8d7e2b47-d27b-4e0d-9760-7bb502ae02e1"
+      },
+      "date_updated": "2026-09-01T23:46:15+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 721,
+      "terminal_code": "SHPLL",
+      "terminal_name": "Shop Terminal - Last Landings",
+      "starmap_location": {
+       "uuid": "256e7587-7c08-41de-8786-2338e51be039",
+       "name": "Last Landings",
+       "slug": "last-landings",
+       "type_name": "Outpost",
+       "parent_name": "Terminus",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/256e7587-7c08-41de-8786-2338e51be039",
+       "web_url": "https://api.star-citizen.wiki/locations/256e7587-7c08-41de-8786-2338e51be039"
+      },
+      "date_updated": "2026-09-01T14:21:01+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 475,
+      "terminal_code": "SCANA",
+      "terminal_name": "Shop Terminal - Canard View",
+      "starmap_location": {
+       "uuid": "d2cccd21-41a2-43fc-bebb-9bce14f6c59b",
+       "name": "Canard View",
+       "slug": "canard-view",
+       "type_name": "Outpost",
+       "parent_name": "Terminus",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/d2cccd21-41a2-43fc-bebb-9bce14f6c59b",
+       "web_url": "https://api.star-citizen.wiki/locations/d2cccd21-41a2-43fc-bebb-9bce14f6c59b"
+      },
+      "date_updated": "2026-09-01T09:47:02+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 517,
+      "terminal_code": "SSEER",
+      "terminal_name": "Shop Terminal - Seer's Canyon",
+      "starmap_location": {
+       "uuid": "4a971e19-7390-4075-bd16-3ef71ad9394e",
+       "name": "Seer's Canyon",
+       "slug": "seers-canyon",
+       "type_name": "Outpost",
+       "parent_name": "Vatra",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/4a971e19-7390-4075-bd16-3ef71ad9394e",
+       "web_url": "https://api.star-citizen.wiki/locations/4a971e19-7390-4075-bd16-3ef71ad9394e"
+      },
+      "date_updated": "2026-08-30T11:02:57+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 552,
+      "terminal_code": "SKABI",
+      "terminal_name": "Shop Terminal - Kabir's Post",
+      "starmap_location": {
+       "uuid": "887e6fe8-34f2-40f4-b59b-c1863c1621fd",
+       "name": "Kabir's Post",
+       "slug": "kabirs-post",
+       "type_name": "Outpost",
+       "parent_name": "Ignis",
+       "star_system_name": "Pyro",
+       "link": "https://api.star-citizen.wiki/api/locations/887e6fe8-34f2-40f4-b59b-c1863c1621fd",
+       "web_url": "https://api.star-citizen.wiki/locations/887e6fe8-34f2-40f4-b59b-c1863c1621fd"
+      },
+      "date_updated": "2026-08-30T08:13:38+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 12129,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 108,
+      "terminal_code": "CMNEW",
+      "terminal_name": "CenterMass - New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 191,
+      "terminal_code": "SWHL3",
+      "terminal_name": "Ship Weapons - HUR-L3",
+      "starmap_location": {
+       "uuid": "de5f2d1d-78e5-4273-8028-c06690c03685",
+       "name": "HUR-L3 Thundering Express Station",
+       "slug": "hur-l3-thundering-express-station",
+       "type_name": "Manmade_VisibleOnInteraction",
+       "parent_name": "Stanton",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/de5f2d1d-78e5-4273-8028-c06690c03685",
+       "web_url": "https://api.star-citizen.wiki/locations/de5f2d1d-78e5-4273-8028-c06690c03685"
+      },
+      "date_updated": "2026-09-12T12:55:58+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     },
+     {
+      "price_buy": 10625,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 194,
+      "terminal_code": "SWML2",
+      "terminal_name": "Ship Weapons - MIC-L2",
+      "starmap_location": {
+       "uuid": "f602528f-acf3-4564-960c-fc344269a7a9",
+       "name": "MIC-L2 Long Forest Station",
+       "slug": "mic-l2-long-forest-station",
+       "type_name": "Manmade_VisibleOnInteraction",
+       "parent_name": "Stanton",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/f602528f-acf3-4564-960c-fc344269a7a9",
+       "web_url": "https://api.star-citizen.wiki/locations/f602528f-acf3-4564-960c-fc344269a7a9"
+      },
+      "date_updated": "2026-08-28T19:24:39+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=9-series-longsword-cannon&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/9-series-longsword-cannon",
+   "link": "https://api.star-citizen.wiki/api/items/85fd75f8-6c6c-4d3f-839f-988ae7660617",
+   "updated_at": "2026-09-26T00:11:23.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=58",
+  "prev": null,
+  "next": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=2"
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 58,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "2",
+    "page": 2,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=3",
+    "label": "3",
+    "page": 3,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=4",
+    "label": "4",
+    "page": 4,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=5",
+    "label": "5",
+    "page": 5,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=6",
+    "label": "6",
+    "page": 6,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=7",
+    "label": "7",
+    "page": 7,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=8",
+    "label": "8",
+    "page": 8,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=9",
+    "label": "9",
+    "page": 9,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=10",
+    "label": "10",
+    "page": 10,
+    "active": false
+   },
+   {
+    "url": null,
+    "label": "...",
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=57",
+    "label": "57",
+    "page": 57,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=58",
+    "label": "58",
+    "page": 58,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=WeaponGun&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "Next &raquo;",
+    "page": 2,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/vehicle-items",
+  "per_page": 3,
+  "to": 3,
+  "total": 173,
+  "valid_relations": [
+   "shops",
+   "shops.items",
+   "variants",
+   "related_items",
+   "blueprints",
+   "vehicles"
+  ]
+ }
+}

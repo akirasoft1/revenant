@@ -1,0 +1,996 @@
+{
+ "data": [
+  {
+   "uuid": "22ca3ca2-1bdc-48a7-8689-a0f8259a5441",
+   "slug": "bolide",
+   "name": "Bolide",
+   "class_name": "POWR_AEGS_S02_Bolide_SCItem",
+   "classification": "Ship.PowerPlant.Power",
+   "classification_label": "Power",
+   "description": {
+    "en_EN": "The Bolide power plant from Aegis has logged innumerable hours of flight experience and is frequently used by the UEE Navy and security forces across the Empire.",
+    "de_DE": "Hersteller: Aegis Dynamics\nTyp (En): Power Plant\nTyp (De): Energiegenerator\n\nGr\u00f6\u00dfe: S2\nG\u00fctegrad: B\nKlasse: Military (Milit\u00e4r)\n\nDas Bolide Power Plant von Aegis hat eine umfangreiche Flugerfahrung und wird oft von der UEE-Navy und den Sicherheitskr\u00e4ften im gesamten Imperium genutzt.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u53d1\u7535\u673a\n\u5236\u9020\u5546\uff1a\u5723\u76fe\u52a8\u529b\uff08Aegis Dynamics\uff09\n\u5c3a\u5bf8\uff1a2\n\u7b49\u7ea7\uff1aB\n\u5206\u7c7b\uff1a\u519b\u7528\n\n\u6765\u81ea\u5723\u76fe\u7684\u706b\u6d41\u661f\u53d1\u7535\u673a\u62e5\u6709\u65e0\u6570\u5c0f\u65f6\u7684\u98de\u884c\u7ecf\u9a8c\uff0c\u5728UEE\u6d77\u519b\u548c\u6574\u4e2a\u5e1d\u56fd\u7684\u5b89\u5168\u90e8\u961f\u4e2d\u5341\u5206\u5e38\u7528\u3002",
+    "fr_FR": "Type d'article : G\u00e9n\u00e9rateur\nFabricant : Aegis Dynamics\nTaille : 2\nQualit\u00e9 : B\nClasse : Militaire\n\nLa centrale \u00e9nerg\u00e9tique Bolide de Aegis a enregistr\u00e9 d'innombrables heures d'exp\u00e9rience de vol et est fr\u00e9quemment utilis\u00e9e par la Marine de l'UEE et les forces de s\u00e9curit\u00e9 \u00e0 travers l'Empire."
+   },
+   "size": 2,
+   "mass": 740,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "8601e542-8c86-4504-981f-aaf24f3b5fd2",
+     "name": "Bolide",
+     "link": "https://api.star-citizen.wiki/api/blueprints/8601e542-8c86-4504-981f-aaf24f3b5fd2"
+    }
+   ],
+   "grade": "B",
+   "class": "Military",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Military",
+     "type": "Military"
+    },
+    {
+     "name": "Grade",
+     "value": "B",
+     "type": "B"
+    },
+    {
+     "name": "Item Type",
+     "value": "Power Plant",
+     "type": "Power Plant"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Aegis Dynamics",
+     "type": "Aegis Dynamics"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "Aegis Dynamics",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS",
+    "uuid": "cf4a74bf-eb2c-462a-9b78-f7f2724c31d2",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/AEGS"
+   },
+   "type": "PowerPlant",
+   "type_label": "Power Plant",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=PowerPlant",
+   "sub_type": "Power",
+   "sub_type_label": "Power",
+   "power_plant": {
+    "power_output": null,
+    "power_segment_generation": 20
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.252,
+    "volume_converted": 252000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 1.511,
+     "height": 1.013,
+     "length": 0.961
+    },
+    "dimensions": {
+     "width": 1.511,
+     "height": 1.013,
+     "length": 0.961
+    },
+    "cargo_dimension": {
+     "width": 0.45,
+     "height": 0.8,
+     "length": 3.32
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [
+    "Enablepowerplant",
+    "Disablepowerplant"
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 59.9,
+    "overheat_threshold": 139.9,
+    "overheat_temperature": 139.9,
+    "max_temperature": 164.9,
+    "recovery_temperature": 159.9
+   },
+   "durability": {
+    "health": 860,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.7,
+     "thermal": 0.1,
+     "physical": 0.85,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 500,
+    "decay_delay": 3,
+    "max": 7500,
+    "maximum": 7500,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 1,
+    "shutdown_time": 18
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 9900,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Generation",
+        "resource": "Power",
+        "rate": 20,
+        "minimum_fraction": null,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": 0,
+        "binary_evaluation": null,
+        "composition": [
+         {
+          "Ratio": 1,
+          "ContainerResource": "bcc8cde9-de58-4e6b-8ee9-37d4aaa507eb"
+         }
+        ]
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 66.2,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 20,
+      "max": 20,
+      "minimum": 20,
+      "maximum": 20
+     },
+     "coolant": {
+      "min": 20,
+      "max": 20,
+      "minimum": 20,
+      "maximum": 20
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": 20
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 0,
+    "em_max": 9900,
+    "em_decay": 0.15,
+    "em_per_segment": 495
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "cstone.space",
+     "original_url": "https://cstone.space/uifimages/22ca3ca2-1bdc-48a7-8689-a0f8259a5441.png",
+     "thumbnail_url": "https://cstone.space/uifimages/22ca3ca2-1bdc-48a7-8689-a0f8259a5441.png",
+     "original_width": 515,
+     "original_height": 501,
+     "thumbnail_width": 515,
+     "thumbnail_height": 501
+    }
+   ],
+   "uex_prices": {
+    "purchase": []
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/bolide",
+   "link": "https://api.star-citizen.wiki/api/items/22ca3ca2-1bdc-48a7-8689-a0f8259a5441",
+   "updated_at": "2026-09-22T07:32:30.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "e533d75c-9275-48e9-bc93-f49a2c113bc5",
+   "slug": "breton",
+   "name": "Breton",
+   "class_name": "POWR_JUST_S01_Breton_SCItem",
+   "classification": "Ship.PowerPlant.Power",
+   "classification_label": "Power",
+   "description": {
+    "en_EN": "The Breton embodies exactly what Juno Starwerk engineers wanted out of an industrial power plant - utilitarian, easy to repair and extremely powerful. You'll be hard pressed to find a better balance of performance and durability from a unit this size.",
+    "de_DE": "Hersteller: Juno Starwerk\nTyp (En): Power Plant\nTyp (De): Energiegenerator\n\nGr\u00f6\u00dfe: S1\nG\u00fctegrad: A\nKlasse: Industrial (Industrie)\n\nDer Breton verk\u00f6rpert genau das, was die Juno Starwerk-Ingenieure von einem industriellen Power Plant wollten - praktisch, einfach zu reparieren und extrem m\u00e4chtig. Es wird Ihnen schwer fallen, bei einem Ger\u00e4t dieser Gr\u00f6\u00dfe ein besseres Gleichgewicht zwischen Leistung und Haltbarkeit zu finden.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u53d1\u7535\u673a\n\u5236\u9020\u5546\uff1a\u6731\u8bfa\u661f\u9645\u5de5\u5382 (Juno Starwerk)\n\u5c3a\u5bf8\uff1a1\n\u7b49\u7ea7\uff1aA\n\u5206\u7c7b\uff1a\u5de5\u4e1a\n\n\"\u5e03\u5217\u5854\u5c3c\"\u5b8c\u5168\u4f53\u73b0\u4e86\u6731\u8bfa\u661f\u9645\u5de5\u5382\u5de5\u7a0b\u5e08\u4eec\u5bf9\u5de5\u4e1a\u53d1\u7535\u673a\u7684\u671f\u671b\u2014\u5b9e\u7528\uff0c\u5bb9\u6613\u7ef4\u4fee\u548c\u6027\u80fd\u5f3a\u5927\u3002\u60a8\u5f88\u96be\u4ece\u540c\u5c3a\u5bf8\u7684\u8bbe\u5907\u4e2d\u627e\u5230\u9664\u5b83\u4ee5\u5916\u80fd\u5728\u6027\u80fd\u4e0e\u8010\u7528\u6027\u4e4b\u95f4\u505a\u51fa\u66f4\u597d\u5e73\u8861\u7684\u8bbe\u5907\u4e86\u3002",
+    "fr_FR": "Type d'article : G\u00e9n\u00e9rateur\nFabricant : Juno Starwerk\nTaille : 1\nQualit\u00e9 : A\nClasse : Industriel\n\nLe Breton incarne exactement ce que les ing\u00e9nieurs de Juno Starwerk attendaient d'une centrale \u00e9lectrique industrielle \u2014 utilitaire, facile \u00e0 r\u00e9parer et extr\u00eamement puissante. Vous aurez du mal \u00e0 trouver un meilleur \u00e9quilibre entre performance et durabilit\u00e9 pour une unit\u00e9 de cette taille."
+   },
+   "size": 1,
+   "mass": 280,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "342314db-2713-4e37-9982-6fb66a8fd871",
+     "name": "Breton",
+     "link": "https://api.star-citizen.wiki/api/blueprints/342314db-2713-4e37-9982-6fb66a8fd871"
+    }
+   ],
+   "grade": "A",
+   "class": "Industrial",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Industrial",
+     "type": "Industrial"
+    },
+    {
+     "name": "Grade",
+     "value": "A",
+     "type": "A"
+    },
+    {
+     "name": "Item Type",
+     "value": "Power Plant",
+     "type": "Power Plant"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Juno Starwerk",
+     "type": "Juno Starwerk"
+    },
+    {
+     "name": "Size",
+     "value": "1",
+     "type": "1"
+    }
+   ],
+   "manufacturer_description": "Juno Starwerk",
+   "manufacturer": {
+    "name": "Juno Starwerk",
+    "code": "JUST",
+    "uuid": "d7cc897f-b760-4a73-93c0-27e23c52db0a",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/JUST"
+   },
+   "type": "PowerPlant",
+   "type_label": "Power Plant",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=PowerPlant",
+   "sub_type": "Power",
+   "sub_type_label": "Power",
+   "power_plant": {
+    "power_output": null,
+    "power_segment_generation": 16
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.084,
+    "volume_converted": 84000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 0.741,
+     "height": 0.458,
+     "length": 0.502
+    },
+    "dimensions": {
+     "width": 0.741,
+     "height": 0.458,
+     "length": 0.502
+    },
+    "cargo_dimension": {
+     "width": 0.22,
+     "height": 0.8,
+     "length": 2.21
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [
+    "Enablepowerplant",
+    "Disablepowerplant"
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 49.9,
+    "overheat_threshold": 109.9,
+    "overheat_temperature": 109.9,
+    "max_temperature": 143.9,
+    "recovery_temperature": 137.9
+   },
+   "durability": {
+    "health": 300,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.7,
+     "thermal": 0.1,
+     "physical": 0.85,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 303.33,
+    "decay_delay": 1.5,
+    "max": 4550,
+    "maximum": 4550,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 1,
+    "shutdown_time": 16.5
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 7920,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Generation",
+        "resource": "Power",
+        "rate": 16,
+        "minimum_fraction": null,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": 0,
+        "binary_evaluation": null,
+        "composition": [
+         {
+          "Ratio": 1,
+          "ContainerResource": "bcc8cde9-de58-4e6b-8ee9-37d4aaa507eb"
+         }
+        ]
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 34.7,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 16,
+      "max": 16,
+      "minimum": 16,
+      "maximum": 16
+     },
+     "coolant": {
+      "min": 16,
+      "max": 16,
+      "minimum": 16,
+      "maximum": 16
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": 16
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 0,
+    "em_max": 7920,
+    "em_decay": 0.15,
+    "em_per_segment": 495
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "starcitizen.tools",
+     "original_url": "https://media.starcitizen.tools/d/d3/Breton_PP_in-game_cutout_-_Mesh_BG_SCT_logo.jpg?sr579",
+     "thumbnail_url": "https://media.starcitizen.tools/thumb/d/d3/Breton_PP_in-game_cutout_-_Mesh_BG_SCT_logo.jpg/600px-Breton_PP_in-game_cutout_-_Mesh_BG_SCT_logo.jpg.webp?sr579",
+     "original_width": 3840,
+     "original_height": 2160,
+     "thumbnail_width": 600,
+     "thumbnail_height": 338
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 237600,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega Pro - New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=breton&tab=about"
+     },
+     {
+      "price_buy": 237600,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 114,
+      "terminal_code": "DDA18",
+      "terminal_name": "Dumper's Depot - Area 18",
+      "starmap_location": {
+       "uuid": "c6535844-c615-494e-9dc1-c2d0c6e7190a",
+       "name": "Area18",
+       "slug": "area18",
+       "type_name": "LandingZone",
+       "parent_name": "ArcCorp",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/c6535844-c615-494e-9dc1-c2d0c6e7190a",
+       "web_url": "https://api.star-citizen.wiki/locations/c6535844-c615-494e-9dc1-c2d0c6e7190a"
+      },
+      "date_updated": "2026-08-29T15:47:58+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=breton&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/breton",
+   "link": "https://api.star-citizen.wiki/api/items/e533d75c-9275-48e9-bc93-f49a2c113bc5",
+   "updated_at": "2026-09-26T00:22:32.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "cfe4539d-2066-4317-8d52-cba38ac3767e",
+   "slug": "celestial",
+   "name": "Celestial",
+   "class_name": "POWR_SASU_S03_Celestial_SCItem",
+   "classification": "Ship.PowerPlant.Power",
+   "classification_label": "Power",
+   "description": {
+    "en_EN": "The Celestial from Sakura Sun improves upon the company's base large power plant by redesigning the power rate and other key aspects to raise the component's overall performance.",
+    "de_DE": "Hersteller: Sakura Sun\nTyp (En): Power Plant\nTyp (De): Energiegenerator\n\nGr\u00f6\u00dfe: S3\nG\u00fctegrad: B\nKlasse: Civilian (Zivil)\n\nDer Celestial von Sakura Sun verbessert das einfache gro\u00dfen Power Plant des Unternehmens durch eine Neugestaltung der Leistungsrate und anderer wichtiger Aspekte die Gesamtleistung der Komponente steigern.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u53d1\u7535\u673a\n\u5236\u9020\u5546\uff1a\u6a31\u65e5\u96c6\u56e2 (Sakura Sun)\n\u5c3a\u5bf8\uff1a3\n\u7b49\u7ea7\uff1aB\n\u5206\u7c7b\uff1a\u6c11\u7528\n\n\u6a31\u65e5\u96c6\u56e2\u7684\"\u5929\u4f53\"\u901a\u8fc7\u91cd\u65b0\u8bbe\u8ba1\u8f93\u51fa\u529f\u7387\u548c\u5176\u4ed6\u5173\u952e\u5185\u5bb9\u6765\u6539\u5584\u8be5\u516c\u53f8\u7684\u5927\u578b\u53d1\u7535\u673a\uff0c\u7528\u4ee5\u63d0\u9ad8\u7ec4\u4ef6\u7684\u6574\u4f53\u6027\u80fd\u3002",
+    "fr_FR": "Type d'article : G\u00e9n\u00e9rateur\nFabricant : Sakura Sun\nTaille : 3\nQualit\u00e9 : B\nClasse : Civile\n\nLe mod\u00e8le Celestial de Sakura Sun am\u00e9liore la centrale \u00e9lectrique de base de la soci\u00e9t\u00e9 en repensant le taux de puissance et d'autres aspects cl\u00e9s pour augmenter la performance globale du composant."
+   },
+   "size": 3,
+   "mass": 1400,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "29ae5b0d-9fbd-4be5-89da-0b854f5065f8",
+     "name": "Celestial",
+     "link": "https://api.star-citizen.wiki/api/blueprints/29ae5b0d-9fbd-4be5-89da-0b854f5065f8"
+    }
+   ],
+   "grade": "B",
+   "class": "Civilian",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Civilian",
+     "type": "Civilian"
+    },
+    {
+     "name": "Grade",
+     "value": "B",
+     "type": "B"
+    },
+    {
+     "name": "Item Type",
+     "value": "Power Plant",
+     "type": "Power Plant"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Sakura Sun",
+     "type": "Sakura Sun"
+    },
+    {
+     "name": "Size",
+     "value": "3",
+     "type": "3"
+    }
+   ],
+   "manufacturer_description": "Sakura Sun",
+   "manufacturer": {
+    "name": "Sakura Sun",
+    "code": "SASU",
+    "uuid": "40c59850-8fb5-4a0e-ab61-7fd3871a632a",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/SASU"
+   },
+   "type": "PowerPlant",
+   "type_label": "Power Plant",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=PowerPlant",
+   "sub_type": "Power",
+   "sub_type_label": "Power",
+   "power_plant": {
+    "power_output": null,
+    "power_segment_generation": 22
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.756,
+    "volume_converted": 756000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 2.96,
+     "height": 1.906,
+     "length": 2.087
+    },
+    "dimensions": {
+     "width": 2.96,
+     "height": 1.906,
+     "length": 2.087
+    },
+    "cargo_dimension": {
+     "width": 0.67,
+     "height": 1.2,
+     "length": 4.42
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [
+    "Enablepowerplant",
+    "Disablepowerplant"
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 120.9,
+    "recovery_temperature": 115.9
+   },
+   "durability": {
+    "health": 1500,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.7,
+     "thermal": 0.1,
+     "physical": 0.85,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 466.67,
+    "decay_delay": 4.5,
+    "max": 7000,
+    "maximum": 7000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 1,
+    "shutdown_time": 19.5
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 9080,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Generation",
+        "resource": "Power",
+        "rate": 22,
+        "minimum_fraction": null,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": 0,
+        "binary_evaluation": null,
+        "composition": [
+         {
+          "Ratio": 1,
+          "ContainerResource": "bcc8cde9-de58-4e6b-8ee9-37d4aaa507eb"
+         }
+        ]
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 1,
+        "register_range": 0
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 116,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 22,
+      "max": 22,
+      "minimum": 22,
+      "maximum": 22
+     },
+     "coolant": {
+      "min": 22,
+      "max": 22,
+      "minimum": 22,
+      "maximum": 22
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": 22
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 0,
+    "em_max": 9080,
+    "em_decay": 0.15,
+    "em_per_segment": 413
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "star-citizen.wiki",
+     "original_url": "https://cdn.star-citizen.wiki/images/1/14/Celestial.jpg",
+     "thumbnail_url": "https://cdn.star-citizen.wiki/images/1/14/Celestial.jpg",
+     "original_width": 496,
+     "original_height": 496,
+     "thumbnail_width": 496,
+     "thumbnail_height": 496
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 176000,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 111,
+      "terminal_code": "COUSI",
+      "terminal_name": "Cousin Crow's - Providence Platform - Orison",
+      "starmap_location": {
+       "uuid": "567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+       "name": "Orison",
+       "slug": "orison",
+       "type_name": "LandingZone",
+       "parent_name": "Crusader",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/567f92d7-d34c-42fa-b57b-f1939d4c5f5b",
+       "web_url": "https://api.star-citizen.wiki/locations/567f92d7-d34c-42fa-b57b-f1939d4c5f5b"
+      },
+      "date_updated": "2026-09-21T19:23:18+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=celestial&tab=about"
+     },
+     {
+      "price_buy": 176000,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 139,
+      "terminal_code": "PBHL5",
+      "terminal_name": "Platinum Bay - HUR-L5",
+      "starmap_location": {
+       "uuid": "8e83f4da-c85d-4f00-b98d-bc734a07c5d4",
+       "name": "HUR-L5 High Course Station",
+       "slug": "hur-l5-high-course-station",
+       "type_name": "Manmade_VisibleOnInteraction",
+       "parent_name": "Stanton",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/8e83f4da-c85d-4f00-b98d-bc734a07c5d4",
+       "web_url": "https://api.star-citizen.wiki/locations/8e83f4da-c85d-4f00-b98d-bc734a07c5d4"
+      },
+      "date_updated": "2026-09-19T00:23:48+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=celestial&tab=about"
+     },
+     {
+      "price_buy": 176000,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 115,
+      "terminal_code": "DDGRI",
+      "terminal_name": "Dumper's Depot - GrimHEX",
+      "starmap_location": {
+       "uuid": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+       "name": "Grim HEX",
+       "slug": "grim-hex",
+       "type_name": "Manmade",
+       "parent_name": "Yela",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+       "web_url": "https://api.star-citizen.wiki/locations/8cda0b9b-22a8-43fe-ac33-df7a1ba9434d"
+      },
+      "date_updated": "2026-09-03T16:12:09+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=celestial&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/celestial",
+   "link": "https://api.star-citizen.wiki/api/items/cfe4539d-2066-4317-8d52-cba38ac3767e",
+   "updated_at": "2026-09-26T00:07:23.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=26",
+  "prev": null,
+  "next": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=2"
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 26,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "2",
+    "page": 2,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=3",
+    "label": "3",
+    "page": 3,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=4",
+    "label": "4",
+    "page": 4,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=5",
+    "label": "5",
+    "page": 5,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=6",
+    "label": "6",
+    "page": 6,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=7",
+    "label": "7",
+    "page": 7,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=8",
+    "label": "8",
+    "page": 8,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=9",
+    "label": "9",
+    "page": 9,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=10",
+    "label": "10",
+    "page": 10,
+    "active": false
+   },
+   {
+    "url": null,
+    "label": "...",
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=25",
+    "label": "25",
+    "page": 25,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=26",
+    "label": "26",
+    "page": 26,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=PowerPlant&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "Next &raquo;",
+    "page": 2,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/vehicle-items",
+  "per_page": 3,
+  "to": 3,
+  "total": 78,
+  "valid_relations": [
+   "shops",
+   "shops.items",
+   "variants",
+   "related_items",
+   "blueprints",
+   "vehicles"
+  ]
+ }
+}

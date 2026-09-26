@@ -1,0 +1,1508 @@
+{
+ "data": [
+  {
+   "uuid": "069689b2-0abf-47e6-a584-e20819764711",
+   "slug": "agni",
+   "name": "Agni",
+   "class_name": "QDRV_JUST_S03_Agni_SCItem",
+   "classification": "Ship.QuantumDrive",
+   "classification_label": "Quantum Drive",
+   "description": {
+    "en_EN": "Haulers have relied on Juno Starwerk's stellar industrial craftsmanship for centuries. The company constantly updates and improves the design of the Agni quantum drive to ensure it remains a top-of-the-line industrial component.",
+    "de_DE": "Hersteller: Juno Starwerk\nTyp (En): Quantum Drive\nTyp (De): Quantenantrieb\n\nGr\u00f6\u00dfe: S3\nG\u00fctegrad: B\nKlasse: Industrial (Industrie)\n\nSpediteure verlassen sich seit Jahrhunderten auf das herausragende handwerkliche K\u00f6nnen von Juno Starwerk. Das Unternehmen aktualisiert und verbessert st\u00e4ndig das Design des Agni-Quantenantrieb, um sicherzustellen, dass er eine erstklassige industrielle Komponente bleibt.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u91cf\u5b50\u9a71\u52a8\u5668\n\u5236\u9020\u5546\uff1a\u6731\u8bfa\u661f\u9645\u5de5\u5382 (Juno Starwerk)\n\u5c3a\u5bf8\uff1a3\n\u7b49\u7ea7\uff1aB\n\u5206\u7c7b\uff1a\u5de5\u4e1a\n\n\u51e0\u4e16\u7eaa\u4ee5\u6765\uff0c\u8d27\u8fd0\u4e1a\u8005\u4eec\u90fd\u4e00\u76f4\u4f9d\u9760\u6731\u8bfa\u661f\u9645\u5de5\u5382\u7684\u7cbe\u7f8e\u5de5\u4e1a\u5236\u54c1.\u516c\u53f8\u4e0d\u65ad\u5730\u66f4\u65b0\u548c\u6539\u5584\u963f\u683c\u5c3c\u91cf\u5b50\u9a71\u52a8\u5668\u7684\u8bbe\u8ba1\u6765\u786e\u4fdd\u5b83\u59cb\u7ec8\u662f\u4e1a\u754c\u9876\u7ea7\u7684\u5de5\u4e1a\u90e8\u4ef6\u3002",
+    "fr_FR": "Type d'article : Propulseur quantique\nFabricant : Juno Starwerk\nTaille : 3\nQualit\u00e9 : B\nClasse : Industriel\n\nLes transporteurs se sont appuy\u00e9s sur le savoir-faire industriel stellaire de Juno Starwerk pendant des si\u00e8cles. L'entreprise met sans cesse \u00e0 jour et am\u00e9liore la conception du propulseur quantique Agni afin de s'assurer qu'il reste un composant industriel haut de gamme."
+   },
+   "size": 3,
+   "mass": 2500,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "c8e37bc7-6bd5-4225-a823-8975e46765e2",
+     "name": "Agni",
+     "link": "https://api.star-citizen.wiki/api/blueprints/c8e37bc7-6bd5-4225-a823-8975e46765e2"
+    }
+   ],
+   "grade": "B",
+   "class": "Industrial",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Industrial",
+     "type": "Industrial"
+    },
+    {
+     "name": "Grade",
+     "value": "B",
+     "type": "B"
+    },
+    {
+     "name": "Item Type",
+     "value": "Quantum Drive",
+     "type": "Quantum Drive"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Juno Starwerk",
+     "type": "Juno Starwerk"
+    },
+    {
+     "name": "Size",
+     "value": "3",
+     "type": "3"
+    }
+   ],
+   "manufacturer_description": "Juno Starwerk",
+   "manufacturer": {
+    "name": "Juno Starwerk",
+    "code": "JUST",
+    "uuid": "d7cc897f-b760-4a73-93c0-27e23c52db0a",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/JUST"
+   },
+   "type": "QuantumDrive",
+   "type_label": "Quantum Drive",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=QuantumDrive",
+   "sub_type": "UNDEFINED",
+   "sub_type_label": "Undefined",
+   "quantum_drive": {
+    "quantum_fuel_requirement": 0.036064,
+    "jump_range": 3.402823e+38,
+    "jump_range_formatted": "Unlimited",
+    "disconnect_range": 69893,
+    "disconnect_range_formatted": "70 km",
+    "fuel_rate": 3.6064e-08,
+    "thermal_energy_draw": {
+     "pre_ramp_up": 20000,
+     "ramp_up": 20000,
+     "in_flight": 20000,
+     "ramp_down": 20000,
+     "post_ramp_down": 20000
+    },
+    "standard_jump": {
+     "drive_speed": 585715600,
+     "drive_speed_formatted": "585.7 Mm/s",
+     "cooldown_time": 21.6,
+     "stage_one_accel_rate": 4685175,
+     "stage_one_accel_rate_formatted": "4.7 Mm/s\u00b2",
+     "stage_two_accel_rate": 5969838,
+     "stage_two_accel_rate_formatted": "6 Mm/s\u00b2",
+     "engage_speed": 190000000,
+     "engage_speed_formatted": "190 Mm/s",
+     "interdiction_effect_time": 2.7,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 8.5
+    },
+    "spline_jump": {
+     "drive_speed": 400000,
+     "drive_speed_formatted": "400 km/s",
+     "cooldown_time": 21,
+     "stage_one_accel_rate": 250,
+     "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+     "stage_two_accel_rate": 50000,
+     "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+     "engage_speed": 1500,
+     "engage_speed_formatted": "1.5 km/s",
+     "interdiction_effect_time": 5,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 7
+    },
+    "modes": [
+     {
+      "type": "normal_jump",
+      "drive_speed": 585715600,
+      "drive_speed_formatted": "585.7 Mm/s",
+      "cooldown_time": 21.6,
+      "stage_one_accel_rate": 4685175,
+      "stage_one_accel_rate_formatted": "4.7 Mm/s\u00b2",
+      "stage_two_accel_rate": 5969838,
+      "stage_two_accel_rate_formatted": "6 Mm/s\u00b2",
+      "engage_speed": 190000000,
+      "engage_speed_formatted": "190 Mm/s",
+      "interdiction_effect_time": 2.7,
+      "calibration_rate": 1000,
+      "min_calibration_requirement": 5000,
+      "max_calibration_requirement": 10000,
+      "calibration_process_angle_limit": 5,
+      "calibration_warning_angle_limit": 8,
+      "calibration_delay_in_seconds": 1.5,
+      "spool_up_time": 8.5
+     },
+     {
+      "type": "spline_jump",
+      "drive_speed": 400000,
+      "drive_speed_formatted": "400 km/s",
+      "cooldown_time": 21,
+      "stage_one_accel_rate": 250,
+      "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+      "stage_two_accel_rate": 50000,
+      "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+      "engage_speed": 1500,
+      "engage_speed_formatted": "1.5 km/s",
+      "interdiction_effect_time": 5,
+      "calibration_rate": 1000,
+      "min_calibration_requirement": 5000,
+      "max_calibration_requirement": 10000,
+      "calibration_process_angle_limit": 5,
+      "calibration_warning_angle_limit": 8,
+      "calibration_delay_in_seconds": 1.5,
+      "spool_up_time": 7
+     }
+    ],
+    "fuel_consumption_scu_per_gm": 0.036,
+    "fuel_efficiency": 1.63,
+    "travel_time_10gm": {
+     "seconds": 91,
+     "formatted": "1:30"
+    }
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.756,
+    "volume_converted": 756000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 3.012,
+     "height": 2.17,
+     "length": 2.014
+    },
+    "dimensions": {
+     "width": 3.012,
+     "height": 2.17,
+     "length": 2.014
+    },
+    "cargo_dimension": {
+     "width": 0.67,
+     "height": 1.2,
+     "length": 4.42
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [
+    "Engagequantumtravel",
+    "Disengagequantumtravel"
+   ],
+   "ports": [
+    {
+     "name": "hardpoint_Jump_Drive",
+     "display_name": "Jump Module",
+     "position": "HARDPOINT_JUMP_DRIVE",
+     "size": 3,
+     "sizes": {
+      "min": 3,
+      "max": 3
+     },
+     "compatible_types": [
+      {
+       "type": "JumpDrive",
+       "sub_types": [
+        "JumpDrive"
+       ]
+      }
+     ],
+     "types": [
+      "JumpDrive.JumpDrive"
+     ],
+     "type": "JumpDrive",
+     "sub_type": "JumpDrive",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "dont_hide_entity"
+     ],
+     "editable": true,
+     "uneditable": false,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 49.9,
+    "overheat_threshold": 109.9,
+    "overheat_temperature": 109.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 126.9
+   },
+   "durability": {
+    "health": 1600,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.85,
+     "thermal": 0.1,
+     "physical": 0.85,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 500,
+    "decay_delay": 4.5,
+    "max": 7500,
+    "maximum": 7500,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 19.5
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 10,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 44600,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 5,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     },
+     {
+      "name": "Travelling",
+      "signature": {
+       "em": 44600,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 5,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "QuantumFuel",
+        "rate": 3.6e-05,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 89.1,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 5,
+      "max": 5,
+      "minimum": 5,
+      "maximum": 5
+     },
+     "coolant": {
+      "min": 0,
+      "max": 5,
+      "minimum": 0,
+      "maximum": 5
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 44600,
+    "em_max": 44600,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "star-citizen.wiki",
+     "original_url": "https://cdn.star-citizen.wiki/images/b/b7/Agni.jpg",
+     "thumbnail_url": "https://cdn.star-citizen.wiki/images/thumb/b/b7/Agni.jpg/600px-Agni.jpg",
+     "original_width": 854,
+     "original_height": 370,
+     "thumbnail_width": 600,
+     "thumbnail_height": 260
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 453600,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega Pro - New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=agni&tab=about"
+     },
+     {
+      "price_buy": 430920,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 136,
+      "terminal_code": "PBEVE",
+      "terminal_name": "Platinum Bay - Everus Harbor",
+      "starmap_location": {
+       "uuid": "ab29f65e-c792-4b1f-b23d-5810cb0ef416",
+       "name": "Everus Harbor",
+       "slug": "everus-harbor",
+       "type_name": "Manmade",
+       "parent_name": "Hurston",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/ab29f65e-c792-4b1f-b23d-5810cb0ef416",
+       "web_url": "https://api.star-citizen.wiki/locations/ab29f65e-c792-4b1f-b23d-5810cb0ef416"
+      },
+      "date_updated": "2026-09-14T05:53:48+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=agni&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/agni",
+   "link": "https://api.star-citizen.wiki/api/items/069689b2-0abf-47e6-a584-e20819764711",
+   "updated_at": "2026-09-26T00:22:34.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "fcfa0140-7d88-452f-aac4-668cd65c4053",
+   "slug": "aither",
+   "name": "Aither",
+   "class_name": "QDRV_RSI_S02_Aither_SCItem",
+   "classification": "Ship.QuantumDrive",
+   "classification_label": "Quantum Drive",
+   "description": {
+    "en_EN": "Named for an ancient god of light and the heavens, the Aither quantum drive honors its namesake as it ferries people places their ancestors could never imagine. This classic RSI medium-sized component has graced civilian ships for centuries.",
+    "de_DE": "Hersteller: RSI\nTyp (En): Quantum Drive\nTyp (De): Quantenantrieb\n\nGr\u00f6\u00dfe: S2\nG\u00fctegrad: B\nKlasse: Civilian (Zivil)\n\nBenannt nach einem antiken Gott des Lichts und des Himmels, ehrt der Aither-Quantenantrieb seinen Namensvetter, w\u00e4hrend er die Menschen an Orte bringt, die ihre Vorfahren sich nie h\u00e4tten vorstellen k\u00f6nnen. Diese klassische mittelgro\u00dfe Komponente von RSI schm\u00fcckt zivilen Schiffen seit Jahrhunderten.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u91cf\u5b50\u9a71\u52a8\u5668\n\u5236\u9020\u5546\uff1aRSI\n\u5c3a\u5bf8\uff1a2\n\u7b49\u7ea7\uff1aB\n\u5206\u7c7b\uff1a\u6c11\u7528\n\n\u4ee5\u53e4\u8001\u7684\u5149\u660e\u4e4b\u795e\u548c\u5929\u5802\u4e4b\u540d\u547d\u540d\uff0c\u4ee5\u592a\u91cf\u5b50\u9a71\u52a8\u5668\u4ee5\u5176\u540d\u5b57\u800c\u8457\u79f0\uff0c\u56e0\u4e3a\u5b83\u53ef\u4ee5\u8fd0\u9001\u4eba\u4eec\u5230\u524d\u4eba\u65e0\u6cd5\u60f3\u5230\u7684\u4f4d\u7f6e\u3002\u8fd9\u4e2a\u7ecf\u5178\u7684RSI\u4e2d\u578b\u7ec4\u4ef6\u5df2\u7ecf\u52a0\u88c5\u5728\u6c11\u7528\u8230\u8247\u4e2d\u591a\u4e2a\u4e16\u7eaa\u3002",
+    "fr_FR": "Type d'article : Propulseur quantique\nFabricant : RSI\nTaille : 2\nQualit\u00e9 : B \nClasse : Civile\n\nNomm\u00e9 d'apr\u00e8s un ancien dieu de la lumi\u00e8re et des cieux, le propulseur quantique Aither rend hommage \u00e0 son homonyme alors qu'il transporte des personnes vers des lieux que leurs anc\u00eatres n'auraient jamais pu imaginer. Ce composant RSI de taille moyenne classique a orn\u00e9 les vaisseaux civils pendant des si\u00e8cles."
+   },
+   "size": 2,
+   "mass": 630,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "9a6c9773-fb0d-453a-b36b-8dc2fdd2330a",
+     "name": "Aither",
+     "link": "https://api.star-citizen.wiki/api/blueprints/9a6c9773-fb0d-453a-b36b-8dc2fdd2330a"
+    }
+   ],
+   "grade": "B",
+   "class": "Civilian",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Civilian",
+     "type": "Civilian"
+    },
+    {
+     "name": "Grade",
+     "value": "B",
+     "type": "B"
+    },
+    {
+     "name": "Item Type",
+     "value": "Quantum Drive",
+     "type": "Quantum Drive"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Roberts Space Industries",
+     "type": "Roberts Space Industries"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "Roberts Space Industries",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI",
+    "uuid": "093e6eba-93fa-4dad-b3dd-38966934e34e",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/RSI"
+   },
+   "type": "QuantumDrive",
+   "type_label": "Quantum Drive",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=QuantumDrive",
+   "sub_type": "UNDEFINED",
+   "sub_type_label": "Undefined",
+   "quantum_drive": {
+    "quantum_fuel_requirement": 0.009156,
+    "jump_range": 3.402823e+38,
+    "jump_range_formatted": "Unlimited",
+    "disconnect_range": 34693,
+    "disconnect_range_formatted": "35 km",
+    "fuel_rate": 9.156e-09,
+    "thermal_energy_draw": {
+     "pre_ramp_up": 6240,
+     "ramp_up": 6240,
+     "in_flight": 6240,
+     "ramp_down": 6240,
+     "post_ramp_down": 6240
+    },
+    "standard_jump": {
+     "drive_speed": 275942800,
+     "drive_speed_formatted": "275.9 Mm/s",
+     "cooldown_time": 12.2,
+     "stage_one_accel_rate": 5945657,
+     "stage_one_accel_rate_formatted": "5.9 Mm/s\u00b2",
+     "stage_two_accel_rate": 8994857,
+     "stage_two_accel_rate_formatted": "9 Mm/s\u00b2",
+     "engage_speed": 84000000,
+     "engage_speed_formatted": "84 Mm/s",
+     "interdiction_effect_time": 2,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 6.9
+    },
+    "spline_jump": {
+     "drive_speed": 400000,
+     "drive_speed_formatted": "400 km/s",
+     "cooldown_time": 16.38,
+     "stage_one_accel_rate": 250,
+     "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+     "stage_two_accel_rate": 50000,
+     "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+     "engage_speed": 1500,
+     "engage_speed_formatted": "1.5 km/s",
+     "interdiction_effect_time": 5,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 6
+    },
+    "modes": [
+     {
+      "type": "normal_jump",
+      "drive_speed": 275942800,
+      "drive_speed_formatted": "275.9 Mm/s",
+      "cooldown_time": 12.2,
+      "stage_one_accel_rate": 5945657,
+      "stage_one_accel_rate_formatted": "5.9 Mm/s\u00b2",
+      "stage_two_accel_rate": 8994857,
+      "stage_two_accel_rate_formatted": "9 Mm/s\u00b2",
+      "engage_speed": 84000000,
+      "engage_speed_formatted": "84 Mm/s",
+      "interdiction_effect_time": 2,
+      "calibration_rate": 1000,
+      "min_calibration_requirement": 5000,
+      "max_calibration_requirement": 10000,
+      "calibration_process_angle_limit": 5,
+      "calibration_warning_angle_limit": 8,
+      "calibration_delay_in_seconds": 1.5,
+      "spool_up_time": 6.9
+     },
+     {
+      "type": "spline_jump",
+      "drive_speed": 400000,
+      "drive_speed_formatted": "400 km/s",
+      "cooldown_time": 16.38,
+      "stage_one_accel_rate": 250,
+      "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+      "stage_two_accel_rate": 50000,
+      "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+      "engage_speed": 1500,
+      "engage_speed_formatted": "1.5 km/s",
+      "interdiction_effect_time": 5,
+      "calibration_rate": 1000,
+      "min_calibration_requirement": 5000,
+      "max_calibration_requirement": 10000,
+      "calibration_process_angle_limit": 5,
+      "calibration_warning_angle_limit": 8,
+      "calibration_delay_in_seconds": 1.5,
+      "spool_up_time": 6
+     }
+    ],
+    "fuel_consumption_scu_per_gm": 0.022,
+    "fuel_efficiency": 1.25,
+    "travel_time_10gm": {
+     "seconds": 76,
+     "formatted": "1:15"
+    }
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.252,
+    "volume_converted": 252000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 1.504,
+     "height": 1.09,
+     "length": 1.006
+    },
+    "dimensions": {
+     "width": 1.504,
+     "height": 1.09,
+     "length": 1.006
+    },
+    "cargo_dimension": {
+     "width": 0.45,
+     "height": 0.8,
+     "length": 3.32
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [
+    "Engagequantumtravel",
+    "Disengagequantumtravel"
+   ],
+   "ports": [
+    {
+     "name": "hardpoint_Jump_Drive",
+     "display_name": "Jump Module",
+     "position": "HARDPOINT_JUMP_DRIVE",
+     "size": 2,
+     "sizes": {
+      "min": 2,
+      "max": 2
+     },
+     "compatible_types": [
+      {
+       "type": "JumpDrive",
+       "sub_types": [
+        "JumpDrive"
+       ]
+      }
+     ],
+     "types": [
+      "JumpDrive.JumpDrive"
+     ],
+     "type": "JumpDrive",
+     "sub_type": "JumpDrive",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "dont_hide_entity"
+     ],
+     "editable": true,
+     "uneditable": false,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 120.9,
+    "recovery_temperature": 115.9
+   },
+   "durability": {
+    "health": 470,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.85,
+     "thermal": 0.1,
+     "physical": 0.85,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 266.67,
+    "decay_delay": 3,
+    "max": 4000,
+    "maximum": 4000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 18
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 10,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 27000,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 3,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     },
+     {
+      "name": "Travelling",
+      "signature": {
+       "em": 27000,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 3,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "QuantumFuel",
+        "rate": 2.2e-05,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 50.9,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 3,
+      "max": 3,
+      "minimum": 3,
+      "maximum": 3
+     },
+     "coolant": {
+      "min": 0,
+      "max": 3,
+      "minimum": 0,
+      "maximum": 3
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 27000,
+    "em_max": 27000,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "star-citizen.wiki",
+     "original_url": "https://cdn.star-citizen.wiki/images/4/47/Aither.jpg",
+     "thumbnail_url": "https://cdn.star-citizen.wiki/images/4/47/Aither.jpg",
+     "original_width": 375,
+     "original_height": 375,
+     "thumbnail_width": 375,
+     "thumbnail_height": 375
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 84000,
+      "price_sell": 0,
+      "price_rent": null,
+      "terminal_id": 115,
+      "terminal_code": "DDGRI",
+      "terminal_name": "Dumper's Depot - GrimHEX",
+      "starmap_location": {
+       "uuid": "8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+       "name": "Grim HEX",
+       "slug": "grim-hex",
+       "type_name": "Manmade",
+       "parent_name": "Yela",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/8cda0b9b-22a8-43fe-ac33-df7a1ba9434d",
+       "web_url": "https://api.star-citizen.wiki/locations/8cda0b9b-22a8-43fe-ac33-df7a1ba9434d"
+      },
+      "date_updated": "2026-09-03T16:13:32+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=aither&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/aither",
+   "link": "https://api.star-citizen.wiki/api/items/fcfa0140-7d88-452f-aac4-668cd65c4053",
+   "updated_at": "2026-09-26T00:22:35.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "70163f66-522d-4161-824e-18eb08299258",
+   "slug": "allegro",
+   "name": "Allegro",
+   "class_name": "QDRV_ORIG_S04_890J_SCItem",
+   "classification": "Ship.QuantumDrive",
+   "classification_label": "Quantum Drive",
+   "description": {
+    "en_EN": "Designed specifically for the 890 Jump, the Allegro quantum drive blends ArcCorp's expertise with Origin's exceptionally high standards, making it the ideal companion for a luxury cruise through the stars.",
+    "de_DE": "Hersteller: ArcCorp\nTyp (En): Quantum Drive\nTyp (De): Quantenantrieb\n\nGr\u00f6\u00dfe: S4\nG\u00fctegrad: Individuell angefertigt\nKlasse: Civilian (Zivil)\n\nSpeziell f\u00fcr die 890 Jump entwickelt, kombiniert der Allegro-Quantenantrieb ArcCorps Fachkenntnisse mit Origins au\u00dfergew\u00f6hnlich hohen Standards und macht ihn zum idealen Begleiter f\u00fcr eine Luxuskreuzfahrt durch die Sterne.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u91cf\u5b50\u9a71\u52a8\u5668\n\u5236\u9020\u5546\uff1a\u5f27\u5149\u96c6\u56e2 (ArcCorp)\n\u5c3a\u5bf8\uff1a4\n\u7b49\u7ea7\uff1a\u91cf\u8eab\u5b9a\u5236\n\u5206\u7c7b\uff1a\u6c11\u7528\n\n\u7279\u522b\u4e3a890\u8dc3\u52a8\u800c\u8bbe\u8ba1\uff0c\u6781\u901f\u91cf\u5b50\u9a71\u52a8\u5668\u7ed3\u5408\u4e86\u5f27\u5149\u96c6\u56e2\u7684\u4e13\u4e1a\u77e5\u8bc6\u548c\u8d77\u6e90\u7684\u6781\u7aef\u9ad8\u6807\u51c6\uff0c\u4f7f\u5b83\u6210\u4e3a\u60a8\u6f2b\u6b65\u661f\u8fb0\u4e4b\u95f4\u7684\u7406\u60f3\u966a\u4f34\u3002",
+    "fr_FR": "Type d'article : Moteur quantique\nFabricant : ArcCorp\nTaille : 4\nQualit\u00e9 : Sus mesure\nClasse : Civile\n\nCon\u00e7u sp\u00e9cifiquement pour le 890 Jump, le moteur quantique Allegro allie l'expertise d'ArcCorp aux normes d'excellence d'Origin, faisant de lui le compagnon id\u00e9al pour une croisi\u00e8re luxueuse \u00e0 travers les \u00e9toiles."
+   },
+   "size": 4,
+   "mass": 12000,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "2ad0f498-308f-4dc4-9391-5ec74aefede0",
+     "name": "Allegro",
+     "link": "https://api.star-citizen.wiki/api/blueprints/2ad0f498-308f-4dc4-9391-5ec74aefede0"
+    }
+   ],
+   "grade": "A",
+   "class": "Civilian",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Civilian",
+     "type": "Civilian"
+    },
+    {
+     "name": "Grade",
+     "value": "Bespoke",
+     "type": "Bespoke"
+    },
+    {
+     "name": "Item Type",
+     "value": "Quantum Drive",
+     "type": "Quantum Drive"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "ArcCorp",
+     "type": "ArcCorp"
+    },
+    {
+     "name": "Size",
+     "value": "4",
+     "type": "4"
+    }
+   ],
+   "manufacturer_description": "ArcCorp",
+   "manufacturer": {
+    "name": "Unknown",
+    "code": "UNKN",
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/UNKN"
+   },
+   "type": "QuantumDrive",
+   "type_label": "Quantum Drive",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=QuantumDrive",
+   "sub_type": "UNDEFINED",
+   "sub_type_label": "Undefined",
+   "quantum_drive": {
+    "quantum_fuel_requirement": 0.0613,
+    "jump_range": 3.402823e+38,
+    "jump_range_formatted": "Unlimited",
+    "disconnect_range": 73206,
+    "disconnect_range_formatted": "73 km",
+    "fuel_rate": 6.13e-08,
+    "thermal_energy_draw": {
+     "pre_ramp_up": 950000,
+     "ramp_up": 950000,
+     "in_flight": 950000,
+     "ramp_down": 950000,
+     "post_ramp_down": 950000
+    },
+    "standard_jump": {
+     "drive_speed": 1262910000,
+     "drive_speed_formatted": "1\u00a0262.9 Mm/s",
+     "cooldown_time": 29.3,
+     "stage_one_accel_rate": 2404215,
+     "stage_one_accel_rate_formatted": "2.4 Mm/s\u00b2",
+     "stage_two_accel_rate": 21945000,
+     "stage_two_accel_rate_formatted": "21.9 Mm/s\u00b2",
+     "engage_speed": 200000000,
+     "engage_speed_formatted": "200 Mm/s",
+     "interdiction_effect_time": 2.5,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 9.9
+    },
+    "spline_jump": {
+     "drive_speed": 400000,
+     "drive_speed_formatted": "400 km/s",
+     "cooldown_time": 0,
+     "stage_one_accel_rate": 250,
+     "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+     "stage_two_accel_rate": 50000,
+     "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+     "engage_speed": 1500,
+     "engage_speed_formatted": "1.5 km/s",
+     "interdiction_effect_time": 5,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 9
+    },
+    "modes": [
+     {
+      "type": "normal_jump",
+      "drive_speed": 1262910000,
+      "drive_speed_formatted": "1\u00a0262.9 Mm/s",
+      "cooldown_time": 29.3,
+      "stage_one_accel_rate": 2404215,
+      "stage_one_accel_rate_formatted": "2.4 Mm/s\u00b2",
+      "stage_two_accel_rate": 21945000,
+      "stage_two_accel_rate_formatted": "21.9 Mm/s\u00b2",
+      "engage_speed": 200000000,
+      "engage_speed_formatted": "200 Mm/s",
+      "interdiction_effect_time": 2.5,
+      "calibration_rate": 1000,
+      "min_calibration_requirement": 5000,
+      "max_calibration_requirement": 10000,
+      "calibration_process_angle_limit": 5,
+      "calibration_warning_angle_limit": 8,
+      "calibration_delay_in_seconds": 1.5,
+      "spool_up_time": 9.9
+     },
+     {
+      "type": "spline_jump",
+      "drive_speed": 400000,
+      "drive_speed_formatted": "400 km/s",
+      "cooldown_time": 0,
+      "stage_one_accel_rate": 250,
+      "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+      "stage_two_accel_rate": 50000,
+      "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+      "engage_speed": 1500,
+      "engage_speed_formatted": "1.5 km/s",
+      "interdiction_effect_time": 5,
+      "calibration_rate": 1000,
+      "min_calibration_requirement": 5000,
+      "max_calibration_requirement": 10000,
+      "calibration_process_angle_limit": 5,
+      "calibration_warning_angle_limit": 8,
+      "calibration_delay_in_seconds": 1.5,
+      "spool_up_time": 9
+     }
+    ],
+    "fuel_consumption_scu_per_gm": 0.055,
+    "fuel_efficiency": 2.3,
+    "travel_time_10gm": {
+     "seconds": 88,
+     "formatted": "1:27"
+    }
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 2.1,
+    "volume_converted": 2100000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 6,
+     "height": 6,
+     "length": 4.001
+    },
+    "dimensions": {
+     "width": 6,
+     "height": 6,
+     "length": 4.001
+    },
+    "cargo_dimension": {
+     "width": 0.89,
+     "height": 1.6,
+     "length": 6.63
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [
+    "Engagequantumtravel",
+    "Disengagequantumtravel"
+   ],
+   "ports": [
+    {
+     "name": "hardpoint_Jump_Drive",
+     "display_name": "Jump Module",
+     "position": "HARDPOINT_JUMP_DRIVE",
+     "size": 4,
+     "sizes": {
+      "min": 4,
+      "max": 4
+     },
+     "compatible_types": [
+      {
+       "type": "JumpDrive",
+       "sub_types": [
+        "JumpDrive"
+       ]
+      }
+     ],
+     "types": [
+      "JumpDrive.JumpDrive"
+     ],
+     "type": "JumpDrive",
+     "sub_type": "JumpDrive",
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "dont_hide_entity"
+     ],
+     "editable": true,
+     "uneditable": false,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 125.9
+   },
+   "durability": {
+    "health": 9900,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.85,
+     "thermal": 0.1,
+     "physical": 0.85,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 1000,
+    "decay_delay": 6,
+    "max": 15000,
+    "maximum": 15000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 21
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 10,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 41300,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 5,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     },
+     {
+      "name": "Travelling",
+      "signature": {
+       "em": 41300,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 5,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "QuantumFuel",
+        "rate": 5.4999999999999995e-05,
+        "minimum_fraction": 1,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 250,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 5,
+      "max": 5,
+      "minimum": 5,
+      "maximum": 5
+     },
+     "coolant": {
+      "min": 0,
+      "max": 5,
+      "minimum": 0,
+      "maximum": 5
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 41300,
+    "em_max": 41300,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": []
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/allegro",
+   "link": "https://api.star-citizen.wiki/api/items/70163f66-522d-4161-824e-18eb08299258",
+   "updated_at": "2026-09-22T07:32:30.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=19",
+  "prev": null,
+  "next": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=2"
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 19,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "2",
+    "page": 2,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=3",
+    "label": "3",
+    "page": 3,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=4",
+    "label": "4",
+    "page": 4,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=5",
+    "label": "5",
+    "page": 5,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=6",
+    "label": "6",
+    "page": 6,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=7",
+    "label": "7",
+    "page": 7,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=8",
+    "label": "8",
+    "page": 8,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=9",
+    "label": "9",
+    "page": 9,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=10",
+    "label": "10",
+    "page": 10,
+    "active": false
+   },
+   {
+    "url": null,
+    "label": "...",
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=18",
+    "label": "18",
+    "page": 18,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=19",
+    "label": "19",
+    "page": 19,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=QuantumDrive&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "Next &raquo;",
+    "page": 2,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/vehicle-items",
+  "per_page": 3,
+  "to": 3,
+  "total": 57,
+  "valid_relations": [
+   "shops",
+   "shops.items",
+   "variants",
+   "related_items",
+   "blueprints",
+   "vehicles"
+  ]
+ }
+}

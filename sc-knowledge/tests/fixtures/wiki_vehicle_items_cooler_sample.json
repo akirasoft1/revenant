@@ -1,0 +1,817 @@
+{
+ "data": [
+  {
+   "uuid": "67b6c401-1017-4c39-93f6-8305c4c67f69",
+   "slug": "absolutezero",
+   "name": "AbsoluteZero",
+   "class_name": "COOL_ACOM_S02_AbsoluteZero_SCItem",
+   "classification": "Ship.Cooler",
+   "classification_label": "Cooler",
+   "description": {
+    "en_EN": "Originally designed for racers, the AbsoluteZero cooler pushes performance to the limits. This high quality component from ACOM features a new coolant cycling system to keep your ship's systems cool over everything else.",
+    "de_DE": "Hersteller: ACOM\nTyp (En): Cooler\nTyp (De): K\u00fchler\n\nGr\u00f6\u00dfe: S2\nG\u00fctegrad: B\nKlasse: Competition (Wettkampf)\n\nUrspr\u00fcnglich f\u00fcr Rennfahrer entwickelt, dr\u00fcckt der AbsoluteZero-K\u00fchler die Leistungsgrenzen. Diese hochwertige Komponente von ACOM verf\u00fcgt \u00fcber ein neues K\u00fchlmittelsystem, um Ihr Schiffssystem \u00fcber alles andere k\u00fchl zu halten.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u51b7\u5374\u5668\n\u5236\u9020\u5546\uff1aACOM\n\u5c3a\u5bf8\uff1a2\n\u7b49\u7ea7\uff1aB \n\u5206\u7c7b\uff1a\u7ade\u8d5b\n\n\u8d77\u521d\u4e13\u4e3a\u8d5b\u8247\u8bbe\u8ba1\u7684\"\u7edd\u5bf9\u96f6\u5ea6\"\u51b7\u5374\u5668\u80fd\u8ba9\u6027\u80fd\u53d1\u6325\u5230\u6781\u81f4.\u8fd9\u6b3e\u6765\u81ea\u8230\u8239\u90e8\u4ef6\u5236\u9020\u5546 (ACOM)\u7684\u9ad8\u54c1\u8d28\u7ec4\u4ef6\u4eae\u70b9\u662f\u4e00\u5957\u5168\u65b0\u7684\u51b7\u5374\u6db2\u5faa\u73af\u7cfb\u7edf\uff0c\u80fd\u8ba9\u60a8\u7684\u98de\u8239\u7cfb\u7edf\u6563\u70ed\u6548\u679c\u80dc\u8fc7\u4e00\u5207\u3002",
+    "fr_FR": "Type d'article : Refroidisseur\nFabricant : ACOM\nTaille : 2\nQualit\u00e9 : B\nClasse : Comp\u00e9tition\n\nCon\u00e7u \u00e0 l'origine pour les coureurs, le refroidisseur AbsoluteZero repousse les limites de la performance. Ce composant ACOM de haute qualit\u00e9 est dot\u00e9 d'un nouveau syst\u00e8me de circulation du liquide de refroidissement afin de maintenir les syst\u00e8mes de votre vaisseau au frais avant toute autre chose."
+   },
+   "size": 2,
+   "mass": 180,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "479a96c4-0b36-48f3-9ff6-5f4d7645dec3",
+     "name": "AbsoluteZero",
+     "link": "https://api.star-citizen.wiki/api/blueprints/479a96c4-0b36-48f3-9ff6-5f4d7645dec3"
+    }
+   ],
+   "grade": "B",
+   "class": "Competition",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Competition",
+     "type": "Competition"
+    },
+    {
+     "name": "Grade",
+     "value": "B",
+     "type": "B"
+    },
+    {
+     "name": "Item Type",
+     "value": "Cooler",
+     "type": "Cooler"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "ACOM",
+     "type": "ACOM"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "ACOM",
+   "manufacturer": {
+    "name": "ACOM",
+    "code": "ACOM",
+    "uuid": "5d616e6f-3257-4d19-90c3-11ab974f12e7",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/ACOM"
+   },
+   "type": "Cooler",
+   "type_label": "Cooler",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Cooler",
+   "sub_type": "UNDEFINED",
+   "sub_type_label": "Undefined",
+   "cooler": {
+    "cooling_rate": null,
+    "suppression_ir_factor": null,
+    "suppression_heat_factor": null,
+    "coolant_segment_generation": 46
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.252,
+    "volume_converted": 252000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 1.5,
+     "height": 0.51,
+     "length": 0.933
+    },
+    "dimensions": {
+     "width": 1.5,
+     "height": 0.51,
+     "length": 0.933
+    },
+    "cargo_dimension": {
+     "width": 0.45,
+     "height": 0.8,
+     "length": 3.32
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "durability": {
+    "health": 210,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.9,
+     "thermal": 0.1,
+     "physical": 0.9,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 120,
+    "decay_delay": 3,
+    "max": 1800,
+    "maximum": 1800,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 18
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 30,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 1230,
+       "ir": 7850
+      },
+      "deltas": [
+       {
+        "type": "Conversion",
+        "resource": "Power",
+        "rate": 3,
+        "minimum_fraction": 1,
+        "generated_resource": "Coolant",
+        "generated_rate": 46,
+        "discharge": null,
+        "no_over_generation": 0,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 54.1,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 3,
+      "max": 3,
+      "minimum": 3,
+      "maximum": 3
+     },
+     "coolant": {
+      "min": 3,
+      "max": 3,
+      "minimum": 3,
+      "maximum": 3
+     }
+    },
+    "generation": {
+     "coolant": 46,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 7850,
+    "em_min": 1230,
+    "em_max": 1230,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "cstone.space",
+     "original_url": "https://cstone.space/uifimages/67b6c401-1017-4c39-93f6-8305c4c67f69.png",
+     "thumbnail_url": "https://cstone.space/uifimages/67b6c401-1017-4c39-93f6-8305c4c67f69.png",
+     "original_width": 512,
+     "original_height": 512,
+     "thumbnail_width": 512,
+     "thumbnail_height": 512
+    }
+   ],
+   "uex_prices": {
+    "purchase": []
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/absolutezero",
+   "link": "https://api.star-citizen.wiki/api/items/67b6c401-1017-4c39-93f6-8305c4c67f69",
+   "updated_at": "2026-09-22T07:32:30.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "115aaff9-c8c5-4b93-bc14-9f22524fe8a8",
+   "slug": "algid",
+   "name": "Algid",
+   "class_name": "COOL_AEGS_S04_Reclaimer",
+   "classification": "Ship.Cooler",
+   "classification_label": "Cooler",
+   "description": {
+    "en_EN": "The Reclaimer is a ship renowned for its ability to work long and hard. To help support even the most arduous salvaging projects, Aegis develop the bespoke Algid cooler.",
+    "de_DE": "Hersteller: Aegis Dynamics\nTyp (En): Cooler\nTyp (De): K\u00fchler\n\nGr\u00f6\u00dfe: S4\nG\u00fctegrad: Individuell angefertigt\nKlasse: Industrial (Industrie)\n\nDie Reclaimer ist bekannt daf\u00fcr, lange und hart zu arbeiten. Um auch die anspruchsvollsten Verwertungsarbeiten zu unterst\u00fctzen, hat Aegis den ma\u00dfgeschneiderten Algid-K\u00fchler entwickelt.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u51b7\u5374\u5668\n\u5236\u9020\u5546\uff1a\u5723\u76fe\u52a8\u529b\uff08Aegis Dynamics\uff09\n\u5c3a\u5bf8\uff1a4\n\u7b49\u7ea7\uff1a\u5b9a\u5236\n\u5206\u7c7b\uff1a\u5de5\u4e1a\n\n\u56de\u6536\u8005\u4ee5\u5176\u575a\u82e5\u78d0\u77f3\u7684\u5de5\u4f5c\u80fd\u529b\u800c\u95fb\u540d\u3002\u4e3a\u4e86\u8fdb\u884c\u6700\u8270\u96be\u7684\u6253\u635e\u4f5c\u4e1a\uff0c\u5723\u76fe\u4e13\u95e8\u4e3a\u5176\u5f00\u53d1\u4e86\u98ce\u5bd2\u51b7\u5374\u5668",
+    "fr_FR": "Type d'article : Refroidisseur\nFabricant : Aegis Dynamics\nTaille : 4\nQualit\u00e9 : Sur mesure\nClasse : Industriel\n\nLe Reclaimer est un vaisseau renomm\u00e9 pour sa capacit\u00e9 \u00e0 travailler longtemps et dur. Pour aider \u00e0 soutenir m\u00eame les projets de r\u00e9cup\u00e9ration les plus ardus, Aegis a d\u00e9velopp\u00e9 le refroidisseur Algid sur mesure."
+   },
+   "size": 4,
+   "mass": 6400,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "db6227d5-aa0e-44b9-ad22-5d62a99f114b",
+     "name": "Algid",
+     "link": "https://api.star-citizen.wiki/api/blueprints/db6227d5-aa0e-44b9-ad22-5d62a99f114b"
+    }
+   ],
+   "grade": "A",
+   "class": "Industrial",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Industrial",
+     "type": "Industrial"
+    },
+    {
+     "name": "Grade",
+     "value": "Bespoke",
+     "type": "Bespoke"
+    },
+    {
+     "name": "Item Type",
+     "value": "Cooler",
+     "type": "Cooler"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Aegis Dynamics",
+     "type": "Aegis Dynamics"
+    },
+    {
+     "name": "Size",
+     "value": "4",
+     "type": "4"
+    }
+   ],
+   "manufacturer_description": "Aegis Dynamics",
+   "manufacturer": {
+    "name": "Unknown",
+    "code": "UNKN",
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/UNKN"
+   },
+   "type": "Cooler",
+   "type_label": "Cooler",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Cooler",
+   "sub_type": "UNDEFINED",
+   "sub_type_label": "Undefined",
+   "cooler": {
+    "cooling_rate": null,
+    "suppression_ir_factor": null,
+    "suppression_heat_factor": null,
+    "coolant_segment_generation": 69
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 2.1,
+    "volume_converted": 2100000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 4,
+     "height": 2,
+     "length": 6
+    },
+    "dimensions": {
+     "width": 4,
+     "height": 2,
+     "length": 6
+    },
+    "cargo_dimension": {
+     "width": 0.89,
+     "height": 1.6,
+     "length": 6.63
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "durability": {
+    "health": 4100,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.9,
+     "thermal": 0.1,
+     "physical": 0.9,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 733.33,
+    "decay_delay": 6,
+    "max": 11000,
+    "maximum": 11000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 21
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 30,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 2970,
+       "ir": 14300
+      },
+      "deltas": [
+       {
+        "type": "Conversion",
+        "resource": "Power",
+        "rate": 6,
+        "minimum_fraction": 0.8333333,
+        "generated_resource": "Coolant",
+        "generated_rate": 69,
+        "discharge": null,
+        "no_over_generation": 0,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 0.85,
+        "register_range": 1
+       },
+       {
+        "start": 6,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 121,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 5,
+      "max": 6,
+      "minimum": 5,
+      "maximum": 6
+     },
+     "coolant": {
+      "min": 4.25,
+      "max": 6,
+      "minimum": 4.25,
+      "maximum": 6
+     }
+    },
+    "generation": {
+     "coolant": 69,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 14300,
+    "em_min": 2104,
+    "em_max": 2970,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": []
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/algid",
+   "link": "https://api.star-citizen.wiki/api/items/115aaff9-c8c5-4b93-bc14-9f22524fe8a8",
+   "updated_at": "2026-09-22T07:32:51.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "e41f4682-381a-453e-802b-521ce84a26b6",
+   "slug": "arctic",
+   "name": "Arctic",
+   "class_name": "COOL_AEGS_S02_Arctic_SCItem",
+   "classification": "Ship.Cooler",
+   "classification_label": "Cooler",
+   "description": {
+    "en_EN": "Providing the kind of durability that made Aegis products a mainstay with the military, the Arctic is an economic mil-spec cooler capable of withstanding the rigors of combat without sacrificing performance.",
+    "de_DE": "Hersteller: Aegis Dynamics\nTyp (En): Cooler\nTyp (De): K\u00fchler\n\nGr\u00f6\u00dfe: S2\nG\u00fctegrad: C\nKlasse: Military (Milit\u00e4r)\n\nMit der Art von Haltbarkeit, die Aegis-Produkte bei der Armee zum festen Bestandteil gemacht hat, ist der Arctic ein wirtschaftlicher mil-spec K\u00fchler, der den Strapazen des Kampfes standhalten kann, ohne die Leistung zu beeintr\u00e4chtigen.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u51b7\u5374\u5668\n\u5236\u9020\u5546\uff1a\u5723\u76fe\u52a8\u529b \uff08Aegis Dynamics\uff09\n\u5c3a\u5bf8\uff1a2\n\u7b49\u7ea7\uff1aC\n\u5206\u7c7b\uff1a\u519b\u7528\n\n\u62e5\u6709\u7740\u4f7f\u5723\u76fe\u4ea7\u54c1\u6210\u4e3a\u519b\u54c1\u91cc\u4e2d\u6d41\u7825\u67f1\u7684\u53ef\u9760\u6027\uff0c\"\u5317\u6781\"\u662f\u4e00\u6b3e\u7ecf\u6d4e\u7684\u519b\u89c4\u51b7\u5374\u5668\uff0c\u80fd\u5728\u4e0d\u727a\u7272\u6027\u80fd\u7684\u524d\u63d0\u4e0b\u7ecf\u53d7\u8d77\u6218\u6597\u7684\u4e25\u9177\u8003\u9a8c\u3002",
+    "fr_FR": "Type d'article : Refroidisseur\nFabricant : Aegis Dynamics\nTaille : 2\nQualit\u00e9 : C\nClasse : Militaire\n\nOffrant le type de durabilit\u00e9 qui a fait des produits Aegis un pilier de l'arm\u00e9e, l'Arctic est un refroidisseur \u00e9conomique de milieu de gamme capable de r\u00e9sister aux rigueurs du combat sans sacrifier les performances."
+   },
+   "size": 2,
+   "mass": 620,
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "aefb21e8-2fb3-4d69-a2ee-6ff938a4d365",
+     "name": "Arctic",
+     "link": "https://api.star-citizen.wiki/api/blueprints/aefb21e8-2fb3-4d69-a2ee-6ff938a4d365"
+    }
+   ],
+   "grade": "C",
+   "class": "Military",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Military",
+     "type": "Military"
+    },
+    {
+     "name": "Grade",
+     "value": "C",
+     "type": "C"
+    },
+    {
+     "name": "Item Type",
+     "value": "Cooler",
+     "type": "Cooler"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Aegis Dynamics",
+     "type": "Aegis Dynamics"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "Aegis Dynamics",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS",
+    "uuid": "cf4a74bf-eb2c-462a-9b78-f7f2724c31d2",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/AEGS"
+   },
+   "type": "Cooler",
+   "type_label": "Cooler",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Cooler",
+   "sub_type": "UNDEFINED",
+   "sub_type_label": "Undefined",
+   "cooler": {
+    "cooling_rate": null,
+    "suppression_ir_factor": null,
+    "suppression_heat_factor": null,
+    "coolant_segment_generation": 46
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.252,
+    "volume_converted": 252000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 1.5,
+     "height": 0.511,
+     "length": 1.038
+    },
+    "dimensions": {
+     "width": 1.5,
+     "height": 0.511,
+     "length": 1.038
+    },
+    "cargo_dimension": {
+     "width": 0.45,
+     "height": 0.8,
+     "length": 3.32
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "durability": {
+    "health": 490,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.9,
+     "thermal": 0.1,
+     "physical": 0.9,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 276.67,
+    "decay_delay": 3,
+    "max": 4150,
+    "maximum": 4150,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 18
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 30,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 1980,
+       "ir": 9440
+      },
+      "deltas": [
+       {
+        "type": "Conversion",
+        "resource": "Power",
+        "rate": 4,
+        "minimum_fraction": 0.25,
+        "generated_resource": "Coolant",
+        "generated_rate": 46,
+        "discharge": null,
+        "no_over_generation": 0,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 1,
+        "modifier": 0.7,
+        "register_range": 1
+       },
+       {
+        "start": 3,
+        "modifier": 0.85,
+        "register_range": 1
+       },
+       {
+        "start": 4,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 47.6,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 1,
+      "max": 4,
+      "minimum": 1,
+      "maximum": 4
+     },
+     "coolant": {
+      "min": 0.7,
+      "max": 4,
+      "minimum": 0.7,
+      "maximum": 4
+     }
+    },
+    "generation": {
+     "coolant": 46,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 9440,
+    "em_min": 347,
+    "em_max": 1980,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [
+    {
+     "source": "starcitizen.tools",
+     "original_url": "https://media.starcitizen.tools/5/54/Cooler-AEGS-Arctic.jpg?t2wx3",
+     "thumbnail_url": "https://media.starcitizen.tools/5/54/Cooler-AEGS-Arctic.jpg?t2wx3",
+     "original_width": 379,
+     "original_height": 295,
+     "thumbnail_width": 379,
+     "thumbnail_height": 295
+    }
+   ],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": null,
+      "price_sell": 4950,
+      "price_rent": null,
+      "terminal_id": 140,
+      "terminal_code": "PBTRE",
+      "terminal_name": "Platinum Bay - Port Tressler",
+      "starmap_location": {
+       "uuid": "233238ee-adeb-4405-8045-49fa07370f37",
+       "name": "Port Tressler",
+       "slug": "port-tressler",
+       "type_name": "Manmade",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/233238ee-adeb-4405-8045-49fa07370f37",
+       "web_url": "https://api.star-citizen.wiki/locations/233238ee-adeb-4405-8045-49fa07370f37"
+      },
+      "date_updated": "2026-09-18T21:22:50+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=arctic&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/arctic",
+   "link": "https://api.star-citizen.wiki/api/items/e41f4682-381a-453e-802b-521ce84a26b6",
+   "updated_at": "2026-09-26T00:04:58.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=25",
+  "prev": null,
+  "next": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=2"
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 25,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "2",
+    "page": 2,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=3",
+    "label": "3",
+    "page": 3,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=4",
+    "label": "4",
+    "page": 4,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=5",
+    "label": "5",
+    "page": 5,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=6",
+    "label": "6",
+    "page": 6,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=7",
+    "label": "7",
+    "page": 7,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=8",
+    "label": "8",
+    "page": 8,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=9",
+    "label": "9",
+    "page": 9,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=10",
+    "label": "10",
+    "page": 10,
+    "active": false
+   },
+   {
+    "url": null,
+    "label": "...",
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=24",
+    "label": "24",
+    "page": 24,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=25",
+    "label": "25",
+    "page": 25,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Cooler&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "Next &raquo;",
+    "page": 2,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/vehicle-items",
+  "per_page": 3,
+  "to": 3,
+  "total": 74,
+  "valid_relations": [
+   "shops",
+   "shops.items",
+   "variants",
+   "related_items",
+   "blueprints",
+   "vehicles"
+  ]
+ }
+}

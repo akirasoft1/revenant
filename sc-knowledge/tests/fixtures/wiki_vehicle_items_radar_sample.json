@@ -1,0 +1,1063 @@
+{
+ "data": [
+  {
+   "uuid": "1c6c2145-5f0f-4a69-adf6-82339a0b2559",
+   "slug": "abetti",
+   "name": "Abetti",
+   "class_name": "RADR_WLOP_S01_Abetti",
+   "classification": "Ship.Radar.MidRangeRadar",
+   "classification_label": "Mid Range Radar",
+   "description": {
+    "en_EN": "Supplying high powered detection technology, the Abetti's advanced systems offer a responsive radar experience.",
+    "de_DE": "Gr\u00f6\u00dfe: S1\nG\u00fcte: A\nKlasse: Zivil\n\nDas Abetti versorgt dich mit leistungsstarker Erkennungstechnologie - seine fortschrittlichen Systeme bieten ein reaktionsschnelles Radar-Erlebnis.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u96f7\u8fbe\n\u5236\u9020\u5546\uff1a\u5a01\u5c14\u58ebOp\uff08WillsOp\uff09\n\u5c3a\u5bf8\uff1a1\n\u7b49\u7ea7\uff1aA\n\u5206\u7c7b\uff1a\u6c11\u7528\n\n\u963f\u8d1d\u63d0\u7684\u5148\u8fdb\u7cfb\u7edf\u63d0\u4f9b\u9ad8\u529f\u7387\u63a2\u6d4b\u6280\u672f\uff0c\u4e3a\u60a8\u5e26\u6765\u53cd\u5e94\u7075\u654f\u7684\u96f7\u8fbe\u4f53\u9a8c\u3002",
+    "fr_FR": "Type d'article : Radar\nFabricant : WillsOp\nTaille : 1\nQualit\u00e9 : A\nClasse : Civil\n\nFournissant une technologie de d\u00e9tection \u00e0 haute puissance, les syst\u00e8mes avanc\u00e9s de l'Abetti offrent une exp\u00e9rience radar r\u00e9active."
+   },
+   "size": 1,
+   "mass": 40,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "68e93890-885c-41ab-850a-73047781c37b",
+     "name": "Abetti",
+     "link": "https://api.star-citizen.wiki/api/blueprints/68e93890-885c-41ab-850a-73047781c37b"
+    }
+   ],
+   "grade": "A",
+   "class": "Civilian",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Civilian",
+     "type": "Civilian"
+    },
+    {
+     "name": "Grade",
+     "value": "A",
+     "type": "A"
+    },
+    {
+     "name": "Item Type",
+     "value": "Radar",
+     "type": "Radar"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "WillsOp",
+     "type": "WillsOp"
+    },
+    {
+     "name": "Size",
+     "value": "1",
+     "type": "1"
+    }
+   ],
+   "manufacturer_description": "WillsOp",
+   "manufacturer": {
+    "name": "WillsOp",
+    "code": "WLOP",
+    "uuid": "967cd454-20d9-4cb8-8465-990ff1a1f769",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/WLOP"
+   },
+   "type": "Radar",
+   "type_label": "Radar",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Radar",
+   "sub_type": "MidRangeRadar",
+   "sub_type_label": "Mid Range Radar",
+   "radar": {
+    "detection_lifetime": null,
+    "altitude_ceiling": null,
+    "enable_cross_section_occlusion": null,
+    "cooldown": 2.5,
+    "sensitivity": {
+     "infrared": 0.8,
+     "cross_section": 0.8,
+     "electromagnetic": 0.8,
+     "resource": 1,
+     "db": 0
+    },
+    "ground_vehicle_sensitivity": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 0.25,
+     "db": 0.25
+    },
+    "piercing": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 1,
+     "db": 0.25
+    },
+    "aim_assist": {
+     "distance_min_assignment": 780,
+     "distance_max_assignment": 1173,
+     "outside_range_buffer_distance": 80
+    }
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.084,
+    "volume_converted": 84000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": 0.5,
+     "height": 0.25,
+     "length": 0.75
+    },
+    "dimensions": {
+     "width": 0.5,
+     "height": 0.25,
+     "length": 0.75
+    },
+    "cargo_dimension": {
+     "width": 0.22,
+     "height": 0.8,
+     "length": 2.21
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [
+    "flightReady"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "BatteryPort",
+     "display_name": "Battery Port",
+     "position": "BATTERYPORT",
+     "size": 2,
+     "sizes": {
+      "min": 1,
+      "max": 2
+     },
+     "compatible_types": [
+      {
+       "type": "Battery",
+       "sub_types": []
+      }
+     ],
+     "types": [
+      "Battery"
+     ],
+     "type": "Battery",
+     "sub_type": null,
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "invisible"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 125.9
+   },
+   "durability": {
+    "health": 575,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.1,
+     "thermal": 0.1,
+     "physical": 0.1,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 220,
+    "decay_delay": 1.2,
+    "max": 3000,
+    "maximum": 3000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 14.84
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 1280,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 4,
+        "minimum_fraction": 0.25,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 38.3,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 1,
+      "max": 4,
+      "minimum": 1,
+      "maximum": 4
+     },
+     "coolant": {
+      "min": 1,
+      "max": 4,
+      "minimum": 1,
+      "maximum": 4
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 320,
+    "em_max": 1280,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 35200,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=abetti&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/abetti",
+   "link": "https://api.star-citizen.wiki/api/items/1c6c2145-5f0f-4a69-adf6-82339a0b2559",
+   "updated_at": "2026-09-26T00:01:13.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "85d23bcf-e781-4321-a4ed-f8cc3e36e299",
+   "slug": "agrippa",
+   "name": "Agrippa",
+   "class_name": "RADR_WLOP_S02_Agrippa",
+   "classification": "Ship.Radar.MidRangeRadar",
+   "classification_label": "Mid Range Radar",
+   "description": {
+    "en_EN": "A superior quality radar able to accurate provide information on your vehicle's surroundings.",
+    "de_DE": "Gr\u00f6\u00dfe: S2\nG\u00fcte: A\nKlasse: Zivil\n\nEin hochwertiges Radar, das pr\u00e4zise Informationen \u00fcber die Umgebung deines Fahrzeugs liefert.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u96f7\u8fbe\n\u5236\u9020\u5546\uff1a\u5a01\u5c14\u58ebOp\uff08WillsOp\uff09\n\u5c3a\u5bf8\uff1a2\n\u7b49\u7ea7\uff1aA\n\u5206\u7c7b\uff1a\u6c11\u7528\n\n\u4e00\u6b3e\u9ad8\u54c1\u8d28\u96f7\u8fbe\uff0c\u80fd\u591f\u51c6\u786e\u63d0\u4f9b\u60a8\u8f7d\u5177\u5468\u56f4\u73af\u5883\u7684\u4fe1\u606f\u3002",
+    "fr_FR": "Type d'article : Radar\nFabricant : WillsOp\nTaille : 2\nQualit\u00e9 : A\nClasse : Civil\n\nUn radar de qualit\u00e9 sup\u00e9rieure capable de fournir des informations pr\u00e9cises sur l'environnement autour de votre v\u00e9hicule."
+   },
+   "size": 2,
+   "mass": 0,
+   "event_source": [],
+   "is_base_variant": false,
+   "is_craftable": true,
+   "is_lootable": false,
+   "blueprint": [
+    {
+     "uuid": "6eef7aa7-ef73-421f-863e-3f1afbc56a9a",
+     "name": "Agrippa",
+     "link": "https://api.star-citizen.wiki/api/blueprints/6eef7aa7-ef73-421f-863e-3f1afbc56a9a"
+    }
+   ],
+   "grade": "A",
+   "class": "Civilian",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Civilian",
+     "type": "Civilian"
+    },
+    {
+     "name": "Grade",
+     "value": "A",
+     "type": "A"
+    },
+    {
+     "name": "Item Type",
+     "value": "Radar",
+     "type": "Radar"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "WillsOp",
+     "type": "WillsOp"
+    },
+    {
+     "name": "Size",
+     "value": "2",
+     "type": "2"
+    }
+   ],
+   "manufacturer_description": "WillsOp",
+   "manufacturer": {
+    "name": "WillsOp",
+    "code": "WLOP",
+    "uuid": "967cd454-20d9-4cb8-8465-990ff1a1f769",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/WLOP"
+   },
+   "type": "Radar",
+   "type_label": "Radar",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Radar",
+   "sub_type": "MidRangeRadar",
+   "sub_type_label": "Mid Range Radar",
+   "radar": {
+    "detection_lifetime": null,
+    "altitude_ceiling": null,
+    "enable_cross_section_occlusion": null,
+    "cooldown": 2.5,
+    "sensitivity": {
+     "infrared": 0.9,
+     "cross_section": 0.9,
+     "electromagnetic": 0.9,
+     "resource": 1,
+     "db": 0
+    },
+    "ground_vehicle_sensitivity": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 0.25,
+     "db": 0.25
+    },
+    "piercing": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 1,
+     "db": 0.25
+    },
+    "aim_assist": {
+     "distance_min_assignment": 1200,
+     "distance_max_assignment": 1932,
+     "outside_range_buffer_distance": 120
+    }
+   },
+   "dimension": {
+    "width": null,
+    "height": null,
+    "length": null,
+    "volume": 0,
+    "volume_converted": 1,
+    "volume_converted_unit": "\u00b5SCU"
+   },
+   "tags": [
+    "flightReady"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "BatteryPort",
+     "display_name": "Battery Port",
+     "position": "BATTERYPORT",
+     "size": 2,
+     "sizes": {
+      "min": 1,
+      "max": 2
+     },
+     "compatible_types": [
+      {
+       "type": "Battery",
+       "sub_types": []
+      }
+     ],
+     "types": [
+      "Battery"
+     ],
+     "type": "Battery",
+     "sub_type": null,
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "invisible"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 125.9
+   },
+   "durability": {
+    "health": 1150,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.1,
+     "thermal": 0.1,
+     "physical": 0.1,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 400,
+    "decay_delay": 2.4,
+    "max": 5000,
+    "maximum": 5000,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 14.9
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 1920,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 6,
+        "minimum_fraction": 0.1666667,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 67.1,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 1,
+      "max": 6,
+      "minimum": 1,
+      "maximum": 6
+     },
+     "coolant": {
+      "min": 1,
+      "max": 6,
+      "minimum": 1,
+      "maximum": 6
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 320,
+    "em_max": 1920,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 70400,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=agrippa&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/agrippa",
+   "link": "https://api.star-citizen.wiki/api/items/85d23bcf-e781-4321-a4ed-f8cc3e36e299",
+   "updated_at": "2026-09-26T00:01:13.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  },
+  {
+   "uuid": "94e97499-375e-4c63-a2ea-c605a4d3f461",
+   "slug": "agure",
+   "name": "Agure",
+   "class_name": "RADR_GRNO_S00_Agure",
+   "classification": "Ship.Radar.MidRangeRadar",
+   "classification_label": "Mid Range Radar",
+   "description": {
+    "en_EN": "Trusted by many security firms for their vehicles, this reliable and consistent radar will keep your operation on track.",
+    "de_DE": "Gr\u00f6\u00dfe: S0\nG\u00fcte: D\nKlasse: Milit\u00e4r\n\nBei vielen Security-Unternehmen f\u00fcr ihre Fahrzeuge im Einsatz - dieses zuverl\u00e4ssige und best\u00e4ndige Radar h\u00e4lt deinen Einsatz auf Kurs.",
+    "zh_CN": "\u7269\u54c1\u7c7b\u578b\uff1a\u96f7\u8fbe\n\u5236\u9020\u5546\uff1a\u65b0\u8303\u5f0f\u96c6\u56e2\uff08Groupe Nouveau Paradigme\uff09\n\u5c3a\u5bf8\uff1a0\n\u7b49\u7ea7\uff1aD\n\u5206\u7c7b\uff1a\u519b\u7528\n\n\u8bb8\u591a\u5b89\u4fdd\u516c\u53f8\u90fd\u5728\u4ed6\u4eec\u7684\u8f7d\u5177\u4e0a\u653e\u5fc3\u4f7f\u7528\u8fd9\u6b3e\u96f7\u8fbe\uff0c\u5176\u53ef\u9760\u4e14\u7a33\u5b9a\u7684\u6027\u80fd\u5c06\u786e\u4fdd\u4f60\u7684\u884c\u52a8\u987a\u5229\u8fdb\u884c\u3002",
+    "fr_FR": "Type d'article : Radar\nFabricant : GNP\nTaille : 0\nQualit\u00e9 : D\nClasse : Militaire\n\nRecommand\u00e9 par de nombreuses soci\u00e9t\u00e9s de s\u00e9curit\u00e9 pour leurs v\u00e9hicules, ce radar fiable et constant maintiendra vos op\u00e9rations sur la bonne voie."
+   },
+   "size": 0,
+   "mass": 20,
+   "rarity": "Common",
+   "event_source": [],
+   "is_base_variant": true,
+   "is_craftable": true,
+   "is_lootable": true,
+   "blueprint": [
+    {
+     "uuid": "89fa5862-7829-4c02-8680-e5b3af53e147",
+     "name": "Agure",
+     "link": "https://api.star-citizen.wiki/api/blueprints/89fa5862-7829-4c02-8680-e5b3af53e147"
+    }
+   ],
+   "grade": "D",
+   "class": "Military",
+   "description_data": [
+    {
+     "name": "Class",
+     "value": "Military",
+     "type": "Military"
+    },
+    {
+     "name": "Grade",
+     "value": "D",
+     "type": "D"
+    },
+    {
+     "name": "Item Type",
+     "value": "Radar",
+     "type": "Radar"
+    },
+    {
+     "name": "Manufacturer",
+     "value": "Groupe Nouveau Paradigme",
+     "type": "Groupe Nouveau Paradigme"
+    },
+    {
+     "name": "Size",
+     "value": "0",
+     "type": "0"
+    }
+   ],
+   "manufacturer_description": "Groupe Nouveau Paradigme",
+   "manufacturer": {
+    "name": "Groupe Nouveau Paradigme",
+    "code": "GRNP",
+    "uuid": "3909dad3-eab3-4da7-9d90-74d7064d5900",
+    "link": "https://api.star-citizen.wiki/api/manufacturers/GRNP"
+   },
+   "type": "Radar",
+   "type_label": "Radar",
+   "type_web_url": "https://api.star-citizen.wiki/items?filter%5Btype%5D=Radar",
+   "sub_type": "MidRangeRadar",
+   "sub_type_label": "Mid Range Radar",
+   "radar": {
+    "detection_lifetime": null,
+    "altitude_ceiling": null,
+    "enable_cross_section_occlusion": null,
+    "cooldown": 2.5,
+    "sensitivity": {
+     "infrared": 0.75,
+     "cross_section": 0.5,
+     "electromagnetic": 0.75,
+     "resource": 1,
+     "db": 0
+    },
+    "ground_vehicle_sensitivity": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 0.25,
+     "db": 0.25
+    },
+    "piercing": {
+     "infrared": 0.25,
+     "cross_section": 0.25,
+     "electromagnetic": 0.25,
+     "resource": 1,
+     "db": 0.25
+    },
+    "aim_assist": {
+     "distance_min_assignment": 585,
+     "distance_max_assignment": 643.5,
+     "outside_range_buffer_distance": 60
+    }
+   },
+   "dimension": {
+    "width": 0.75,
+    "height": 0.75,
+    "length": 0.75,
+    "volume": 0.021,
+    "volume_converted": 21000,
+    "volume_converted_unit": "\u00b5SCU",
+    "true_dimension": {
+     "width": null,
+     "height": null,
+     "length": null
+    },
+    "cargo_dimension": {
+     "width": 0.22,
+     "height": 0.4,
+     "length": 1.11
+    },
+    "ui_dimension": {
+     "width": 0.75,
+     "height": 0.75,
+     "length": 0.75
+    }
+   },
+   "tags": [
+    "flightReady"
+   ],
+   "required_tags": [],
+   "entity_tags": [],
+   "entity_tag_map": [],
+   "interactions": [],
+   "ports": [
+    {
+     "name": "BatteryPort",
+     "display_name": "Battery Port",
+     "position": "BATTERYPORT",
+     "size": 2,
+     "sizes": {
+      "min": 1,
+      "max": 2
+     },
+     "compatible_types": [
+      {
+       "type": "Battery",
+       "sub_types": []
+      }
+     ],
+     "types": [
+      "Battery"
+     ],
+     "type": "Battery",
+     "sub_type": null,
+     "tags": [],
+     "port_tags": null,
+     "required_tags": [],
+     "flags": [
+      "invisible"
+     ],
+     "editable": false,
+     "uneditable": true,
+     "equipped_item_uuid": null,
+     "ports": null
+    }
+   ],
+   "temperature": {
+    "unit": "C",
+    "cooling_threshold": 29.9,
+    "ir_threshold": 44.9,
+    "overheat_threshold": 99.9,
+    "overheat_temperature": 99.9,
+    "max_temperature": 131.9,
+    "recovery_temperature": 125.9
+   },
+   "durability": {
+    "health": 216,
+    "lifetime": 0,
+    "max_lifetime": 0,
+    "repairable": true,
+    "salvageable": true,
+    "resistance": {
+     "stun": 1,
+     "energy": 0.1,
+     "thermal": 0.1,
+     "physical": 0.1,
+     "distortion": 1,
+     "biochemical": 1
+    }
+   },
+   "distortion": {
+    "decay_rate": 150,
+    "decay_delay": 1.9,
+    "max": 2990,
+    "maximum": 2990,
+    "overload_ratio": null,
+    "warning_ratio": 0.75,
+    "recovery_ratio": 0,
+    "recovery_time": null,
+    "power_ratio_at_max_distortion": 0,
+    "power_change_only_at_max_distortion": 0,
+    "shutdown_time": 21.83
+   },
+   "resource_network": {
+    "is_networked": true,
+    "is_relay": false,
+    "default_priority": 50,
+    "states": [
+     {
+      "name": "Online",
+      "signature": {
+       "em": 990,
+       "ir": null
+      },
+      "deltas": [
+       {
+        "type": "Consumption",
+        "resource": "Power",
+        "rate": 3,
+        "minimum_fraction": 0.6666667,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       },
+       {
+        "type": "Consumption",
+        "resource": "Coolant",
+        "rate": 0,
+        "minimum_fraction": 0,
+        "generated_resource": null,
+        "generated_rate": null,
+        "discharge": null,
+        "no_over_generation": null,
+        "binary_evaluation": null,
+        "composition": null
+       }
+      ],
+      "power_ranges": [
+       {
+        "start": 0,
+        "modifier": 0.7,
+        "register_range": 0
+       },
+       {
+        "start": 0,
+        "modifier": 0.85,
+        "register_range": 0
+       },
+       {
+        "start": 1,
+        "modifier": 1,
+        "register_range": 1
+       }
+      ]
+     }
+    ],
+    "repair": {
+     "max_repair_count": 1,
+     "time_to_repair": 21.9,
+     "health_ratio": 0.2
+    },
+    "usage": {
+     "power": {
+      "min": 2,
+      "max": 3,
+      "minimum": 2,
+      "maximum": 3
+     },
+     "coolant": {
+      "min": 2,
+      "max": 3,
+      "minimum": 2,
+      "maximum": 3
+     }
+    },
+    "generation": {
+     "coolant": null,
+     "power": null
+    }
+   },
+   "emission": {
+    "ir": 0,
+    "em_min": 660,
+    "em_max": 990,
+    "em_decay": 0.15
+   },
+   "shops": [],
+   "images": [],
+   "uex_prices": {
+    "purchase": [
+     {
+      "price_buy": 11000,
+      "price_sell": null,
+      "price_rent": null,
+      "terminal_id": 130,
+      "terminal_code": "OPNEW",
+      "terminal_name": "Omega New Babbage",
+      "starmap_location": {
+       "uuid": "122e8057-831d-4517-a23b-0eb8382b90a2",
+       "name": "New Babbage",
+       "slug": "new-babbage",
+       "type_name": "LandingZone",
+       "parent_name": "microTech",
+       "star_system_name": "Stanton",
+       "link": "https://api.star-citizen.wiki/api/locations/122e8057-831d-4517-a23b-0eb8382b90a2",
+       "web_url": "https://api.star-citizen.wiki/locations/122e8057-831d-4517-a23b-0eb8382b90a2"
+      },
+      "date_updated": "2026-09-16T18:16:29+00:00",
+      "game_version": "4.10.1-LIVE.12660092",
+      "uex_link": "https://uexcorp.space/items/info?name=agure&tab=about"
+     }
+    ]
+   },
+   "variants": [],
+   "web_url": "https://api.star-citizen.wiki/items/agure",
+   "link": "https://api.star-citizen.wiki/api/items/94e97499-375e-4c63-a2ea-c605a4d3f461",
+   "updated_at": "2026-09-26T00:01:13.000000Z",
+   "version": "4.10.1-LIVE.12660092"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=21",
+  "prev": null,
+  "next": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=2"
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 21,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "2",
+    "page": 2,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=3",
+    "label": "3",
+    "page": 3,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=4",
+    "label": "4",
+    "page": 4,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=5",
+    "label": "5",
+    "page": 5,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=6",
+    "label": "6",
+    "page": 6,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=7",
+    "label": "7",
+    "page": 7,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=8",
+    "label": "8",
+    "page": 8,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=9",
+    "label": "9",
+    "page": 9,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=10",
+    "label": "10",
+    "page": 10,
+    "active": false
+   },
+   {
+    "url": null,
+    "label": "...",
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=20",
+    "label": "20",
+    "page": 20,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=21",
+    "label": "21",
+    "page": 21,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/vehicle-items?filter%5Btype%5D=Radar&page%5Bsize%5D=3&page%5Bnumber%5D=2",
+    "label": "Next &raquo;",
+    "page": 2,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/vehicle-items",
+  "per_page": 3,
+  "to": 3,
+  "total": 63,
+  "valid_relations": [
+   "shops",
+   "shops.items",
+   "variants",
+   "related_items",
+   "blueprints",
+   "vehicles"
+  ]
+ }
+}
