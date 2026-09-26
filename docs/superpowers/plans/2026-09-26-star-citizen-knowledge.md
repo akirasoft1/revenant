@@ -2009,3 +2009,22 @@ git commit -m "docs+test: Star Citizen knowledge docs and real-model voice smoke
 ## Coordinator steps (not subagent tasks)
 
 After all tasks pass review: run all three suites; build + push `sc-knowledge`, agent, voice images tagged with the branch HEAD short SHA; create Secret `sc-knowledge-secrets` from `.env` `UEXCORP_BEARER`; run `scripts/sync-org-guides.sh`; write deployed-overlay copies (`k8s/overlays/deployed/sc-knowledge-*.yaml`, update `agent-deployment.yaml`, `voice-deployment.yaml`, `agent-networkpolicy.yaml`, `voice-networkpolicy.yaml`); apply sc-knowledge → verify healthz + a port-forwarded MCP call; flip agent `SC_KNOWLEDGE_ENABLED=true` → verify the four questions via `AgentClient` from the bot pod (check `sc.tool.calls`, zero sandbox); run `eval/eval_sc.py`; flip voice → run `smoke-voice-sc.js`; DQL check; push branch; PR.
+
+---
+
+### Task 14: Ship/vehicle purchases in `sc_find_item` + non-JSON upstream bodies (added after the live eval)
+
+**Why (live-eval evidence, 2026-09-26):** "where can I buy a Scorpius" → `sc_find_item` found nothing (the Wiki items API has no ships), the model called it 3×, then hallucinated inconsistent answers (wrong dealer / 5.7M vs 6.8M; truth per UEX: New Deal, Lorville, 5,171,040 aUEC) and in one eval run fell back to the sandbox. Separately `sc_find_item` raised `JSONDecodeError` on an upstream non-JSON body, surfacing as `internal`.
+
+**Files:**
+- Modify: `sc-knowledge/src/http.py` (non-JSON → `UpstreamError`), `sc-knowledge/src/uex.py` (`vehicles()`, `vehicles_purchases_prices(id_vehicle)`), `sc-knowledge/src/names.py` (`vehicle_entries`), `sc-knowledge/src/tools_items.py` (vehicle path), `sc-knowledge/src/server.py` (constructor wiring, `sc_find_item` docstring mentions ships, fix the doubled `sc_sc_` span/log name), `sc-knowledge/scripts/capture_fixtures.py`
+- Test: `sc-knowledge/tests/test_tools_items.py`, `sc-knowledge/tests/test_http.py`, fixtures `uex_vehicles.json`, `uex_vehicle_prices_scorpius.json`
+
+**Interfaces:**
+- `UpstreamClient._request`: a success-status response whose body is not valid JSON raises `UpstreamError(name, status, "non-JSON response body: <full body>")` (no truncation).
+- `UexClient.vehicles() -> list[dict]` (cached `uex:vehicles` TTL 21600); `UexClient.vehicles_purchases_prices(id_vehicle: int) -> list[dict]` (cached `uex:vprices:<id>` TTL 7200).
+- `names.vehicle_entries(vehicles) -> list[Entry]` kind `"vehicle"`, aliases `name`, `name_full`, `slug`.
+- `ItemTools(wiki, cache, uex=None)`; `find_item(name)`: resolve `name` against the vehicle index FIRST when `uex` is set; an `exact`/`fuzzy` vehicle match returns `{"source": "uexcorp.space (crowd-sourced)", "game_version", "item": {"name": name_full or name, "type": "Vehicle", "manufacturer": company_name, "scu", "crew", "pad_type"}, "where_to_buy": [{"shop": terminal_name, "location": "<city_name or space_station_name or outpost_name>, <planet_name>", "system": star_system_name, "price_auec": int(price_buy), "reported_at": ISO of date_modified}], "alternatives": [other vehicle names sharing the resolved base name, ≤3]}` sorted by price asc, `note` when empty ("No player-reported dealer listings on UEX (may be pledge-store only or not sold in game)."). An `ambiguous` vehicle resolution with no Wiki item match returns `error("ambiguous", ..., candidates=[...])`. Otherwise fall through to the existing Wiki item path unchanged. Any vehicle-path `UpstreamError` falls through to the Wiki path (never raises).
+- `server.py` builds `ItemTools(wiki, cache, uex=uex)`.
+
+- [ ] TDD: tests first (Scorpius → New Deal/Lorville price from fixture; "Scorpius Antares" → Antares not base; V801-12 still resolves via Wiki; non-JSON body → UpstreamError; vehicle UpstreamError falls back to Wiki path), implement, full suite, docker build, commit.
