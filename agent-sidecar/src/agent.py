@@ -476,10 +476,6 @@ class ChannelVoiceAgent:
             any_failed=any_failed,
             fallback_occurred=self._uses_base_prompt(system_prompt),
             sc_tool_names=sc_tool_names,
-            # Task 10 adds a real `tool.attempts` counter to RunInSandboxTool
-            # that also counts calls that failed before producing an
-            # execution_id (budget/concurrency caps); until then this
-            # undercounts those paths.
-            sandbox_attempts=len(tool.execution_ids),
+            sandbox_attempts=tool.attempts,
             sc_state=sc_state,
         )
