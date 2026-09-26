@@ -14,10 +14,41 @@ class CacheResult:
 
 
 class TTLCache:
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+    """TTL cache with stale-on-error and a per-key failure backoff.
+
+    Failure backoff: once a fetch for a key fails, that key is not re-fetched
+    for `failure_backoff_s` -- during the window a stored (expired) entry is
+    served as "stale" immediately, and a key with no entry re-raises the last
+    failure immediately. Without it, every call during an upstream outage
+    paid the full retry budget (3 attempts, 8s read timeout each) before
+    falling back to the very same stale value.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic,
+                 failure_backoff_s: float = 30.0) -> None:
         self._clock = clock
+        self._backoff = failure_backoff_s
         self._data: dict[str, tuple[float, Any]] = {}  # key -> (stored_at, value)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._failures: dict[str, tuple[float, Exception]] = {}  # key -> (failed_at, exc)
+
+    def peek(self, key: str, ttl: float | None = None) -> CacheResult | None:
+        """Non-fetching read: the stored value (status "hit" if within `ttl`
+        or no ttl given, else "stale"), or None when nothing is stored.
+        Never touches the upstream -- safe on latency-critical paths like
+        /healthz."""
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        age = self._clock() - entry[0]
+        status = "hit" if ttl is None or age < ttl else "stale"
+        return CacheResult(entry[1], status, age)
+
+    def _backed_off(self, key: str, now: float) -> Exception | None:
+        failure = self._failures.get(key)
+        if failure is not None and now - failure[0] < self._backoff:
+            return failure[1]
+        return None
 
     async def get_or_fetch(self, key: str, ttl: float,
                            fetch: Callable[[], Awaitable[Any]]) -> CacheResult:
@@ -31,12 +62,19 @@ class TTLCache:
             entry = self._data.get(key)
             if entry and now - entry[0] < ttl:
                 return CacheResult(entry[1], "hit", now - entry[0])
+            recent_failure = self._backed_off(key, now)
+            if recent_failure is not None:
+                if entry is not None:
+                    return CacheResult(entry[1], "stale", now - entry[0])
+                raise recent_failure
             try:
                 value = await fetch()
-            except Exception:
+            except Exception as e:
+                self._failures[key] = (self._clock(), e)
                 if entry is not None:
                     return CacheResult(entry[1], "stale", now - entry[0])
                 raise
+            self._failures.pop(key, None)
             self._data[key] = (self._clock(), value)
             return CacheResult(value, "miss", 0.0)
 
