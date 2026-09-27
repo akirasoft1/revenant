@@ -88,6 +88,12 @@ class VoiceClient {
         case 'interrupted':
           session.emit('interrupted');
           break;
+        case 'control':
+          // The sidecar's local end_conversation / go_quiet Live tools. Pass the
+          // raw values through: VoiceService owns validation, clamping and the
+          // "0 seconds = not given" rule.
+          session.emit('control', { action: ev.control.action, seconds: ev.control.seconds });
+          break;
         case 'error':
           // Same teardown hazard as the transport-error handler below, and this
           // is the MORE likely trigger: the sidecar reports failures over the

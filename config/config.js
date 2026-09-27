@@ -97,6 +97,14 @@ module.exports = {
 
     systemPrompt: process.env.VOICE_SYSTEM_PROMPT || '',
 
+    // Spoken control commands ("that's all", "go quiet for ten minutes"):
+    // honour the sidecar's end_conversation/go_quiet Control events and run the
+    // bot-side phrase backstop over the input transcript. Default ON -- only the
+    // literal 'false' disables it (never the `=== 'true' || true` shape, which is
+    // always true). Off => Control events are ignored and no phrase matching
+    // runs, i.e. exactly the pre-feature behaviour.
+    controlCommandsEnabled: process.env.VOICE_CONTROL_COMMANDS_ENABLED !== 'false',
+
     // userId -> spoken name overrides, e.g. {"1616...":"Mike"}. Authoritative:
     // Discord's own name layers are unreliable here (see spec 5.4.1). Malformed
     // JSON must never take the bot down -- fall back to an empty table.
