@@ -783,22 +783,7 @@ class DiscordBot {
         try {
           const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
           if (referencedMessage && referencedMessage.author.id === this.client.user.id) {
-            // Wrap reply handling in a trace
-            const handled = await withRootSpan('discord.reply', {
-              'discord.channel.id': message.channel.id,
-              'discord.user.id': message.author.id,
-              'discord.user.tag': message.author.tag,
-              'discord.message.id': message.id,
-            }, async () => {
-              return await this.replyHandler.handleReply(message, referencedMessage);
-            });
-
-            if (handled) {
-              return;
-            }
-            // ReplyHandler didn't claim this (not summarization, not imagegen).
-            // Fall through to mention-chat so the bot continues the conversation.
-            await this._handleMentionChat(message);
+            await this._handleReplyToBot(message, referencedMessage);
             return;
           }
         } catch (error) {
@@ -902,11 +887,53 @@ class DiscordBot {
   }
 
   /**
+   * Handle a Discord reply to one of the bot's own messages (including the
+   * bot's /chat interaction replies, which are ordinary bot-authored
+   * messages). ReplyHandler claims summarization/imagegen replies; anything
+   * else falls through to mention chat WITH the referenced message, so
+   * ChatService.buildTurnContext can inject it as an assistant turn when it
+   * has scrolled out of the recent-history window. Without it the reply's
+   * explicit target was silently dropped and the follow-up was answered from
+   * unrelated history.
+   * @param {import('discord.js').Message} message - The user's reply
+   * @param {import('discord.js').Message} referencedMessage - The bot message replied to
+   * @private
+   */
+  async _handleReplyToBot(message, referencedMessage) {
+    // Wrap reply handling in a trace
+    const handled = await withRootSpan('discord.reply', {
+      'discord.channel.id': message.channel.id,
+      'discord.user.id': message.author.id,
+      'discord.user.tag': message.author.tag,
+      'discord.message.id': message.id,
+    }, async () => {
+      return await this.replyHandler.handleReply(message, referencedMessage);
+    });
+
+    if (handled) {
+      return;
+    }
+    // ReplyHandler didn't claim this (not summarization, not imagegen).
+    // Fall through to mention-chat so the bot continues the conversation.
+    await this._handleMentionChat(message, {
+      referencedMessage: {
+        id: referencedMessage.id,
+        content: referencedMessage.content,
+        authorId: referencedMessage.author?.id || null,
+      },
+    });
+  }
+
+  /**
    * Handle @mention of the bot in a channel
    * Uses the 'friendly' personality for conversational interaction
    * @param {Message} message - The Discord message mentioning the bot
+   * @param {Object} [options]
+   * @param {{id: string, content: string, authorId: string|null}} [options.referencedMessage]
+   *   The bot message this one replies to (reply fall-through only); forwarded
+   *   to ChatService so it survives outside the history window.
    */
-  async _handleMentionChat(message) {
+  async _handleMentionChat(message, { referencedMessage = null } = {}) {
     const DEFAULT_PERSONALITY = personalityManager.get('channel-voice')
       ? 'channel-voice' : 'friendly';
 
@@ -938,13 +965,11 @@ class DiscordBot {
       const guildId = message.guild?.id || null;
 
       // Call ChatService with the friendly personality
-      const result = await this.chatService.chat(
-        DEFAULT_PERSONALITY,
-        userMessage,
-        message.author,
-        channelId,
-        guildId
-      );
+      // A plain mention calls chat() exactly as before; only a reply carries
+      // the referenced bot message through as options.
+      const chatArgs = [DEFAULT_PERSONALITY, userMessage, message.author, channelId, guildId];
+      if (referencedMessage) chatArgs.push(null, { referencedMessage });
+      const result = await this.chatService.chat(...chatArgs);
 
       if (!result.success) {
         if (result.availablePersonalities) {

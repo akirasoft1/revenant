@@ -289,9 +289,13 @@ ${context}`;
    * @param {string|null} [params.guildId] - Discord guild ID (reserved for future scoping; unused today)
    * @param {string} params.userMessage - Current user message (drives recall query + voice few-shot)
    * @param {string} [params.personalityId] - Personality to resolve (defaults to channel-voice)
+   * @param {{id: string, content: string, authorId?: string|null}|null} [params.referencedMessage]
+   *   The bot message a Discord reply points at. Injected as an assistant turn
+   *   immediately before the current turn when it is NOT already in the
+   *   fetched history window (see _injectReferencedMessage).
    * @returns {Promise<{systemPrompt: string, memoryBlock: string, historyTurns: Array<{role: 'user'|'assistant', content: string}>}>}
    */
-  async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice' }) {
+  async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice', referencedMessage = null }) {
     void guildId; // reserved for future per-guild scoping; not used yet
     const personality = personalityManager.get(personalityId);
     const user = { id: userId, tag: userTag, username: userTag || userId };
@@ -317,6 +321,7 @@ ${context}`;
     // getRecentChannelMessages(channelId, limit) already returns the most
     // recent `limit` docs sorted oldest->newest, matching the contract.
     let historyTurns = [];
+    let historyDocs = [];
     try {
       const docs = this.mongoService?.getRecentChannelMessages
         ? await this.mongoService.getRecentChannelMessages(
@@ -324,12 +329,13 @@ ${context}`;
             this.config?.channelContext?.promptRecentCount || 10
           )
         : [];
-      historyTurns = (docs || [])
-        .filter((m) => m && m.content)
+      historyDocs = (docs || []).filter((m) => m && m.content);
+      historyTurns = historyDocs
         .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
     } catch (error) {
       logger.debug(`buildTurnContext: history lookup failed, degrading to []: ${error.message}`);
       historyTurns = [];
+      historyDocs = [];
     }
 
     // bot.js persists the incoming user message to channel_messages
@@ -341,6 +347,12 @@ ${context}`;
     // other branch) since there's simply nothing to match.
     historyTurns = this._dropDuplicatedCurrentTurn(historyTurns, userMessage);
 
+    // A Discord reply names its target explicitly. When that bot message has
+    // scrolled out of the promptRecentCount window, the follow-up ("and where
+    // would it be best to refine it?") used to be answered from unrelated
+    // history. Carry it in, right before the current turn.
+    historyTurns = this._injectReferencedMessage(historyTurns, historyDocs, referencedMessage);
+
     // Deliberate: memoryBlock/historyTurns are returned as-is, WITHOUT the
     // legacy `config.recall.promptMaxTokens` trim that `_buildGroupSystemPrompt`
     // applies below for the direct-OpenAI path. This context feeds the unified
@@ -350,6 +362,52 @@ ${context}`;
     // the `channelContext.promptRecentCount` history cap above. Not DRY debt —
     // see CLAUDE.md's Agentic Sandbox section for the split rationale.
     return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
+  }
+
+  /**
+   * Append the replied-to bot message as an assistant turn (i.e. immediately
+   * before the separately-forwarded current user turn) unless it is already
+   * in the fetched window. Presence is checked by `messageId` first (the
+   * stored row holds the raw model output, which differs from the Discord
+   * text, so id is the reliable key), then by exact content for rows that
+   * carry no messageId. The injected text is the Discord message content with
+   * display-only decoration removed (the ⚠️ fallback banner and wrapUrls'
+   * `<url>` embed-suppression), for the same reason bot replies are stored
+   * raw: the model would otherwise read markup as its own previous words.
+   * No-op without a usable referencedMessage.
+   * @param {Array<{role: 'user'|'assistant', content: string}>} historyTurns
+   * @param {Array<Object>} historyDocs - The channel_messages docs the turns came from
+   * @param {{id: string, content: string}|null} referencedMessage
+   * @returns {Array<{role: 'user'|'assistant', content: string}>}
+   * @private
+   */
+  _injectReferencedMessage(historyTurns, historyDocs, referencedMessage) {
+    if (!referencedMessage || typeof referencedMessage.content !== 'string') return historyTurns;
+    const content = ChatService._stripDisplayDecoration(referencedMessage.content);
+    if (!content) return historyTurns;
+
+    const inWindow = (historyDocs || []).some((d) =>
+      (referencedMessage.id && d.messageId === referencedMessage.id)
+      || (typeof d.content === 'string'
+        && (d.content === referencedMessage.content || d.content.trim() === content)));
+    if (inWindow) return historyTurns;
+
+    return [...historyTurns, { role: 'assistant', content }];
+  }
+
+  /**
+   * Remove Discord display-only decoration from bot message text: a leading
+   * TextUtils.fallbackNotice blockquote and TextUtils.wrapUrls' `<url>`
+   * wrapping (standalone and inside markdown links).
+   * @param {string} text
+   * @returns {string}
+   * @private
+   */
+  static _stripDisplayDecoration(text) {
+    return String(text || '')
+      .replace(/^> \*⚠️[^\n]*\*\n+/, '')
+      .replace(/<(https?:\/\/[^\s<>]+)>/g, '$1')
+      .trim();
   }
 
   /**
@@ -651,9 +709,14 @@ ${context}`;
    * @param {string} channelId - Discord channel ID
    * @param {string} guildId - Discord guild ID
    * @param {string|null} imageUrl - Optional image URL for vision
+   * @param {Object} [options]
+   * @param {{id: string, content: string, authorId?: string|null}} [options.referencedMessage]
+   *   The bot message a Discord reply points at (reply fall-through in bot.js);
+   *   forwarded to buildTurnContext so it survives outside the history window.
    * @returns {Object} Response with message and token usage
    */
-  async chat(personalityId, userMessage, user, channelId = null, guildId = null, imageUrl = null) {
+  async chat(personalityId, userMessage, user, channelId = null, guildId = null, imageUrl = null, options = {}) {
+    const referencedMessage = (options && options.referencedMessage) || null;
     // Route channel-voice through the agent sidecar when available and healthy.
     // On agent failure or unhealthy state, fall through to the existing direct
     // OpenAI path so the bot keeps working when the sidecar is down.
@@ -679,6 +742,7 @@ ${context}`;
           guildId: guildId || '',
           userMessage,
           personalityId,
+          referencedMessage,
         }).catch((ctxErr) => {
           contextDegraded = true;
           logger.error(`buildTurnContext failed for user ${user.id} in channel ${channelId || 'unknown'}; this channel-voice turn runs with NO system prompt (generic base prompt instead of the learned channel-voice personality), NO memory context and NO history: ${ctxErr && ctxErr.stack ? ctxErr.stack : ctxErr}`);

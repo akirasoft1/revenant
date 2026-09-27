@@ -132,3 +132,117 @@ test('buildTurnContext preserves a trailing user turn that merely ENDS WITH user
     { role: 'user', content: 'sounds ok' },
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// Discord replies carry their referenced bot message. A reply's explicit
+// target used to be dropped whenever it had scrolled out of the
+// promptRecentCount history window, so "and where would it be best to refine
+// it?" was answered from unrelated history.
+// ---------------------------------------------------------------------------
+describe('buildTurnContext referencedMessage injection', () => {
+  const REF = { id: 'bot-msg-9', content: 'Aaron Halo is the best spot for Aluminum.', authorId: 'bot-id' };
+
+  test('injects the referenced bot message as an assistant turn when it is outside the window, right before the current turn', async () => {
+    const svc = makeChat();
+    svc.mongoService.getRecentChannelMessages = async () => ([
+      { messageId: 'm1', content: 'unrelated chatter', isBot: false },
+      { messageId: 'm2', content: 'unrelated bot reply', isBot: true },
+      { messageId: 'cur', content: 'and where would it be best to refine it?', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'and where would it be best to refine it?',
+      referencedMessage: REF,
+    });
+    // Current turn deduped away, referenced message appended last (i.e.
+    // immediately before the separately-forwarded current user turn).
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: 'unrelated chatter' },
+      { role: 'assistant', content: 'unrelated bot reply' },
+      { role: 'assistant', content: REF.content },
+    ]);
+  });
+
+  test('does NOT inject when the referenced message is already in the window (matched by messageId)', async () => {
+    const svc = makeChat();
+    svc.mongoService.getRecentChannelMessages = async () => ([
+      { messageId: 'u-q', content: 'best place for Aluminum?', isBot: false },
+      // Stored content is the raw model output; the Discord message differs.
+      { messageId: 'bot-msg-9', content: 'Aaron Halo.', isBot: true },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'refine it where?', referencedMessage: REF,
+    });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: 'best place for Aluminum?' },
+      { role: 'assistant', content: 'Aaron Halo.' },
+    ]);
+  });
+
+  test('does NOT inject when an in-window row has the exact same content (rows without messageId)', async () => {
+    const svc = makeChat();
+    svc.mongoService.getRecentChannelMessages = async () => ([
+      { content: REF.content, isBot: true },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'refine it where?', referencedMessage: REF,
+    });
+    expect(ctx.historyTurns).toEqual([{ role: 'assistant', content: REF.content }]);
+  });
+
+  test('strips display-only decoration (fallback banner, <url> wrapping) from the injected content', async () => {
+    const svc = makeChat();
+    svc.mongoService.getRecentChannelMessages = async () => ([]);
+    const ctx = await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'more?',
+      referencedMessage: {
+        id: 'x',
+        content: '> *⚠️ Memory and channel personality unavailable — answered without them*\n\nSee <https://example.com/a> and [wiki](<https://w.example/b>).',
+      },
+    });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'assistant', content: 'See https://example.com/a and [wiki](https://w.example/b).' },
+    ]);
+  });
+
+  test('no referencedMessage (or an empty one) -> history unchanged', async () => {
+    const base = await makeChat().buildTurnContext({ userId: 'u1', channelId: 'c1', userMessage: 'hi' });
+    const withEmpty = await makeChat().buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'hi', referencedMessage: { id: 'z', content: '   ' },
+    });
+    expect(withEmpty.historyTurns).toEqual(base.historyTurns);
+  });
+
+  test('injects even when the history lookup failed', async () => {
+    const svc = makeChat();
+    svc.mongoService.getRecentChannelMessages = async () => { throw new Error('mongo down'); };
+    const ctx = await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'refine?', referencedMessage: REF,
+    });
+    expect(ctx.historyTurns).toEqual([{ role: 'assistant', content: REF.content }]);
+  });
+});
+
+describe('chat() forwards options.referencedMessage to buildTurnContext', () => {
+  function makeAgentChat() {
+    const svc = makeChat();
+    svc.agentClient = {
+      isHealthy: () => true,
+      chat: jest.fn(async () => ({ messageText: 'ok', summary: null, fallbackOccurred: false })),
+    };
+    jest.spyOn(svc, 'buildTurnContext').mockResolvedValue({ systemPrompt: 's', memoryBlock: '', historyTurns: [] });
+    return svc;
+  }
+
+  test('passes the referenced message through', async () => {
+    const svc = makeAgentChat();
+    const ref = { id: 'r1', content: 'prior answer', authorId: 'bot' };
+    await svc.chat('channel-voice', 'follow up', { id: 'u1', username: 'a' }, 'c1', 'g1', null, { referencedMessage: ref });
+    expect(svc.buildTurnContext).toHaveBeenCalledWith(expect.objectContaining({ referencedMessage: ref }));
+  });
+
+  test('omitting options passes no referenced message', async () => {
+    const svc = makeAgentChat();
+    await svc.chat('channel-voice', 'hi', { id: 'u1', username: 'a' }, 'c1', 'g1');
+    expect(svc.buildTurnContext.mock.calls[0][0].referencedMessage).toBeNull();
+  });
+});
