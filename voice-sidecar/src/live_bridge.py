@@ -949,9 +949,13 @@ class LiveBridge:
 
         The FunctionResponse (`{"ok": true, ...}`) lets the model speak its
         short confirmation; it goes only to the CURRENT session, exactly like
-        an sc_* answer. The `Control` event is emitted regardless of whether
-        that response could be delivered: the user's request is real either
-        way, and the bot's handler is idempotent."""
+        an sc_* answer. The `Control` event is emitted FIRST and regardless of
+        whether that response can be delivered: the user's request is real
+        either way, the bot's handler is idempotent, and awaiting the send
+        first let a hung send_tool_response delay (or, on pump teardown, lose)
+        the command. The bot does not act on it until the model's reply turn
+        has produced output and completed, so emitting early cannot cut the
+        confirmation short."""
         name = getattr(fc, "name", None) or ""
         call_id = getattr(fc, "id", None)
         args = dict(getattr(fc, "args", None) or {})
@@ -963,10 +967,14 @@ class LiveBridge:
             seconds = _quiet_seconds(args.get("minutes"))
             result = {"ok": True, "action": "quiet",
                       "minutes": (seconds / 60) if seconds else None}
+        if emit is not None:
+            await emit(voice_pb2.VoiceServerEvent(
+                control=voice_pb2.Control(action=action, seconds=seconds)))
+        logger.info("voice: control %s (%ds) via tool id=%s", action, seconds, call_id)
         if session_ref is not None and session_ref.session is not session:
             logger.info(
                 "voice: control tool_call %s id=%s answered but its Live session is gone; "
-                "dropping the response (control event still sent)", name, call_id)
+                "dropping the response (control event already sent)", name, call_id)
         else:
             try:
                 await session.send_tool_response(function_responses=[
@@ -974,11 +982,7 @@ class LiveBridge:
             except Exception as e:  # noqa: BLE001 - the session is dying; the reconnect path owns that
                 logger.warning(
                     "voice: control tool_call %s id=%s send_tool_response failed (%s: %s); "
-                    "control event still sent", name, call_id, type(e).__name__, e)
-        if emit is not None:
-            await emit(voice_pb2.VoiceServerEvent(
-                control=voice_pb2.Control(action=action, seconds=seconds)))
-        logger.info("voice: control %s (%ds) via tool id=%s", action, seconds, call_id)
+                    "control event already sent", name, call_id, type(e).__name__, e)
 
     async def _answer_tool_call(self, session, session_ref, fc) -> None:
         name = getattr(fc, "name", None) or ""

@@ -192,6 +192,49 @@ async def test_control_response_dropped_if_session_replaced_but_control_still_em
     assert [c.action for c in _controls(out)] == ["end"]
 
 
+class _HangingToolResponseSession(ToolSession):
+    """send_tool_response never returns (a half-dead stream)."""
+
+    async def send_tool_response(self, *, function_responses):
+        self.tool_responses.append((None, list(function_responses)))
+        await asyncio.Event().wait()
+
+
+async def test_control_event_is_emitted_before_the_tool_response_is_sent():
+    # The bot is idempotent, so emitting first costs nothing; awaiting the
+    # send first let a hung send_tool_response delay -- or, if the pump is
+    # torn down, lose -- the user's command.
+    session = _HangingToolResponseSession([_tool_call_msg(FC("c1", "go_quiet", {"minutes": 10}))])
+    out = await _run_pump_emitting(_bridge(session), session)
+    assert [(c.action, c.seconds) for c in _controls(out)] == [("quiet", 600)]
+    assert [fr.id for fr in session.responses()] == ["c1"]  # the send was still attempted
+
+
+async def test_control_event_precedes_the_tool_response_in_time():
+    order = []
+    session = ToolSession([_tool_call_msg(FC("c1", "end_conversation", {}))])
+    real_send = session.send_tool_response
+
+    async def send(*, function_responses):
+        order.append("response")
+        await real_send(function_responses=function_responses)
+    session.send_tool_response = send
+    bridge = _bridge(session)
+    ref = _SessionRef()
+    ref.session = session
+
+    async def emit(ev):
+        if ev.WhichOneof("event") == "control":
+            order.append("control")
+    task = asyncio.create_task(
+        bridge._pump_server(session, emit, _SessionStats(), _ResumeState(), ref))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert order == ["control", "response"]
+
+
 async def test_control_names_with_flag_off_keep_todays_handling():
     session = ToolSession([_tool_call_msg(FC("c1", "end_conversation", {}))])
     out = await _run_pump_emitting(_bridge(session, control=False), session)
