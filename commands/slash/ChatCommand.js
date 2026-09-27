@@ -5,9 +5,21 @@ const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const BaseSlashCommand = require('../base/BaseSlashCommand');
 const TextUtils = require('../../utils/textUtils');
 const logger = require('../../logger');
+const { recordUserMessage, recordBotReply } = require('../../utils/channelMessageRecorder');
 
 class ChatSlashCommand extends BaseSlashCommand {
-  constructor(chatService) {
+  /**
+   * @param {Object} chatService
+   * @param {Object} [recording] - channel_messages recording deps. /chat is a
+   *   slash interaction, not a channel message, so bot.js's messageCreate
+   *   recorder never sees it; without these the exchange is invisible to every
+   *   later turn's history (ChatService.buildTurnContext reads ONLY
+   *   channel_messages).
+   * @param {Object|null} [recording.mongoService]
+   * @param {Object|null} [recording.speakerNames] - services/SpeakerNames resolver
+   * @param {Function} [recording.getBotUser] - () => client.user (lazy: set after login)
+   */
+  constructor(chatService, { mongoService = null, speakerNames = null, getBotUser = () => null } = {}) {
     super({
       data: new SlashCommandBuilder()
         .setName('chat')
@@ -26,6 +38,9 @@ class ChatSlashCommand extends BaseSlashCommand {
     });
 
     this.chatService = chatService;
+    this.mongoService = mongoService;
+    this.speakerNames = speakerNames;
+    this.getBotUser = getBotUser;
   }
 
   async execute(interaction, context) {
@@ -48,6 +63,24 @@ class ChatSlashCommand extends BaseSlashCommand {
         return;
       }
     }
+
+    // Record the prompt as a user turn BEFORE chat, exactly like the
+    // messageCreate recorder does for @mentions, so ordering in
+    // channel_messages is prompt -> reply. Awaited (unlike messageCreate's
+    // fire-and-forget) so the row has landed by the time buildTurnContext
+    // reads history: its _dropDuplicatedCurrentTurn then removes this trailing
+    // row deterministically, so the current turn reaches the model once (as
+    // userMessage), not twice. Never throws.
+    await recordUserMessage({
+      mongoService: this.mongoService,
+      speakerNames: this.speakerNames,
+      messageId: interaction.id,
+      channelId,
+      guildId,
+      user: interaction.user,
+      member: interaction.member || null,
+      content: userMessage,
+    });
 
     // Call chat service with channel-voice personality
     const result = await this.chatService.chat(
@@ -98,13 +131,26 @@ class ChatSlashCommand extends BaseSlashCommand {
       }
     }
 
-    // Send response with images if any, handling long messages
+    // Send response with images if any, handling long messages. Keep the last
+    // text message sent so the reply can be persisted against it (same rule as
+    // the mention path's `lastReply`).
+    const lastReply = await this.sendLongResponse(interaction, response);
     if (imageAttachments.length > 0) {
-      await this.sendLongResponse(interaction, response);
       await interaction.followUp({ files: imageAttachments });
-    } else {
-      await this.sendLongResponse(interaction, response);
     }
+
+    // Persist the reply as an assistant turn — the RAW model output, not the
+    // Discord payload (no "**Prompt:**" header, fallback banner or <url>
+    // wrapping) — with any sandbox executionIds for reaction reveal. Never throws.
+    await recordBotReply({
+      mongoService: this.mongoService,
+      botUser: this.getBotUser(),
+      reply: lastReply,
+      content: result.message,
+      channelId,
+      guildId,
+      executionIds: result.executionSummary?.executionIds || [],
+    });
   }
 }
 

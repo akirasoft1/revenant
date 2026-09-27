@@ -54,6 +54,7 @@ const QdrantService = require('./services/QdrantService');
 const NickMappingService = require('./services/NickMappingService');
 const ChannelContextService = require('./services/ChannelContextService');
 const { createSpeakerNames } = require('./services/SpeakerNames');
+const { buildUserMessageDoc, recordBotReply } = require('./utils/channelMessageRecorder');
 const ImagePromptAnalyzerService = require('./services/ImagePromptAnalyzerService');
 const CatchMeUpService = require('./services/CatchMeUpService');
 const VoiceSearchService = require('./services/VoiceSearchService');
@@ -552,7 +553,13 @@ class DiscordBot {
 
   registerSlashCommands() {
     // Register chat/personality slash commands
-    this.slashCommandHandler.register(new ChatSlashCommand(this.chatService));
+    this.slashCommandHandler.register(new ChatSlashCommand(this.chatService, {
+      // /chat records both sides of its exchange into channel_messages (the
+      // only agent-history source); client.user is only set after login.
+      mongoService: this.mongoService,
+      speakerNames: this.speakerNames,
+      getBotUser: () => this.client.user,
+    }));
     this.chatThreadCommand = new ChatThreadSlashCommand(this.chatService);
     this.slashCommandHandler.register(this.chatThreadCommand);
     this.slashCommandHandler.register(new ChatResetSlashCommand(this.chatService));
@@ -741,27 +748,21 @@ class DiscordBot {
 
         // Prefer the resolved preferred name (services/SpeakerNames.js); fall
         // back to the raw Discord username when unresolved. `authorId` stays
-        // the Discord id — identity keys never change. Guarded like the
-        // voice path (VoiceService._perUser): this runs in the messageCreate
-        // handler before any .catch() chain, so an uncaught throw here would
-        // become an unhandled rejection instead of just losing a preferred name.
-        let authorName = message.author.username;
-        try {
-          const resolved = this.speakerNames && this.speakerNames.resolve(message.author, message.member);
-          if (resolved) authorName = resolved;
-        } catch (e) {
-          logger.warn(`Speaker-name resolution failed for ${message.author.id}: ${e.message}`);
-        }
-
-        this.mongoService.recordChannelMessage({
+        // the Discord id — identity keys never change. Name resolution is
+        // guarded inside buildUserMessageDoc (resolveAuthorName): this runs in
+        // the messageCreate handler before any .catch() chain, so an uncaught
+        // throw here would become an unhandled rejection instead of just
+        // losing a preferred name. The same doc builder is used by /chat
+        // (commands/slash/ChatCommand.js), which messageCreate never sees.
+        this.mongoService.recordChannelMessage(buildUserMessageDoc({
+          speakerNames: this.speakerNames,
           messageId: message.id,
           channelId: message.channel.id,
           guildId: message.guild.id,
-          authorId: message.author.id,
-          authorName,
+          user: message.author,
+          member: message.member,
           content: message.content,
-          timestamp: new Date()
-        }).catch(err => logger.debug(`Channel message recording failed: ${err.message}`));
+        })).catch(err => logger.debug(`Channel message recording failed: ${err.message}`));
       }
 
       // Passive channel context recording for semantic search (non-blocking, writes to Qdrant)
@@ -1050,26 +1051,17 @@ class DiscordBot {
    * @private
    */
   async _recordBotReply(reply, content, channelId, guildId, executionIds = []) {
-    if (!reply || !reply.id) return;
-    if (!this.mongoService) return;
-    try {
-      const doc = {
-        messageId: reply.id,
-        channelId: channelId || null,
-        guildId: guildId || null,
-        authorId: this.client.user?.id || null,
-        authorName: this.client.user?.username || 'bot',
-        content,
-        isBot: true,
-        timestamp: new Date(),
-      };
-      if (executionIds && executionIds.length > 0) {
-        doc.executionIds = executionIds;
-      }
-      await this.mongoService.recordChannelMessage(doc);
-    } catch (e) {
-      logger.warn(`Failed to record bot reply ${reply.id}: ${e.message}`);
-    }
+    // Shared with /chat (utils/channelMessageRecorder.js) so both entry points
+    // write the same assistant-turn doc shape.
+    await recordBotReply({
+      mongoService: this.mongoService,
+      botUser: this.client.user,
+      reply,
+      content,
+      channelId,
+      guildId,
+      executionIds,
+    });
   }
 
   /**

@@ -93,16 +93,17 @@ class BaseSlashCommand {
    * Send a reply, handling the deferred state appropriately
    * @param {CommandInteraction} interaction
    * @param {string|Object} content - The content to send
+   * @returns {Promise<Object>} The sent message as resolved by discord.js
    */
   async sendReply(interaction, content) {
     const options = typeof content === 'string' ? { content } : content;
 
     if (interaction.deferred) {
-      await interaction.editReply(options);
+      return interaction.editReply(options);
     } else if (interaction.replied) {
-      await interaction.followUp(options);
+      return interaction.followUp(options);
     } else {
-      await interaction.reply(options);
+      return interaction.reply(options);
     }
   }
 
@@ -111,6 +112,9 @@ class BaseSlashCommand {
    * @param {CommandInteraction} interaction
    * @param {string} content - The content to send
    * @param {number} [maxLength=2000] - Maximum length per message
+   * @returns {Promise<Object|undefined>} The LAST message sent (what the
+   *   discord.js reply/editReply/followUp resolved to), for callers that
+   *   persist the reply (e.g. /chat's channel_messages record)
    */
   async sendLongResponse(interaction, content, maxLength = 2000) {
     const chunks = this.splitMessage(content, maxLength);
@@ -121,12 +125,13 @@ class BaseSlashCommand {
     }
 
     // Send first chunk as reply/editReply
-    await this.sendReply(interaction, chunks[0]);
+    let last = await this.sendReply(interaction, chunks[0]);
 
     // Send remaining chunks as follow-ups
     for (let i = 1; i < chunks.length; i++) {
-      await interaction.followUp(chunks[i]);
+      last = await interaction.followUp(chunks[i]);
     }
+    return last;
   }
 
   /**
