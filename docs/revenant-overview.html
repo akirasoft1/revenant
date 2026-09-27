@@ -722,6 +722,7 @@
       <a href="#memory">Memory</a>
       <a href="#archive">The Archive</a>
       <a href="#sandbox">Sandbox</a>
+      <a href="#comms">Comms</a>
     </div>
   </header>
 
@@ -733,7 +734,7 @@
       retreat. <strong>REVENANT learned to talk somewhere else</strong> — from a
       quarter-million lines of your channel's own history. It picked up the in-jokes, the
       cadence, the way you actually argue at 2 a.m. <span class="hl">And it remembers
-      every conversation since.</span>
+      every conversation since</span> — in text, or out loud when you're sitting in voice.
     </p>
   </div>
 
@@ -743,7 +744,7 @@
       <span class="dot c"></span><span class="dot m"></span><span class="dot v"></span>
       <span class="path">revenant://core · request_trace</span>
     </div>
-    <svg viewBox="0 0 820 250" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <svg viewBox="0 0 820 276" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
         <linearGradient id="wire" x1="0" x2="1" y1="0" y2="0">
           <stop offset="0%" stop-color="#00e6ff" />
@@ -792,6 +793,11 @@
           <text x="576" y="190" fill="#00e6ff">▸ SANDBOX</text>
           <text x="576" y="204" fill="#6d7fa6">runs real code, disposable VM</text>
         </g>
+        <g>
+          <rect x="560" y="222" width="224" height="40" rx="4" fill="#0c1120" stroke="#00e6ff" stroke-width="1.1" />
+          <text x="576" y="240" fill="#00e6ff">▸ LIVE DATA</text>
+          <text x="576" y="254" fill="#6d7fa6">prices, missions, routes</text>
+        </g>
       </g>
 
       <!-- core to nodes -->
@@ -800,6 +806,7 @@
         <path d="M448,125 C510,116 520,92 560,92" />
         <path d="M448,125 C510,128 520,142 560,142" />
         <path d="M448,125 C510,140 520,192 560,192" />
+        <path d="M448,125 C510,152 520,242 560,242" />
       </g>
 
       <!-- styled reply returning -->
@@ -808,8 +815,9 @@
     </svg>
     <div class="scene-cap">
       One ambiguous message. The core consults <b>voice</b>, <b>memory</b>, the <b>archive</b>,
-      and — when it has to — a throwaway VM that <b>actually runs the code</b>. What comes back
-      reads like a reply from someone who's been in the channel for years.
+      <b>live data</b> when the answer changes by the hour, and — only when it has to — a
+      throwaway VM that <b>actually runs the code</b>. What comes back reads like a reply from
+      someone who's been in the channel for years.
     </div>
   </div>
 
@@ -896,7 +904,7 @@
   <!-- ──────── § 03 — cards ──────── -->
   <section style="max-width:none" id="memory">
     <div class="chapter-num"><b>03</b> / Under the hood</div>
-    <h2>Four systems, working in the dark.</h2>
+    <h2>Five systems, working in the dark.</h2>
     <p style="max-width:720px">
       You never configure any of this — it runs on its own. But it's worth knowing what's
       actually behind the curtain when REVENANT answers like it belongs.
@@ -938,10 +946,25 @@
         <div class="tag">SYS · SANDBOX</div>
         <div class="glyph">▤</div>
         <h4>It can actually <em style="color:var(--cyan);font-style:normal">do</em> things.</h4>
-        <p>When a question needs running, not guessing, REVENANT spins up a disposable
-        hardware-isolated VM, runs the code, and reports back <strong>exit code, output,
-        and timing</strong>. Each run is sealed off from the host — and torn down after.</p>
-        <div class="example"><b>run_in_sandbox:</b> python · node · go · rust — ephemeral Kata VM, 300s cap</div>
+        <p>Most questions it just answers — instantly. But when one genuinely needs running,
+        not guessing, REVENANT spins up a disposable hardware-isolated VM, runs the code, and
+        reports back <strong>exit code, output, and timing</strong>. Each run is sealed off
+        from the host — and torn down after.</p>
+        <div class="example"><b>run_in_sandbox:</b> python · node · go · rust · c# — ephemeral Kata VM, last resort only</div>
+      </div>
+
+      <div class="card" id="live-data" style="grid-column: 1 / -1">
+        <div class="tag">SYS · LIVE DATA</div>
+        <div class="glyph">◎</div>
+        <h4>It knows your game — right now, not last patch.</h4>
+        <p>Some answers change by the hour. For the game the crew actually plays —
+        <strong>Star Citizen</strong> — REVENANT pulls live, patch-current data instead of
+        guessing from memory: where to buy an item or a ship and for how much, which
+        component is best in its size, which missions grind a faction's reputation fastest,
+        and which trade routes are paying <em style="color:var(--cyan);font-style:normal">today</em>
+        — with profit already worked out for your hold and your wallet. It layers in the
+        org's own curated field guides, and says how fresh the numbers are.</p>
+        <div class="example"><b>"where do we buy a V801-12?"</b> → Omega Pro, New Babbage · 352,000 aUEC · reported this week<br /><b>"best route out of MIC-L5?"</b> → Scrap to Rod's Fuel 'N Supplies · +1,335/SCU · flagged: Pyro, no law out there</div>
       </div>
     </div>
   </section>
@@ -966,9 +989,9 @@
         <div class="d">Text-to-video, single-frame animation, or first/last-frame transitions.</div>
       </div>
       <div class="cell">
-        <div class="k">/musicgen</div>
+        <div class="k">/musicgen · /elevenmusic</div>
         <div class="t">Music</div>
-        <div class="d">Full tracks from a description — lyrics, structure tags, MP3 in-channel.</div>
+        <div class="d">Full tracks from a description, on two engines — lyrics, structure, MP3 in-channel.</div>
       </div>
       <div class="cell">
         <div class="k">📰 react</div>
@@ -978,9 +1001,53 @@
     </div>
   </section>
 
-  <!-- ──────── § 04 — timeline ──────── -->
+  <!-- ──────── § 04 — comms ──────── -->
+  <section style="max-width:none" id="comms">
+    <div class="chapter-num"><b>04</b> / Comms</div>
+    <h2>It picks up <span class="hl">the mic</span>.</h2>
+    <p style="max-width:720px">
+      Typing is for when your hands are free. Mid-game, they aren't. Run
+      <code>/voice join</code> and REVENANT sits in your voice channel — quiet until someone
+      says the wake word, then it talks back, out loud, in real time.
+    </p>
+    <p style="max-width:720px">
+      It's the same bot, not a stripped-down voice mode: <strong>the same memory, the same
+      channel voice, the same live data</strong>. Every spoken exchange is written into the
+      channel's history too, so tomorrow's text conversation already knows what was said over
+      the headset tonight.
+    </p>
+
+    <div class="convo-pair">
+      <div class="convo good">
+        <div class="label">#squad-voice · live</div>
+        <div class="stream">
+          <div class="who">🎙 mike</div>
+          <div class="bubble you">hey jarvis — best route out of MIC-L5? we've got a full C2.</div>
+          <div class="who">🎙 alex <span style="color:var(--ink-faint)">(talking over it)</span></div>
+          <div class="bubble you">wait, what about the —</div>
+          <div class="who">🔊 revenant</div>
+          <div class="bubble ai">let me check… scrap's the play, Mike. buy at MIC-L5, sell at Rod's in Pyro, about thirteen hundred profit a unit. it's Pyro though — bring an escort.</div>
+          <div class="who">🔊 revenant</div>
+          <div class="bubble ai">Alex — you were trying to get a word in. go.</div>
+        </div>
+      </div>
+
+      <div class="convo">
+        <div class="label" style="color:var(--violet)">What's happening</div>
+        <div class="stream" style="gap:14px;font-size:15px;line-height:1.55;color:var(--ink-soft)">
+          <div><b style="color:var(--ink)">Wake word, locally.</b> It listens for "hey jarvis" on your own server — ambient table talk never leaves the room.</div>
+          <div><b style="color:var(--ink)">Knows who's talking.</b> Each speaker is heard separately and called by the name the crew actually uses.</div>
+          <div><b style="color:var(--ink)">One speaker at a time.</b> Whoever woke it has the floor — no crosstalk soup.</div>
+          <div><b style="color:var(--ink)">Waits its turn.</b> Talk over it and it finishes its thought, then hands you the floor by name.</div>
+          <div><b style="color:var(--ink)">Looks things up.</b> Live web search and live game data, mid-sentence — "let me check," not "I don't know that game."</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────── § 05 — timeline ──────── -->
   <section>
-    <div class="chapter-num"><b>04</b> / A night in the channel</div>
+    <div class="chapter-num"><b>05</b> / A night in the channel</div>
     <h2>What this actually looks like.</h2>
     <p>
       The first week, it's subtle — there isn't much history yet. Give it a month of
@@ -990,13 +1057,13 @@
 
     <div class="moment">
       <div class="item">
-        <div class="when"><span class="day">21:14</span>Someone drops a link.</div>
+        <div class="when"><span class="day">21:14</span>Game night, headsets on.</div>
         <div>
-          <h4>📰 → a summary that sounds like the room.</h4>
-          <p>A long article gets reacted with 📰. Back comes a tight summary — topic tags,
-          reading time, a credibility read on the source — written in the channel's dry
-          house style, not press-release voice.</p>
-          <p><em>"tl;dr: vendor reinvented the message queue, again. ~7 min read, source is mid."</em></p>
+          <h4>"hey jarvis — where do we even buy a V801-12?"</h4>
+          <p>Nobody alt-tabs out to a wiki. It checks live shop data and answers out loud —
+          where, how much, and how recently the price was seen — then the next question lands
+          before anyone's finished climbing into the ship.</p>
+          <p><em>"Omega Pro in New Babbage, three-fifty-two k. seen there this week."</em></p>
         </div>
       </div>
 
@@ -1056,9 +1123,12 @@
         <li><div><b>Channel Voice</b><span>A daily-regenerated style profile learned from IRC + Discord history. Talks like your crew.</span></div></li>
         <li><div><b>Long-Term Memory</b><span>Per-user and shared-channel facts, retrieved semantically and ranked by recency + relevance. Tell it once; deletable on request.</span></div></li>
         <li><div><b>IRC Archive Recall</b><span>Semantic search and styled narratives over years of history — plus "this day in history" throwbacks.</span></div></li>
-        <li><div><b>Agentic Sandbox</b><span>Runs real code in disposable hardware-isolated VMs and reports exit code, output, and timing.</span></div></li>
-        <li><div><b>Media Studio</b><span>Image, video, and music generation — and article summarization — all from inside the chat.</span></div></li>
+        <li><div><b>Agentic Sandbox</b><span>Answers directly when it can; runs real code in disposable hardware-isolated VMs when it genuinely has to, and reports exit code, output, and timing.</span></div></li>
+        <li><div><b>Comms</b><span><code>/voice join</code> — wake-word voice chat in your voice channel, multi-speaker aware, same memory and style as text.</span></div></li>
+        <li><div><b>Live Game Intel</b><span>Patch-current Star Citizen data: shops and prices, component rankings, rep-per-minute mission ranking, profit-capped trade routes, and the org's own field guides.</span></div></li>
+        <li><div><b>Media Studio</b><span>Image, video, and music generation (two music engines) — and article summarization — all from inside the chat.</span></div></li>
         <li><div><b>Catch Me Up</b><span><code>/tldr</code> DMs you what you missed — articles, trends, and chat highlights, in the group's voice.</span></div></li>
+        <li><div><b>Ops View</b><span>Admins can ask <code>/observe</code> how the bot itself is doing — traces, errors, and health, straight from observability.</span></div></li>
       </ol>
     </div>
   </section>
