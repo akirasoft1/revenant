@@ -26,6 +26,14 @@
 // with it. If this fixture FAILs (a control event arrives), the fix is to
 // tighten the tool description in the sidecar, not this script.
 //
+// ORDERING CHECK (quiet/end fixtures): the bot executes a command only once
+// the model's reply turn has produced OUTPUT and then completed, because Live
+// emits a bare turn_complete for the tool-call turn itself (no audio) before
+// the confirmation is spoken. This script records the event timeline and
+// FAILs a positive fixture unless model audio arrives AFTER the control event
+// and BEFORE the final turn_complete -- i.e. a spoken confirmation exists for
+// the bot to wait for. The timeline is printed either way.
+//
 // Prerequisites:
 //   - Port-forward the voice sidecar:
 //       kubectl port-forward svc/discord-article-bot-voice 50051:50051 -n discord-article-bot &
@@ -76,15 +84,17 @@ const FIXTURES = [
     id: 'ctl-quiet',
     file: 'ctl-quiet.wav',
     text: 'Hey Jarvis, go quiet for two minutes.',
-    expectDesc: 'control event action="quiet" seconds=120 (2 min)',
+    expectDesc: 'control event action="quiet" seconds=120 (2 min), then confirmation audio, then turn_complete',
     check: (events) => events.some((e) => e.action === 'quiet' && e.seconds === 120),
+    checkOrdering: true,
   },
   {
     id: 'ctl-end',
     file: 'ctl-end.wav',
     text: "Thanks Jarvis, that's all.",
-    expectDesc: 'control event action="end"',
+    expectDesc: 'control event action="end", then confirmation audio, then turn_complete',
     check: (events) => events.some((e) => e.action === 'end'),
+    checkOrdering: true,
   },
   {
     id: 'ctl-negative',
@@ -92,8 +102,26 @@ const FIXTURES = [
     text: "Hey Jarvis, that's all I know about shields, what do you think?",
     expectDesc: 'NO control event (mid-sentence "that\'s all" must not end the conversation)',
     check: (events) => events.length === 0,
+    checkOrdering: false,
   },
 ];
+
+/**
+ * timeline: [{type: 'control'|'audio'|'turn_complete', ...}] in arrival order.
+ * OK iff there is a control event, some audio after the first control event,
+ * and a turn_complete after that audio (the final turn_complete).
+ */
+function checkOrdering(timeline) {
+  const ci = timeline.findIndex((e) => e.type === 'control');
+  if (ci < 0) return { ok: false, why: 'no control event' };
+  const ai = timeline.findIndex((e, i) => i > ci && e.type === 'audio');
+  if (ai < 0) return { ok: false, why: 'no model audio arrived after the control event (no spoken confirmation)' };
+  let lastTc = -1;
+  timeline.forEach((e, i) => { if (e.type === 'turn_complete') lastTc = i; });
+  if (lastTc < ai) return { ok: false, why: 'the final turn_complete did not come after the confirmation audio' };
+  const bare = timeline.slice(ci + 1, ai).filter((e) => e.type === 'turn_complete').length;
+  return { ok: true, why: `confirmation audio after control; ${bare} bare turn_complete(s) between control and first audio` };
+}
 
 function hr(char = '-') { return char.repeat(70); }
 function log(...args) { console.log(...args); }
@@ -195,17 +223,30 @@ async function runFixture(client, fx, filePath) {
   const session = client.converse();
   const outputTranscripts = [];
   const controlEvents = [];
+  const timeline = [];
+  const t0 = Date.now();
+  let audioChunksThisTurn = 0;
   let sawError = false;
 
+  session.on('audio', (buf) => {
+    timeline.push({ type: 'audio', t: Date.now() - t0 });
+    if (audioChunksThisTurn === 0) log(`  [audio] first model audio chunk of this turn (+${Date.now() - t0}ms, ${buf.length} bytes)`);
+    audioChunksThisTurn++;
+  });
   session.on('outputTranscript', (text) => {
     outputTranscripts.push(text);
     log(`  [output_transcript] "${text}"`);
   });
   session.on('control', (c) => {
     controlEvents.push(c);
-    log(`  [control] action=${c.action} seconds=${c.seconds}`);
+    timeline.push({ type: 'control', t: Date.now() - t0 });
+    log(`  [control] action=${c.action} seconds=${c.seconds} (+${Date.now() - t0}ms)`);
   });
-  session.on('turnComplete', () => log('  [turn_complete]'));
+  session.on('turnComplete', () => {
+    timeline.push({ type: 'turn_complete', t: Date.now() - t0 });
+    log(`  [turn_complete] (+${Date.now() - t0}ms, audio_out=${audioChunksThisTurn} chunks)`);
+    audioChunksThisTurn = 0;
+  });
   session.on('interrupted', () => log('  [interrupted]'));
   session.on('error', (err) => {
     sawError = true;
@@ -249,10 +290,13 @@ async function runFixture(client, fx, filePath) {
   session.removeAllListeners();
 
   const fullText = outputTranscripts.join(' ');
-  const pass = fx.check(controlEvents);
+  const controlOk = fx.check(controlEvents);
+  const ordering = fx.checkOrdering ? checkOrdering(timeline) : null;
+  const pass = controlOk && (!ordering || ordering.ok);
   log(`\n  Expected: ${fx.expectDesc}`);
   log(`  Output transcript: ${outputTranscripts.length ? outputTranscripts.map((t) => `"${t}"`).join(' ') : '(none received)'}`);
   log(`  Control events received: ${controlEvents.length ? controlEvents.map((c) => `{action:"${c.action}", seconds:${c.seconds}}`).join(', ') : '(none)'}`);
+  if (ordering) log(`  Ordering (control -> audio -> final turn_complete): ${ordering.ok ? 'OK' : 'VIOLATED'} -- ${ordering.why}`);
   if (sawError) log('  NOTE: session reported at least one error event -- treat this result with that in mind.');
   log(`  VERDICT (${fx.id}): ${pass ? 'PASS' : 'FAIL'}`);
 
