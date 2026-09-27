@@ -71,3 +71,17 @@ def test_sc_knowledge_enabled_from_env(monkeypatch):
         assert cfg.load().sc_knowledge_enabled is False, value
     monkeypatch.setenv("SC_KNOWLEDGE_URL", "http://other:1/mcp")
     assert cfg.load().sc_knowledge_url == "http://other:1/mcp"
+
+
+def test_control_tools_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("VOICE_CONTROL_TOOLS_ENABLED", raising=False)
+    assert cfg.load().control_tools_enabled is True
+
+
+def test_control_tools_flag_falsey_spellings(monkeypatch):
+    for value in ("false", "False", "0", "no", "OFF"):
+        monkeypatch.setenv("VOICE_CONTROL_TOOLS_ENABLED", value)
+        assert cfg.load().control_tools_enabled is False, value
+    for value in ("true", "1", "yes", "on"):
+        monkeypatch.setenv("VOICE_CONTROL_TOOLS_ENABLED", value)
+        assert cfg.load().control_tools_enabled is True, value

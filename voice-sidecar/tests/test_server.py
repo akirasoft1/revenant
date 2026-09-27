@@ -216,3 +216,13 @@ def test_describe_error_unwraps_exception_groups():
         "ValueError: Client error '421 Misdirected Request' for url 'http://sc/mcp'")
     assert server_mod._describe_error(OSError("refused")) == "OSError: refused"
     assert server_mod._describe_error(None) == "unknown error"
+
+
+def test_build_bridge_passes_control_tools_flag(monkeypatch):
+    from google import genai
+    monkeypatch.setattr(genai, "Client", lambda *a, **k: SimpleNamespace())
+    for flag in (True, False):
+        c = SimpleNamespace(voice_live_model="m", default_voice_name="Puck",
+                            context_compression_trigger_tokens=1, session_resumption_enabled=True,
+                            max_session_reconnects=1, control_tools_enabled=flag)
+        assert server_mod._build_bridge(c)._control_enabled is flag
