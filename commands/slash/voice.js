@@ -24,7 +24,8 @@ class VoiceSlashCommand extends BaseSlashCommand {
         .setDescription('Talk to me in a voice channel')
         .addSubcommand((s) => s.setName('join').setDescription('Join your current voice channel'))
         .addSubcommand((s) => s.setName('leave').setDescription('Leave the voice channel'))
-        .addSubcommand((s) => s.setName('listen').setDescription('(admin) Listen now — no wake word, stays open until /voice leave')),
+        .addSubcommand((s) => s.setName('listen').setDescription('(admin) Listen now — no wake word, stays open until /voice leave'))
+        .addSubcommand((s) => s.setName('resume').setDescription("Stop quiet mode early — I'll listen for the wake word again")),
       cooldown: 5,
       // A cold-cache /voice join can trigger a slow ONNX wake-word model load
       // (see services/voice/wakeword.js) that saturates the bot's CPU limit
@@ -118,6 +119,31 @@ class VoiceSlashCommand extends BaseSlashCommand {
         await this.sendReply(interaction, { content: `Listening in <#${channel.id}> — no wake word needed. I'll keep listening until \`/voice leave\`${cap}.`, ephemeral: true });
       } catch (e) {
         await this.sendError(interaction, `Couldn't start listening: ${e.message}`);
+      }
+      return;
+    }
+    if (sub === 'resume') {
+      // Anyone in the guild may resume (unlike /voice listen, this is not
+      // admin-gated) -- see the design doc's "who can trigger" note.
+      //
+      // resume()'s three outcomes collapse to two return shapes today
+      // ({wasQuiet:true, remainingMs>0} vs. {wasQuiet:false, remainingMs:0}
+      // for BOTH "wasn't quiet" and "bot isn't even in voice in this guild"
+      // -- VoiceService.resume() treats those identically, so this command
+      // necessarily does too), plus an optional cancelledPending:true for a
+      // "go quiet" that was requested but hadn't taken effect yet (the
+      // confirmation was still playing). A missing cancelledPending field
+      // (an older VoiceService) is treated as false, not truthy.
+      const result = this.voiceService.resume(interaction.guildId) || {};
+      if (result.cancelledPending) {
+        await this.sendReply(interaction, {
+          content: "Cancelled the quiet request — I'm still listening for the wake word.",
+          ephemeral: true });
+      } else if (result.wasQuiet) {
+        const mins = Math.max(1, Math.round((result.remainingMs || 0) / 60000));
+        await this.sendReply(interaction, { content: `Quiet mode ended (${mins} min left).`, ephemeral: true });
+      } else {
+        await this.sendReply(interaction, { content: "I wasn't in quiet mode.", ephemeral: true });
       }
       return;
     }

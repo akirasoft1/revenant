@@ -371,6 +371,7 @@ Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWa
 | `VOICE_MAX_SESSIONS` | `2` | Max concurrent voice sessions across the bot |
 | `VOICE_MAX_SESSION_SECONDS` | `600` | Hard cap on a single voice session's length (cost guard) |
 | `VOICE_SYSTEM_PROMPT` | `` | Overrides the system prompt passed to the Live session (defaults to the channel-voice personality prompt) |
+| `VOICE_CONTROL_COMMANDS_ENABLED` | `true` | Enable spoken "end conversation"/"go quiet" voice control commands (phrase backstop + `Control` events); the sidecar's own `VOICE_CONTROL_TOOLS_ENABLED` must also be `true` for the model-tool detection layer |
 
 ### Star Citizen Knowledge Configuration
 
@@ -451,6 +452,7 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 |---------|-------------|
 | `/voice join` | Bot joins your current voice channel; say the wake phrase (default `"hey jarvis"`) to talk to it |
 | `/voice leave` | Bot leaves the voice channel |
+| `/voice resume` | Ends "go quiet" mode early (say "go quiet for ten minutes" or "thanks jarvis, that's all" to trigger it in the first place) — reports how much quiet time was left, or that it wasn't in quiet mode |
 
 ### Utility
 | Command | Description |
