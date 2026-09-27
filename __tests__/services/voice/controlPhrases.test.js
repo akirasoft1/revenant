@@ -85,6 +85,63 @@ describe('matchControlPhrase — positives', () => {
     expect(matchControlPhrase('okay we are done')).toEqual({ action: 'end' });
     expect(matchControlPhrase('that is all')).toEqual({ action: 'end' });
   });
+
+  test('bare mute with no tail', () => {
+    expect(matchControlPhrase('mute')).toEqual({ action: 'quiet', seconds: null });
+  });
+
+  test('anchored quiet-verb tail: duration + politeness combinations', () => {
+    expect(matchControlPhrase('mute for an hour please')).toEqual({
+      action: 'quiet',
+      seconds: 3600,
+    });
+    expect(matchControlPhrase('shut up for ten minutes jarvis')).toEqual({
+      action: 'quiet',
+      seconds: 600,
+    });
+    expect(matchControlPhrase('stop listening for now')).toEqual({
+      action: 'quiet',
+      seconds: null,
+    });
+    expect(matchControlPhrase('ok jarvis mute for an hour please')).toEqual({
+      action: 'quiet',
+      seconds: 3600,
+    });
+  });
+
+  test('"quiet"/"quite" ASR alias', () => {
+    expect(matchControlPhrase('go quite for ten minutes')).toEqual({
+      action: 'quiet',
+      seconds: 600,
+    });
+    expect(matchControlPhrase('be quite for five minutes')).toEqual({
+      action: 'quiet',
+      seconds: 300,
+    });
+  });
+
+  test('"keep quiet" verb', () => {
+    expect(matchControlPhrase('keep quiet for 5 min')).toEqual({
+      action: 'quiet',
+      seconds: 300,
+    });
+    expect(matchControlPhrase('keep quiet')).toEqual({ action: 'quiet', seconds: null });
+  });
+
+  test('negative durations are rejected, not silently dropped to the magnitude', () => {
+    expect(matchControlPhrase('go quiet for -5 minutes')).toEqual({
+      action: 'quiet',
+      seconds: null,
+    });
+    expect(matchControlPhrase('mute for minus five minutes')).toEqual({
+      action: 'quiet',
+      seconds: null,
+    });
+    expect(matchControlPhrase('mute for negative 5 minutes')).toEqual({
+      action: 'quiet',
+      seconds: null,
+    });
+  });
 });
 
 describe('matchControlPhrase — negatives (must return null)', () => {
@@ -105,6 +162,16 @@ describe('matchControlPhrase — negatives (must return null)', () => {
     [''],
     [null],
     [undefined],
+    // Fix round 1: quiet verb with an object/preposition after it must not
+    // fire -- these are ordinary gaming-channel sentences that merely
+    // contain the verb, not a command directed at the bot.
+    ['mute the music bot'],
+    ['can you mute alex?'],
+    ['mute alex please'],
+    ['should I mute my mic'],
+    ['shut up about the cargo already lol'],
+    ['stop listening to him'],
+    ['we should stop listening to their radio'],
   ])('%p -> null', (input) => {
     expect(matchControlPhrase(input)).toBeNull();
   });
@@ -128,6 +195,9 @@ describe('parseDurationSeconds', () => {
     ['no duration mentioned here', null],
     ['', null],
     [null, null],
+    ['minus five minutes', null],
+    ['negative 5 minutes', null],
+    ['-5 minutes', null],
   ])('%s -> %p', (input, expected) => {
     expect(parseDurationSeconds(input)).toBe(expected);
   });

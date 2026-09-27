@@ -3,11 +3,23 @@
 // Spoken-command phrase matcher for the voice control feature. Pure logic: no
 // I/O, no timers, no session state. Input is a single Gemini Live INPUT
 // TRANSCRIPT of one spoken turn -- may include the wake phrase, ASR slips
-// ("stop listenin"), lowercase/odd punctuation. False positives are worse
-// than misses here (a stray match tears the whole voice session down), so
-// every pattern is deliberately narrow; the end-of-utterance anchors on
-// "that's all" / "we're done" exist specifically to reject the mid-sentence
-// case ("that's all I know about it, what do you think?").
+// ("stop listenin", "quiet"/"quite" confusion), lowercase/odd punctuation.
+// False positives are worse than misses here (a stray match silences the bot
+// for the default duration in the middle of a live conversation, or tears
+// the session down), so every pattern is deliberately narrow.
+//
+// The end-of-utterance anchors on "that's all" / "we're done" reject the
+// mid-sentence case ("that's all I know about it, what do you think?"). The
+// quiet verbs (mute/shut up/go|be quiet|quite/keep quiet/leave us|me
+// alone/stop|quit listening) get the same treatment via a tail whitelist:
+// after the verb, only a duration clause ("for N minutes", "for a while",
+// "for now"), an address/politeness tail ("please", "jarvis", "revenant",
+// "ok", "okay", "thanks"), or end-of-utterance may follow -- ANY other word
+// (an object like "alex", "my mic", "the music bot", or a preposition like
+// "to him", "about the cargo") rejects the whole match. This is what turns
+// "mute alex please" and "stop listening to him" back into `null` instead of
+// silencing the bot on a normal gaming-channel sentence that merely contains
+// the verb.
 
 const ONES = {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
@@ -30,14 +42,24 @@ const END_VERB_RE = /\b(?:end|stop|finish)\s+(?:(?:the|this)\s+)?conversation\b/
 // as the whole utterance or trailing off the end of it -- never mid-sentence.
 const END_TRAILING_RE = /\b(?:thats all|that is all|were done|we are done)$/;
 
+// "quite" is included as an ASR mishearing of "quiet" (they're acoustically
+// close and Gemini's transcript occasionally picks the wrong one).
 const QUIET_VERB_RE =
-  /\b(?:go|be)\s+quiet\b|\bshut\s+up\b|\bmute\b|\bleave\s+(?:us|me)\s+alone\b|\b(?:stop|quit)\s+listen(?:ing|in)?\b/;
+  /\b(?:go|be)\s+(?:quiet|quite)\b|\bkeep\s+quiet\b|\bshut\s+up\b|\bmute\b|\bleave\s+(?:us|me)\s+alone\b|\b(?:stop|quit)\s+listen(?:ing|in)?\b/;
 
-/** lowercase, drop apostrophes (so contractions collapse to one word), fold all other punctuation to single spaces. */
+// Allowed standalone words after a quiet verb (in any order/combination).
+const POLITENESS_TAIL_WORDS = new Set(['please', 'jarvis', 'revenant', 'ok', 'okay', 'thanks']);
+
+/** lowercase, drop apostrophes (so contractions collapse to one word), turn a
+ * hyphen glued to a digit into the word "minus" (so a negative duration like
+ * "-5 minutes" is visible to the parser instead of the sign being silently
+ * dropped by the punctuation fold below), fold all other punctuation to
+ * single spaces. */
 function normalize(text) {
   return String(text || '')
     .toLowerCase()
     .replace(/['’]/g, '')
+    .replace(/-(?=\d)/g, ' minus ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }
@@ -117,6 +139,11 @@ function parseDurationSeconds(text) {
     }
     if (qty.length === 0) continue;
 
+    // Reject negative durations outright rather than silently dropping the
+    // sign and using the magnitude ("-5 minutes" / "minus five minutes" /
+    // "negative five minutes" must NOT resolve to 5 minutes).
+    if (words[j] === 'minus' || words[j] === 'negative') continue;
+
     const value = parseQuantity(qty);
     if (value === null || value <= 0) continue;
 
@@ -126,6 +153,73 @@ function parseDurationSeconds(text) {
   }
 
   return null;
+}
+
+/**
+ * Validate the words that follow a matched quiet verb. Only these are
+ * allowed, in any combination, until end of string:
+ *   - "for now" / "for a while" (duration clause with no explicit number)
+ *   - "for <duration>" (optional "minus"/"negative" sign, then a quantity
+ *     run, then an hour/min/sec unit -- or the "half an/a hour" idiom)
+ *   - a politeness/address word (see POLITENESS_TAIL_WORDS)
+ * Anything else (an object, a name, a preposition like "to"/"about") fails
+ * the whole tail, which is what rejects "mute alex please" and "stop
+ * listening to him".
+ */
+function isValidQuietTail(words) {
+  let i = 0;
+  while (i < words.length) {
+    const w = words[i];
+
+    if (POLITENESS_TAIL_WORDS.has(w)) {
+      i++;
+      continue;
+    }
+
+    if (w === 'for') {
+      if (words[i + 1] === 'now') {
+        i += 2;
+        continue;
+      }
+      if (words[i + 1] === 'a' && words[i + 2] === 'while') {
+        i += 3;
+        continue;
+      }
+
+      let j = i + 1;
+      if (words[j] === 'minus' || words[j] === 'negative') j++;
+
+      if (words[j] === 'half' && (words[j + 1] === 'an' || words[j + 1] === 'a') && UNIT_HOUR.has(words[j + 2])) {
+        i = j + 3;
+        continue;
+      }
+
+      const qtyStart = j;
+      while (j < words.length && isQuantityToken(words[j])) j++;
+      if (j === qtyStart) return false; // "for" with no recognizable duration after it
+
+      if (j < words.length && (UNIT_HOUR.has(words[j]) || UNIT_MIN.has(words[j]) || UNIT_SEC.has(words[j]))) {
+        i = j + 1;
+        continue;
+      }
+      return false; // "for ten" with no unit, "for alex", etc.
+    }
+
+    return false; // an object/name/preposition -- the verb had a target, not a bare command
+  }
+  return true;
+}
+
+/** Find the (leftmost) quiet-verb match and validate its tail; null if no verb or an invalid tail. */
+function matchQuietPhrase(norm) {
+  const m = QUIET_VERB_RE.exec(norm);
+  if (!m) return null;
+
+  const tailText = norm.slice(m.index + m[0].length).trim();
+  const tailWords = tailText ? tailText.split(/\s+/) : [];
+  if (!isValidQuietTail(tailWords)) return null;
+
+  return { action: 'quiet', seconds: parseDurationSeconds(norm) };
 }
 
 /**
@@ -142,11 +236,7 @@ function matchControlPhrase(text) {
     return { action: 'end' };
   }
 
-  if (QUIET_VERB_RE.test(norm)) {
-    return { action: 'quiet', seconds: parseDurationSeconds(norm) };
-  }
-
-  return null;
+  return matchQuietPhrase(norm);
 }
 
 module.exports = { matchControlPhrase, parseDurationSeconds };
