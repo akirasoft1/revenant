@@ -54,6 +54,7 @@ const QdrantService = require('./services/QdrantService');
 const NickMappingService = require('./services/NickMappingService');
 const ChannelContextService = require('./services/ChannelContextService');
 const { createSpeakerNames } = require('./services/SpeakerNames');
+const { buildUserMessageDoc, recordBotReply } = require('./utils/channelMessageRecorder');
 const ImagePromptAnalyzerService = require('./services/ImagePromptAnalyzerService');
 const CatchMeUpService = require('./services/CatchMeUpService');
 const VoiceSearchService = require('./services/VoiceSearchService');
@@ -552,7 +553,13 @@ class DiscordBot {
 
   registerSlashCommands() {
     // Register chat/personality slash commands
-    this.slashCommandHandler.register(new ChatSlashCommand(this.chatService));
+    this.slashCommandHandler.register(new ChatSlashCommand(this.chatService, {
+      // /chat records both sides of its exchange into channel_messages (the
+      // only agent-history source); client.user is only set after login.
+      mongoService: this.mongoService,
+      speakerNames: this.speakerNames,
+      getBotUser: () => this.client.user,
+    }));
     this.chatThreadCommand = new ChatThreadSlashCommand(this.chatService);
     this.slashCommandHandler.register(this.chatThreadCommand);
     this.slashCommandHandler.register(new ChatResetSlashCommand(this.chatService));
@@ -741,27 +748,21 @@ class DiscordBot {
 
         // Prefer the resolved preferred name (services/SpeakerNames.js); fall
         // back to the raw Discord username when unresolved. `authorId` stays
-        // the Discord id — identity keys never change. Guarded like the
-        // voice path (VoiceService._perUser): this runs in the messageCreate
-        // handler before any .catch() chain, so an uncaught throw here would
-        // become an unhandled rejection instead of just losing a preferred name.
-        let authorName = message.author.username;
-        try {
-          const resolved = this.speakerNames && this.speakerNames.resolve(message.author, message.member);
-          if (resolved) authorName = resolved;
-        } catch (e) {
-          logger.warn(`Speaker-name resolution failed for ${message.author.id}: ${e.message}`);
-        }
-
-        this.mongoService.recordChannelMessage({
+        // the Discord id — identity keys never change. Name resolution is
+        // guarded inside buildUserMessageDoc (resolveAuthorName): this runs in
+        // the messageCreate handler before any .catch() chain, so an uncaught
+        // throw here would become an unhandled rejection instead of just
+        // losing a preferred name. The same doc builder is used by /chat
+        // (commands/slash/ChatCommand.js), which messageCreate never sees.
+        this.mongoService.recordChannelMessage(buildUserMessageDoc({
+          speakerNames: this.speakerNames,
           messageId: message.id,
           channelId: message.channel.id,
           guildId: message.guild.id,
-          authorId: message.author.id,
-          authorName,
+          user: message.author,
+          member: message.member,
           content: message.content,
-          timestamp: new Date()
-        }).catch(err => logger.debug(`Channel message recording failed: ${err.message}`));
+        })).catch(err => logger.debug(`Channel message recording failed: ${err.message}`));
       }
 
       // Passive channel context recording for semantic search (non-blocking, writes to Qdrant)
@@ -782,22 +783,7 @@ class DiscordBot {
         try {
           const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
           if (referencedMessage && referencedMessage.author.id === this.client.user.id) {
-            // Wrap reply handling in a trace
-            const handled = await withRootSpan('discord.reply', {
-              'discord.channel.id': message.channel.id,
-              'discord.user.id': message.author.id,
-              'discord.user.tag': message.author.tag,
-              'discord.message.id': message.id,
-            }, async () => {
-              return await this.replyHandler.handleReply(message, referencedMessage);
-            });
-
-            if (handled) {
-              return;
-            }
-            // ReplyHandler didn't claim this (not summarization, not imagegen).
-            // Fall through to mention-chat so the bot continues the conversation.
-            await this._handleMentionChat(message);
+            await this._handleReplyToBot(message, referencedMessage);
             return;
           }
         } catch (error) {
@@ -901,11 +887,53 @@ class DiscordBot {
   }
 
   /**
+   * Handle a Discord reply to one of the bot's own messages (including the
+   * bot's /chat interaction replies, which are ordinary bot-authored
+   * messages). ReplyHandler claims summarization/imagegen replies; anything
+   * else falls through to mention chat WITH the referenced message, so
+   * ChatService.buildTurnContext can inject it as an assistant turn when it
+   * has scrolled out of the recent-history window. Without it the reply's
+   * explicit target was silently dropped and the follow-up was answered from
+   * unrelated history.
+   * @param {import('discord.js').Message} message - The user's reply
+   * @param {import('discord.js').Message} referencedMessage - The bot message replied to
+   * @private
+   */
+  async _handleReplyToBot(message, referencedMessage) {
+    // Wrap reply handling in a trace
+    const handled = await withRootSpan('discord.reply', {
+      'discord.channel.id': message.channel.id,
+      'discord.user.id': message.author.id,
+      'discord.user.tag': message.author.tag,
+      'discord.message.id': message.id,
+    }, async () => {
+      return await this.replyHandler.handleReply(message, referencedMessage);
+    });
+
+    if (handled) {
+      return;
+    }
+    // ReplyHandler didn't claim this (not summarization, not imagegen).
+    // Fall through to mention-chat so the bot continues the conversation.
+    await this._handleMentionChat(message, {
+      referencedMessage: {
+        id: referencedMessage.id,
+        content: referencedMessage.content,
+        authorId: referencedMessage.author?.id || null,
+      },
+    });
+  }
+
+  /**
    * Handle @mention of the bot in a channel
    * Uses the 'friendly' personality for conversational interaction
    * @param {Message} message - The Discord message mentioning the bot
+   * @param {Object} [options]
+   * @param {{id: string, content: string, authorId: string|null}} [options.referencedMessage]
+   *   The bot message this one replies to (reply fall-through only); forwarded
+   *   to ChatService so it survives outside the history window.
    */
-  async _handleMentionChat(message) {
+  async _handleMentionChat(message, { referencedMessage = null } = {}) {
     const DEFAULT_PERSONALITY = personalityManager.get('channel-voice')
       ? 'channel-voice' : 'friendly';
 
@@ -937,13 +965,11 @@ class DiscordBot {
       const guildId = message.guild?.id || null;
 
       // Call ChatService with the friendly personality
-      const result = await this.chatService.chat(
-        DEFAULT_PERSONALITY,
-        userMessage,
-        message.author,
-        channelId,
-        guildId
-      );
+      // A plain mention calls chat() exactly as before; only a reply carries
+      // the referenced bot message through as options.
+      const chatArgs = [DEFAULT_PERSONALITY, userMessage, message.author, channelId, guildId];
+      if (referencedMessage) chatArgs.push(null, { referencedMessage });
+      const result = await this.chatService.chat(...chatArgs);
 
       if (!result.success) {
         if (result.availablePersonalities) {
@@ -1050,26 +1076,17 @@ class DiscordBot {
    * @private
    */
   async _recordBotReply(reply, content, channelId, guildId, executionIds = []) {
-    if (!reply || !reply.id) return;
-    if (!this.mongoService) return;
-    try {
-      const doc = {
-        messageId: reply.id,
-        channelId: channelId || null,
-        guildId: guildId || null,
-        authorId: this.client.user?.id || null,
-        authorName: this.client.user?.username || 'bot',
-        content,
-        isBot: true,
-        timestamp: new Date(),
-      };
-      if (executionIds && executionIds.length > 0) {
-        doc.executionIds = executionIds;
-      }
-      await this.mongoService.recordChannelMessage(doc);
-    } catch (e) {
-      logger.warn(`Failed to record bot reply ${reply.id}: ${e.message}`);
-    }
+    // Shared with /chat (utils/channelMessageRecorder.js) so both entry points
+    // write the same assistant-turn doc shape.
+    await recordBotReply({
+      mongoService: this.mongoService,
+      botUser: this.client.user,
+      reply,
+      content,
+      channelId,
+      guildId,
+      executionIds,
+    });
   }
 
   /**
