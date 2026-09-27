@@ -19,7 +19,9 @@
 // "to him", "about the cargo") rejects the whole match. This is what turns
 // "mute alex please" and "stop listening to him" back into `null` instead of
 // silencing the bot on a normal gaming-channel sentence that merely contains
-// the verb.
+// the verb. Every command is ALSO anchored at the front: only a short lead-in
+// (wake phrase/name, please, thanks, can/could/would you, alright, ok so) may
+// precede it -- see LEAD_IN_UNITS.
 
 const ONES = {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
@@ -34,21 +36,55 @@ const UNIT_HOUR = new Set(['hour', 'hours']);
 const UNIT_MIN = new Set(['min', 'mins', 'minute', 'minutes']);
 const UNIT_SEC = new Set(['sec', 'secs', 'second', 'seconds']);
 
+// LEADING ANCHOR (final review I1). Every command must START the utterance,
+// preceded by at most a short lead-in made only of these units: the wake
+// phrase / bot name (hey|hi|ok|okay + jarvis|revenant, or another built-in
+// openWakeWord phrase), "please", "thanks"/"thank you", "can/could/would/will
+// you", "alright"/"all right", "ok so". Without it, any sentence that merely
+// CONTAINS a command verb fired: "how do I mute", "why won't my dog be quiet",
+// "tell him to shut up", "should I go quiet", "don't end the conversation
+// yet", "let me know when we're done". Negation is rejected structurally: a
+// "don't"/"do not"/"never"/"not" can only precede the verb by being a lead-in
+// word, and none of them is one.
+const LEAD_IN_UNITS = [
+  'hey', 'hi', 'ok', 'okay', 'alright', 'all right', 'so', 'please',
+  'thanks', 'thank you',
+  'can you', 'could you', 'would you', 'will you',
+  'jarvis', 'revenant', 'alexa', 'mycroft', 'rhasspy',
+];
+const LEAD_IN = `(?:(?:${LEAD_IN_UNITS.join('|')})\\s+){0,6}`;
+
 // end/stop/finish (the/this) conversation -- "of the conversation" (no verb
 // directly adjacent) must NOT match, which is why the optional article sits
 // directly between the verb and "conversation" with no other filler allowed.
-const END_VERB_RE = /\b(?:end|stop|finish)\s+(?:(?:the|this)\s+)?conversation\b/;
+// Group 1 is the tail, validated against CLOSING_TAIL_WORDS.
+const END_VERB_RE = new RegExp(`^${LEAD_IN}(?:end|stop|finish)\\s+(?:(?:the|this)\\s+)?conversation(?:\\s+(.*))?$`);
 // "that's all" / "we're done" (and their uncontracted spellings) only count
-// as the whole utterance or trailing off the end of it -- never mid-sentence.
-const END_TRAILING_RE = /\b(?:thats all|that is all|were done|we are done)$/;
+// as a closing STATEMENT: lead-in, the phrase, then only an address/closing
+// tail to the end of the utterance. Never mid-sentence ("that's all I know"),
+// never after a subordinating lead ("let me know when we're done", "until",
+// "is", "and"), and never as a question ("and that's all?" -- checked on the
+// raw text, since normalize() drops the "?").
+const END_TRAILING_RE = new RegExp(`^${LEAD_IN}(?:thats all|that is all|were done|we are done)(?:\\s+(.*))?$`);
 
 // "quite" is included as an ASR mishearing of "quiet" (they're acoustically
-// close and Gemini's transcript occasionally picks the wrong one).
-const QUIET_VERB_RE =
-  /\b(?:go|be)\s+(?:quiet|quite)\b|\bkeep\s+quiet\b|\bshut\s+up\b|\bmute\b|\bleave\s+(?:us|me)\s+alone\b|\b(?:stop|quit)\s+listen(?:ing|in)?\b/;
+// close and Gemini's transcript occasionally picks the wrong one). Group 1 is
+// the tail, validated by isValidQuietTail.
+const QUIET_VERB_RE = new RegExp(
+  `^${LEAD_IN}(?:(?:go|be)\\s+(?:quiet|quite)|keep\\s+quiet|shut\\s+up|mute|leave\\s+(?:us|me)\\s+alone|(?:stop|quit)\\s+listen(?:ing|in)?)(?:\\s+(.*))?$`);
 
 // Allowed standalone words after a quiet verb (in any order/combination).
 const POLITENESS_TAIL_WORDS = new Set(['please', 'jarvis', 'revenant', 'ok', 'okay', 'thanks']);
+// Allowed words after an end command: politeness/address plus a sign-off.
+const CLOSING_TAIL_WORDS = new Set([
+  ...POLITENESS_TAIL_WORDS, 'thank', 'you', 'now', 'here', 'for', 'today', 'then',
+  'bye', 'goodbye', 'good', 'night', 'alexa', 'mycroft', 'rhasspy',
+]);
+
+function isValidClosingTail(tail) {
+  if (!tail) return true;
+  return tail.split(/\s+/).every((w) => CLOSING_TAIL_WORDS.has(w));
+}
 
 /** lowercase, drop apostrophes (so contractions collapse to one word), turn a
  * hyphen glued to a digit into the word "minus" (so a negative duration like
@@ -210,12 +246,12 @@ function isValidQuietTail(words) {
   return true;
 }
 
-/** Find the (leftmost) quiet-verb match and validate its tail; null if no verb or an invalid tail. */
+/** Match a lead-in-anchored quiet verb and validate its tail; null if no verb or an invalid tail. */
 function matchQuietPhrase(norm) {
   const m = QUIET_VERB_RE.exec(norm);
   if (!m) return null;
 
-  const tailText = norm.slice(m.index + m[0].length).trim();
+  const tailText = (m[1] || '').trim();
   const tailWords = tailText ? tailText.split(/\s+/) : [];
   if (!isValidQuietTail(tailWords)) return null;
 
@@ -232,9 +268,13 @@ function matchControlPhrase(text) {
   const norm = normalize(text);
   if (!norm) return null;
 
-  if (END_VERB_RE.test(norm) || END_TRAILING_RE.test(norm)) {
-    return { action: 'end' };
-  }
+  const endVerb = END_VERB_RE.exec(norm);
+  if (endVerb && isValidClosingTail(endVerb[1])) return { action: 'end' };
+
+  // A question ("and that's all?", "that's all?") is not a dismissal.
+  const isQuestion = /\?\s*$/.test(String(text));
+  const endTrailing = END_TRAILING_RE.exec(norm);
+  if (endTrailing && !isQuestion && isValidClosingTail(endTrailing[1])) return { action: 'end' };
 
   return matchQuietPhrase(norm);
 }

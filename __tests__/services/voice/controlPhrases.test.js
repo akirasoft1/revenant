@@ -177,6 +177,58 @@ describe('matchControlPhrase — negatives (must return null)', () => {
   });
 });
 
+describe('matchControlPhrase — leading-context anchor (final review I1)', () => {
+  // The command must START the utterance, after at most a short lead-in
+  // (wake phrase/name, please, thanks, can/could/would you, alright, ok so).
+  // Ordinary speech that merely contains a command verb must not fire.
+  test.each([
+    // quiet verbs inside ordinary sentences
+    ['how do I mute'],
+    ['why wont my dog be quiet'],
+    ["why won't my dog be quiet?"],
+    ['tell him to shut up'],
+    ['should I go quiet'],
+    ['the kids need to be quiet'],
+    // end verb negated / embedded
+    ['dont end the conversation yet'],
+    ["don't end the conversation yet"],
+    ['I do not want to end this conversation, tell me more'],
+    ['please never end the conversation'],
+    ['not end the conversation'],
+    // "that's all" / "we're done" not as a closing statement
+    ['let me know when were done'],
+    ["let me know when we're done"],
+    ["and that's all?"],
+    ['and thats all?'],
+    ["that's all?"],
+    ["is that all"],
+    ["until we're done"],
+    ["when we're done"],
+    ["is we're done"],
+    // an end verb followed by something other than an address/closing tail
+    ['end the conversation about shields'],
+  ])('%p -> null', (input) => {
+    expect(matchControlPhrase(input)).toBeNull();
+  });
+
+  test.each([
+    ['hey jarvis, go quiet for ten minutes', { action: 'quiet', seconds: 600 }],
+    ['could you mute for an hour please', { action: 'quiet', seconds: 3600 }],
+    ["thanks jarvis, that's all", { action: 'end' }],
+    ['ok jarvis end the conversation', { action: 'end' }],
+    ["that's all, thanks jarvis", { action: 'end' }],
+    ['thank you jarvis, we are done', { action: 'end' }],
+    ['alright, stop listening for five minutes', { action: 'quiet', seconds: 300 }],
+    ['ok so go quiet', { action: 'quiet', seconds: null }],
+    ['can you go quiet for a while', { action: 'quiet', seconds: null }],
+    ['would you please end the conversation', { action: 'end' }],
+    ['please end the conversation now', { action: 'end' }],
+    ['end the conversation, bye', { action: 'end' }],
+  ])('%p', (input, expected) => {
+    expect(matchControlPhrase(input)).toEqual(expected);
+  });
+});
+
 describe('parseDurationSeconds', () => {
   test.each([
     ['ten minutes', 600],
