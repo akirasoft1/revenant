@@ -2726,12 +2726,49 @@ describe('voice control commands', () => {
       expect(infoLines().some((l) => l.includes('ended by voice command (phrase)'))).toBe(true);
     });
 
-    test('evaluated at turnComplete when the reply carried no audio/transcript first', async () => {
+    test('evaluated at turnComplete when the reply carried no audio/transcript first -- but that turnComplete does not count as its reply', async () => {
       const h = await buildControl();
       say(h, ' end the conversation');
       h.session.emit('turnComplete');
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase', replyCompleted: false }));
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // NOT torn down on the same turnComplete
+      reply(h); // the next reply turn (e.g. the confirmation)
       h.svc._tick('g1');
       expect(h.g.session).toBeNull();
+    });
+
+    test('a phrase request created at turnComplete still tears down at the ceiling', async () => {
+      // Deployed follow-up window is 60s; the harness default (1s) would idle the
+      // session out long before the 10s ceiling and mask what is under test.
+      const h = await buildControl({ followupWindowMs: 60000 });
+      say(h, ' end the conversation');
+      h.session.emit('turnComplete');
+      h.setNow(h.now() + CEILING_MS - 1);
+      h.svc._tick('g1');
+      expect(h.g.pendingControl).not.toBeNull();
+      h.setNow(h.now() + 1);
+      h.svc._tick('g1');
+      expect(h.g.pendingControl).toBeNull();
+      expect(infoLines().some((l) => l.includes('ended by voice command (phrase)'))).toBe(true);
+    });
+
+    test('tool + phrase on one utterance, turnComplete BEFORE the confirmation audio: waits for the confirmation turnComplete + drain', async () => {
+      const h = await buildControl();
+      say(h, ' go quiet for ten minutes');
+      h.session.emit('turnComplete'); // tool-call-only model turn: phrase matched here
+      h.session.emit('control', { action: 'quiet', seconds: 600 }); // Control arrives after
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.session.emit('audio', Buffer.alloc(480)); // the spoken confirmation
+      h.player.state = { status: 'playing' };
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // still being heard
+      h.player.state = { status: 'idle' };
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
     });
 
     test.each([
