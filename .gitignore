@@ -53,3 +53,6 @@ Recording.m4a
 
 # Generated TTS fixtures for the multi-stream floor harness (scripts/gen-test-voices.js)
 voice-fixtures/
+
+# Org-curated Star Citizen guides: private, never commit (repo is public)
+OrgGuides/

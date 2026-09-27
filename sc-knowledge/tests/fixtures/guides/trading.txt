@@ -1,0 +1,14 @@
+Trading Post Operations Manual
+Data verified on LIVE Build: Alpha 4.10.1
+
+1. Terminal Basics
+Every commodity terminal enforces local supply and demand curves independently. When a terminal shows insufficient buy capacity, the terminal has hit demand saturation for that commodity and will refuse further sell orders until its inventory refresh ticks restore headroom.
+
+DEMAND SATURATION MECHANICS
+Demand saturation occurs when cumulative sell volume at a single terminal exceeds its rolling capacity window. Selling in smaller batches across multiple inventory refresh ticks avoids triggering a hard refusal. Prices depress sharply once saturation begins.
+
+2. Route Planning
+Compare two terminals separated by several jumps and check the cluster multiplier applied to bulk hauling missions before committing cargo space. A low cluster multiplier rarely offsets fuel and time cost.
+
+3. Inventory Refresh Timing
+Inventory refresh ticks run on a fixed real-time interval per terminal. Waiting one additional tick before re-selling is usually enough to clear a demand saturation flag.

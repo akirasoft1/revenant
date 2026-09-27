@@ -1,0 +1,616 @@
+{
+ "data": [
+  {
+   "uuid": "4e429470-4d4e-4c2b-a4ac-4de42ada16e0",
+   "name": "Aciedo Communications",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/4e429470-4d4e-4c2b-a4ac-4de42ada16e0"
+  },
+  {
+   "uuid": "569f1e53-a971-462b-abe3-969a8e096ff5",
+   "name": "Adagio Holdings",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/569f1e53-a971-462b-abe3-969a8e096ff5"
+  },
+  {
+   "uuid": "f97f4726-6cdf-426e-b16c-4daf67e78faa",
+   "name": "Alliance Aid",
+   "faction_type": "Lawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/f97f4726-6cdf-426e-b16c-4daf67e78faa"
+  },
+  {
+   "uuid": "d27efa13-7f10-4b3e-87aa-43759d9301da",
+   "name": "ArcCorp",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/d27efa13-7f10-4b3e-87aa-43759d9301da"
+  },
+  {
+   "uuid": "c1abb5fa-54a5-47a1-b69b-b951254a9a66",
+   "name": "ASD",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/c1abb5fa-54a5-47a1-b69b-b951254a9a66"
+  },
+  {
+   "uuid": "5fb3c365-cf83-48d0-89a8-1cc539113b35",
+   "name": "Bit Zeros",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/5fb3c365-cf83-48d0-89a8-1cc539113b35"
+  },
+  {
+   "uuid": "01bcfe41-40d7-48a6-bab2-eac7d902e9b2",
+   "name": "BlacJac",
+   "faction_type": "PrivateSecurity",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/01bcfe41-40d7-48a6-bab2-eac7d902e9b2"
+  },
+  {
+   "uuid": "29e65591-d776-49a4-9a98-eb1fd7c51fcc",
+   "name": "Bounty Hunters Guild",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/29e65591-d776-49a4-9a98-eb1fd7c51fcc"
+  },
+  {
+   "uuid": "cd2b32d1-0362-41fb-8cfd-d29781daf789",
+   "name": "Citizens For Prosperity",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/cd2b32d1-0362-41fb-8cfd-d29781daf789"
+  },
+  {
+   "uuid": "dfb4d61e-65c1-4185-a204-e9583052d503",
+   "name": "Civilian",
+   "faction_type": "Lawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/dfb4d61e-65c1-4185-a204-e9583052d503"
+  },
+  {
+   "uuid": "52883600-6021-4407-8130-febb7dd42c63",
+   "name": "Civilian",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/52883600-6021-4407-8130-febb7dd42c63"
+  },
+  {
+   "uuid": "c618bb17-61cb-462c-8b51-8d4dfcb527de",
+   "name": "Civilian Defense Force",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/c618bb17-61cb-462c-8b51-8d4dfcb527de"
+  },
+  {
+   "uuid": "82ecc51d-7df1-41ba-b678-aab3b8fdfad0",
+   "name": "Clovus Darneely",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/82ecc51d-7df1-41ba-b678-aab3b8fdfad0"
+  },
+  {
+   "uuid": "2640e0b2-54f3-4c29-9d5d-6f8f4fc49dbe",
+   "name": "Covalex",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/2640e0b2-54f3-4c29-9d5d-6f8f4fc49dbe"
+  },
+  {
+   "uuid": "b89d388c-622c-4c8b-8887-46681eb193c1",
+   "name": "Crusader Industries",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/b89d388c-622c-4c8b-8887-46681eb193c1"
+  },
+  {
+   "uuid": "6e3b98f1-4eb2-4128-958f-c550e418c5a6",
+   "name": "Crusader Security",
+   "faction_type": "PrivateSecurity",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/6e3b98f1-4eb2-4128-958f-c550e418c5a6"
+  },
+  {
+   "uuid": "2da0657d-62dc-4f6c-8b25-fd88480d0834",
+   "name": "Dead Saints",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/2da0657d-62dc-4f6c-8b25-fd88480d0834"
+  },
+  {
+   "uuid": "8f791865-9252-41d6-afd1-31783fd22674",
+   "name": "Dusters",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/8f791865-9252-41d6-afd1-31783fd22674"
+  },
+  {
+   "uuid": "705c3888-7126-48d7-8a7e-e1f5c76e0c3c",
+   "name": "Eckhart Security",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/705c3888-7126-48d7-8a7e-e1f5c76e0c3c"
+  },
+  {
+   "uuid": "e2382ebf-f6cf-4603-b32d-e110b873c9bb",
+   "name": "Fire Rats",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/e2382ebf-f6cf-4603-b32d-e110b873c9bb"
+  },
+  {
+   "uuid": "21c61135-e8ee-459c-8f61-4550b8c02c58",
+   "name": "Foxwell Enforcement",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/21c61135-e8ee-459c-8f61-4550b8c02c58"
+  },
+  {
+   "uuid": "6468bbc3-d76c-4af5-a8df-57048aed7c8b",
+   "name": "Frontier Fighters",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/6468bbc3-d76c-4af5-a8df-57048aed7c8b"
+  },
+  {
+   "uuid": "66179ed2-c685-4df1-a3a4-e2a7a2da2df0",
+   "name": "FTL Courier",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/66179ed2-c685-4df1-a3a4-e2a7a2da2df0"
+  },
+  {
+   "uuid": "9f89edc0-441b-4f40-a502-df12ebf3f1eb",
+   "name": "Headhunters",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/9f89edc0-441b-4f40-a502-df12ebf3f1eb"
+  },
+  {
+   "uuid": "4cd28d63-24ba-4180-a881-86036c29cd64",
+   "name": "Highpoint Wilderness Specialists",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/4cd28d63-24ba-4180-a881-86036c29cd64"
+  },
+  {
+   "uuid": "88bac9c7-0986-4945-8b72-c83657a1c8b9",
+   "name": "Hockrow Agency",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/88bac9c7-0986-4945-8b72-c83657a1c8b9"
+  },
+  {
+   "uuid": "53c09a46-8238-4cf8-8a20-c4abd54c0b7b",
+   "name": "Horizon",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/53c09a46-8238-4cf8-8a20-c4abd54c0b7b"
+  },
+  {
+   "uuid": "ab3bd2c5-60c2-4763-8589-0b0a318cf9b8",
+   "name": "Hurston Dynamics",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/ab3bd2c5-60c2-4763-8589-0b0a318cf9b8"
+  },
+  {
+   "uuid": "d6810f9d-7d39-414f-b2e6-3a641add15cb",
+   "name": "Hurston Security",
+   "faction_type": "PrivateSecurity",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/d6810f9d-7d39-414f-b2e6-3a641add15cb"
+  },
+  {
+   "uuid": "a9ab3e4f-30a3-4816-a1dd-4df51fd6678c",
+   "name": "InterSec Defense Solutions",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/a9ab3e4f-30a3-4816-a1dd-4df51fd6678c"
+  },
+  {
+   "uuid": "cfe06ba5-968d-4e27-b738-7cc7abfb511f",
+   "name": "Klescher Rehabilitation Facilities",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/cfe06ba5-968d-4e27-b738-7cc7abfb511f"
+  },
+  {
+   "uuid": "d67aa7d9-9948-4903-b162-e71869cae4e8",
+   "name": "Klescher Rehabilitation Facilities",
+   "faction_type": "LawEnforcement",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/d67aa7d9-9948-4903-b162-e71869cae4e8"
+  },
+  {
+   "uuid": "5a27ef3a-55c4-4822-b3f1-6506097d21de",
+   "name": "Ling Family Hauling",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/5a27ef3a-55c4-4822-b3f1-6506097d21de"
+  },
+  {
+   "uuid": "a04f2ed1-9e2b-4a31-abd3-a963e09e021f",
+   "name": "microTech",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/a04f2ed1-9e2b-4a31-abd3-a963e09e021f"
+  },
+  {
+   "uuid": "125b83e1-1114-44b7-9176-ce78bd0fdbeb",
+   "name": "Moraine",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/125b83e1-1114-44b7-9176-ce78bd0fdbeb"
+  },
+  {
+   "uuid": "9e304047-923c-4c8a-968b-20a40136bf8f",
+   "name": "MT Protection Services",
+   "faction_type": "PrivateSecurity",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/9e304047-923c-4c8a-968b-20a40136bf8f"
+  },
+  {
+   "uuid": "3ea7569e-c92f-4874-8ffa-12f0338e58b7",
+   "name": "Nine Tails",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/3ea7569e-c92f-4874-8ffa-12f0338e58b7"
+  },
+  {
+   "uuid": "d84f1767-e406-448a-a413-9a526350c83f",
+   "name": "Northrock Service Group",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/d84f1767-e406-448a-a413-9a526350c83f"
+  },
+  {
+   "uuid": "dd2db9b4-a41a-4aa0-bb6b-6c75c0c078b1",
+   "name": "Outlaws",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/dd2db9b4-a41a-4aa0-bb6b-6c75c0c078b1"
+  },
+  {
+   "uuid": "5d0bf1c9-55be-458b-af62-13b5b420f9cf",
+   "name": "[PH] Hostile",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/5d0bf1c9-55be-458b-af62-13b5b420f9cf"
+  },
+  {
+   "uuid": "3afb087d-5e66-4f3f-996d-521bf48f6e1b",
+   "name": "<= PLACEHOLDER =>",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/3afb087d-5e66-4f3f-996d-521bf48f6e1b"
+  },
+  {
+   "uuid": "df6de824-9f7b-44d5-a98b-d6a099970b5f",
+   "name": "Rayari Incorporated",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/df6de824-9f7b-44d5-a98b-d6a099970b5f"
+  },
+  {
+   "uuid": "f4cc3bfe-ee9d-41d1-818b-fdb55c979d09",
+   "name": "Recco Battaglia",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/f4cc3bfe-ee9d-41d1-818b-fdb55c979d09"
+  },
+  {
+   "uuid": "aa5f0bf8-f36f-423a-b9dd-73084139db23",
+   "name": "Red Wind Linehaul",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/aa5f0bf8-f36f-423a-b9dd-73084139db23"
+  },
+  {
+   "uuid": "3c9a42a9-a986-494f-b724-4d74415f6016",
+   "name": "Rough & Ready",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/3c9a42a9-a986-494f-b724-4d74415f6016"
+  },
+  {
+   "uuid": "d7e05124-92df-4929-804a-d7a1b0fbfd93",
+   "name": "Ruto",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/d7e05124-92df-4929-804a-d7a1b0fbfd93"
+  },
+  {
+   "uuid": "5e2005cb-eee8-4ca7-b1e6-79415eab6684",
+   "name": "Security",
+   "faction_type": "PrivateSecurity",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/5e2005cb-eee8-4ca7-b1e6-79415eab6684"
+  },
+  {
+   "uuid": "b3cd03ce-33ae-4965-a12e-9dd44fd89110",
+   "name": "Security",
+   "faction_type": "PrivateSecurity",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/b3cd03ce-33ae-4965-a12e-9dd44fd89110"
+  },
+  {
+   "uuid": "4dece609-0140-4a7b-8ea2-1c645e36ac3f",
+   "name": "Security",
+   "faction_type": "Lawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/4dece609-0140-4a7b-8ea2-1c645e36ac3f"
+  },
+  {
+   "uuid": "c6e4d5da-9004-45db-a90f-d0fd1f3ddb45",
+   "name": "Shattered Blade",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/c6e4d5da-9004-45db-a90f-d0fd1f3ddb45"
+  },
+  {
+   "uuid": "04b1380a-c598-4e3d-8ebf-debde07cfe3d",
+   "name": "Shubin Interstellar",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/04b1380a-c598-4e3d-8ebf-debde07cfe3d"
+  },
+  {
+   "uuid": "d1a42653-8c65-4d6b-9617-4049ca77d8d8",
+   "name": "Tar Pits",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/d1a42653-8c65-4d6b-9617-4049ca77d8d8"
+  },
+  {
+   "uuid": "7e716658-9c65-4ebe-819e-8fffd8390e6a",
+   "name": "Tecia \"Twitch\" Pacheco",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/7e716658-9c65-4ebe-819e-8fffd8390e6a"
+  },
+  {
+   "uuid": "a676b2d5-0e88-4b0a-bce5-948367830b9e",
+   "name": "UEE Advocacy",
+   "faction_type": "LawEnforcement",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/a676b2d5-0e88-4b0a-bce5-948367830b9e"
+  },
+  {
+   "uuid": "b2ee3a3c-5ca1-4179-b709-3ad9d2fb5fcd",
+   "name": "UEE Navy",
+   "faction_type": "LawEnforcement",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/b2ee3a3c-5ca1-4179-b709-3ad9d2fb5fcd"
+  },
+  {
+   "uuid": "7b2fbef9-bf19-4308-ab07-3cbf4fbc4d97",
+   "name": "Unified Distribution Management",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/7b2fbef9-bf19-4308-ab07-3cbf4fbc4d97"
+  },
+  {
+   "uuid": "8458379d-9b70-493e-9477-817bf87d56d9",
+   "name": "United Wayfarers Club",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/8458379d-9b70-493e-9477-817bf87d56d9"
+  },
+  {
+   "uuid": "1b2bc98f-092d-4c6e-85a3-0b159ba8e57b",
+   "name": "Vanduul",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/1b2bc98f-092d-4c6e-85a3-0b159ba8e57b"
+  },
+  {
+   "uuid": "95761a82-18f9-4e25-ba33-d4c47c689324",
+   "name": "Vaughn",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/95761a82-18f9-4e25-ba33-d4c47c689324"
+  },
+  {
+   "uuid": "c088786f-db63-4598-9c1b-a71ff4831f79",
+   "name": "Wallace Klim",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/c088786f-db63-4598-9c1b-a71ff4831f79"
+  },
+  {
+   "uuid": "5f442fdd-15cc-4f62-bd10-fce2023f4d0c",
+   "name": "Wikelo Emporium",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/5f442fdd-15cc-4f62-bd10-fce2023f4d0c"
+  },
+  {
+   "uuid": "35b0d342-8d8a-4b0e-adda-fc85cae49afd",
+   "name": "Wildstar Racing",
+   "faction_type": "Lawful",
+   "lawful": true,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/35b0d342-8d8a-4b0e-adda-fc85cae49afd"
+  },
+  {
+   "uuid": "14789370-bf3a-42b9-ac55-a49ee406e1f1",
+   "name": "XenoThreat",
+   "faction_type": "Unlawful",
+   "lawful": null,
+   "is_npc": false,
+   "has_reputation": false,
+   "link": "https://api.star-citizen.wiki/api/factions/14789370-bf3a-42b9-ac55-a49ee406e1f1"
+  },
+  {
+   "uuid": "919a672b-eb70-40a7-94ea-8c75f3ff67fc",
+   "name": "XenoThreat",
+   "faction_type": "Unlawful",
+   "lawful": false,
+   "is_npc": false,
+   "has_reputation": true,
+   "link": "https://api.star-citizen.wiki/api/factions/919a672b-eb70-40a7-94ea-8c75f3ff67fc"
+  }
+ ],
+ "links": {
+  "first": "https://api.star-citizen.wiki/api/factions?page%5Bsize%5D=200&page%5Bnumber%5D=1",
+  "last": "https://api.star-citizen.wiki/api/factions?page%5Bsize%5D=200&page%5Bnumber%5D=1",
+  "prev": null,
+  "next": null
+ },
+ "meta": {
+  "current_page": 1,
+  "from": 1,
+  "last_page": 1,
+  "links": [
+   {
+    "url": null,
+    "label": "&laquo; Previous",
+    "page": null,
+    "active": false
+   },
+   {
+    "url": "https://api.star-citizen.wiki/api/factions?page%5Bsize%5D=200&page%5Bnumber%5D=1",
+    "label": "1",
+    "page": 1,
+    "active": true
+   },
+   {
+    "url": null,
+    "label": "Next &raquo;",
+    "page": null,
+    "active": false
+   }
+  ],
+  "path": "https://api.star-citizen.wiki/api/factions",
+  "per_page": 200,
+  "to": 64,
+  "total": 64,
+  "valid_relations": []
+ }
+}

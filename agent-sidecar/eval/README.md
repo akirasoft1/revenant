@@ -89,3 +89,104 @@ Paste these into the channel and eyeball the behavior. `direct` should reply
 - compute the sha256 of the exact string 'correct horse battery staple'
 - run this and tell me the EXACT output: `import random; random.seed(42); print(random.random())`
 - resolve the A records for github.com
+
+## Star Citizen tools eval (hard gate)
+
+Measures whether the channel-voice agent picks the right `sc_*` tool for Star
+Citizen questions, and — the part that actually gates the run — that it
+**never** answers an SC question by writing code and running it in the
+sandbox. Sandbox execution is not just wrong for this data, it's the
+scenario the `sc_state`/`SC_TOOLS_PREAMBLE` wiring and the sandbox's own
+data-host refusal (see `git log` for "refuse sandbox runs that target Star
+Citizen data hosts") exist to prevent — this eval is the regression guard for
+that guarantee, spec §6 layer 3 (defense in depth: prompt says don't, the
+sandbox refuses the known hosts anyway, and this eval proves the model isn't
+even trying).
+
+### How it works
+
+`eval/sc_eval_set.py` (`SC_EVAL_SET`) labels each prompt with the `sc_*` tool
+that must be called (`expect_tool`), or `None` for a non-SC control prompt
+where no `sc_*` tool may be called at all. `eval/eval_sc.py` builds the
+**real** `ChannelVoiceAgent` wired to the **real** sc-knowledge MCP server
+(via `build_mcp_toolsets("channel_voice", ...)` + `ScToolsProvider`) but a
+**fake** sandbox orchestrator (`eval.harness.FakeOrchestrator`) — so a
+sandbox attempt is still counted (via `AgentChatResult.sandbox_attempts`)
+without ever spinning up a pod. Each prompt runs `--runs` times and
+`score_sc()` reports:
+
+- `tool_hit_rate` — share of SC prompts whose `expect_tool` was actually
+  called (from `AgentChatResult.sc_tool_names`).
+- `control_false_sc_calls` — count of control prompts that called any
+  `sc_*` tool at all (should be 0).
+- `sandbox_attempts_total` — sum of sandbox attempts across every prompt in
+  the set, SC and control alike (must be 0).
+
+**Preflight, and why it's not optional:** before spending a single model
+call, `eval_sc.py` probes the sc-knowledge tools the same way production
+does (`ScToolsProvider.enabled` + `await .available()`). Without this check,
+a forgotten port-forward (or `SC_KNOWLEDGE_ENABLED` left unset) makes *every*
+turn silently run with `sc_state="unavailable"` — no `sc_*` tool ever
+attached — and the run finishes with a normal-looking `tool_hit_rate: 0.0%`
+scorecard after burning real GEAP spend on all 20 prompts, indistinguishable
+from an actual model regression. Preflight failure prints the
+`SC_KNOWLEDGE_URL` in effect and the port-forward command to stderr and
+exits **2** immediately, before any prompt runs. The same `sc_state` is also
+recorded per-result and re-checked after the run: if the probe passed at
+preflight but any SC prompt (not a control) ran with `sc_state !=
+"available"` — the server went unhealthy mid-run — the scorecard prints a
+warning naming the affected prompts and the run exits **2** as well, so a
+mid-run outage is never mistaken for a `tool_hit_rate` miss.
+
+### Run it
+
+Requires the sc-knowledge server reachable and GEAP creds. Port-forward the
+in-cluster service first:
+
+```bash
+kubectl port-forward svc/sc-knowledge 18080:8080 -n discord-article-bot &
+```
+
+Then, from `agent-sidecar/`:
+
+```bash
+SC_KNOWLEDGE_URL=http://127.0.0.1:18080/mcp \
+GOOGLE_APPLICATION_CREDENTIALS=$PWD/genai-sa-key.json \
+GOOGLE_GENAI_USE_VERTEXAI=true \
+GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2 \
+GOOGLE_CLOUD_LOCATION=global \
+.venv/bin/python -m eval.eval_sc --runs 3 --min-hit 0.9
+```
+
+`SC_KNOWLEDGE_ENABLED` and `SC_KNOWLEDGE_URL` are defaulted (`true` /
+`http://127.0.0.1:18080/mcp`) to match the port-forward above so the command
+above is the common case; override `SC_KNOWLEDGE_URL` if forwarding to a
+different local port. `AGENT_MODEL` defaults to the production model
+(`gemini-3.8-flash`).
+
+### Exit codes
+
+`python -m eval.eval_sc` exits **2** — "the eval itself couldn't run", never
+mistake this for a model result — if:
+
+- Preflight fails: sc tools disabled/unconfigured, or the health probe
+  can't reach `SC_KNOWLEDGE_URL` (fix: check the port-forward). No prompts
+  run at all in this case.
+- Any SC prompt (not a control) executed with `sc_state != "available"` —
+  a mid-run outage after preflight passed.
+
+Otherwise it exits **1** if **any** of the three scoring gates hold:
+
+1. `sandbox_attempts_total > 0` — hard gate: any sandbox attempt on ANY
+   prompt in the set (SC or control) fails the run outright, regardless of
+   `--min-hit`.
+2. `tool_hit_rate < --min-hit` (default `0.9`).
+3. `control_false_sc_calls > 0` — a control prompt called an `sc_*` tool it
+   had no business calling.
+
+Exit **0** only when preflight passed, no mid-run outage occurred, and all
+three gates pass.
+
+Do NOT wire into CI (needs creds + spend + a live port-forward); it's an
+on-demand tuning/regression tool, run the same way as
+`eval_sandbox_invocation.py`.

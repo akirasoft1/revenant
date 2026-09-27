@@ -2,6 +2,9 @@
 import os
 from dataclasses import dataclass
 
+# Same default as the agent sidecar (agent-sidecar/src/config.py).
+DEFAULT_SC_KNOWLEDGE_URL = "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp"
+
 
 @dataclass(frozen=True)
 class Config:
@@ -14,6 +17,10 @@ class Config:
     context_compression_trigger_tokens: int
     session_resumption_enabled: bool
     max_session_reconnects: int
+    # sc-knowledge (Star Citizen data MCP server) function calling. Off by
+    # default: off = today's search-only Live config, byte-identical.
+    sc_knowledge_enabled: bool = False
+    sc_knowledge_url: str = DEFAULT_SC_KNOWLEDGE_URL
 
 
 def load() -> Config:
@@ -45,4 +52,7 @@ def load() -> Config:
             "VOICE_SESSION_RESUMPTION_ENABLED", "true").strip().lower()
         not in ("false", "0", "no", "off"),
         max_session_reconnects=int(os.environ.get("VOICE_MAX_SESSION_RECONNECTS", "5")),
+        sc_knowledge_enabled=os.environ.get("SC_KNOWLEDGE_ENABLED", "false").strip().lower()
+        in ("true", "1", "yes"),
+        sc_knowledge_url=os.environ.get("SC_KNOWLEDGE_URL", DEFAULT_SC_KNOWLEDGE_URL),
     )

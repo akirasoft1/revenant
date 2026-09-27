@@ -1,0 +1,94 @@
+# Image tags are pinned to the git short-SHA at deploy time, never `:latest`.
+# This is a tracked placeholder: the coordinator's deployed overlay
+# (k8s/overlays/deployed/, gitignored) carries the real image tag and secrets.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sc-knowledge
+  namespace: discord-article-bot
+  labels:
+    app: sc-knowledge
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: sc-knowledge
+  template:
+    metadata:
+      labels:
+        app: sc-knowledge
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: sc-knowledge
+          image: mvilliger/sc-knowledge:REPLACE_WITH_SHA
+          imagePullPolicy: IfNotPresent
+          # allowPrivilegeEscalation / readOnlyRootFilesystem / capabilities
+          # are container-level-only fields (PodSecurityContext has no such
+          # fields) -- they belong here, not on spec.template.spec.securityContext.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SC_KNOWLEDGE_VERSION
+              value: "REPLACE_WITH_SHA"
+            - name: OTEL_SERVICE_NAME
+              value: "sc-knowledge"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://telemetry-ingest.dynatrace.svc.cluster.local:4317"
+            - name: SC_GUIDES_DIR
+              value: "/guides"
+            - name: UEXCORP_BEARER
+              valueFrom:
+                secretKeyRef:
+                  name: sc-knowledge-secrets
+                  key: UEXCORP_BEARER
+                  optional: true
+          volumeMounts:
+            - name: org-guides
+              mountPath: /guides
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+          # /healthz never touches UEX/Wiki (it reads the cached game version
+          # and refreshes it in the background), so an explicit 2s timeout is
+          # generous; the default 1s left no headroom and an upstream outage
+          # used to blow it -> restart loop.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        # Populated by scripts/sync-org-guides.sh from the private, never-committed
+        # repo-root OrgGuides/ PDFs. `optional: true` so the pod still starts (and
+        # sc_org_guides degrades to "no org guides loaded") before the ConfigMap
+        # has ever been synced.
+        - name: org-guides
+          configMap:
+            name: sc-org-guides
+            optional: true

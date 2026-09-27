@@ -46,3 +46,6 @@ coverage
 docs/
 scratchpad/
 .DS_Store
+
+# Org-curated guides are private; the bot image COPYs the repo root and is public
+OrgGuides/

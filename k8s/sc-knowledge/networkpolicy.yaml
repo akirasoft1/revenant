@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sc-knowledge
+  namespace: discord-article-bot
+spec:
+  podSelector:
+    matchLabels:
+      app: sc-knowledge
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Only the two sidecars that call sc-knowledge over MCP need to reach it.
+    # Labels confirmed against the real pod specs: `app: discord-article-bot-agent`
+    # (k8s/sandbox/agent-deployment.yaml) and `app: discord-article-bot-voice`
+    # (k8s/voice/voice-deployment.yaml) -- neither uses the
+    # `app.kubernetes.io/name` label the bot pod itself uses (see
+    # agent-networkpolicy.yaml's comment for that separate gotcha).
+    - from:
+        - podSelector:
+            matchLabels:
+              app: discord-article-bot-agent
+        - podSelector:
+            matchLabels:
+              app: discord-article-bot-voice
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # UEX Corp + Star Citizen Wiki public APIs over TCP :443 (no RFC1918 exposure)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
+    # Dynatrace OpenTelemetry collector (telemetry-ingest) for OTLP trace export
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dynatrace
+      ports:
+        - { protocol: TCP, port: 4317 }

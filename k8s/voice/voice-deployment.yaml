@@ -63,6 +63,12 @@ spec:
             # Blank the shared-secret GEMINI_API_KEY so the SDK can't select
             # the consumer backend (explicit env wins over any envFrom).
             - { name: GEMINI_API_KEY, value: "" }
+            # sc-knowledge (Star Citizen data MCP server) function calling for
+            # Live. Flip to true only after sc-knowledge is deployed and the
+            # agent sidecar is verified (spec §9 rollout step 3). Off = today's
+            # search-only Live config.
+            - { name: SC_KNOWLEDGE_ENABLED, value: "false" }
+            - { name: SC_KNOWLEDGE_URL, value: "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp" }
           resources:
             requests: { cpu: "200m", memory: "256Mi" }
             limits: { cpu: "1", memory: "512Mi" }

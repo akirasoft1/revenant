@@ -28,9 +28,9 @@ enabled so OneAgent and this pod's own OTLP spans both reach Dynatrace.
 
 | File | Purpose |
 |---|---|
-| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. |
+| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. `SC_KNOWLEDGE_ENABLED` (default `"false"`) + `SC_KNOWLEDGE_URL` attach the sc-knowledge Star Citizen tools to Live as function declarations; flip to true only after sc-knowledge is deployed. |
 | `voice-service.yaml` | ClusterIP Service exposing the sidecar's gRPC port (50051). |
-| `voice-networkpolicy.yaml` | Egress: kube-dns, GEAP/Vertex AI (`aiplatform.googleapis.com`, public 443 minus RFC1918), Dynatrace OTLP (4317/4318). Ingress only from the bot pod on 50051. |
+| `voice-networkpolicy.yaml` | Egress: kube-dns, GEAP/Vertex AI (`aiplatform.googleapis.com`, public 443 minus RFC1918), Dynatrace OTLP (4317/4318), sc-knowledge pods (`app: sc-knowledge`, TCP 8080 -- in-cluster RFC1918, so the public-443 rule would not cover it). Ingress only from the bot pod on 50051. |
 
 ## Apply order
 

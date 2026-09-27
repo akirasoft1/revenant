@@ -29,6 +29,14 @@ const CLIPS = [
   { voice: 'Charon', file: 'charon-weather.wav', text: "Hey Jarvis, what's the weather like today?" },
   { voice: 'Kore', file: 'kore-joke.wav', text: 'Hey Jarvis, tell me a joke about robots.' },
   { voice: 'Aoede', file: 'aoede-pizza.wav', text: 'I think we should order pizza tonight.' },
+  // Star Citizen knowledge voice smoke test (scripts/smoke-voice-sc.js) --
+  // single speaker, wording matches the "canonical questions" in
+  // agent-sidecar/eval/sc_eval_set.py plus the Scorpius ship-purchase check.
+  { voice: 'Puck', file: 'sc-v801-radar.wav', text: 'Where can we purchase a V801-12 radar?' },
+  { voice: 'Puck', file: 'sc-shield-size2.wav', text: 'What is the most powerful Size 2 shield generator?' },
+  { voice: 'Puck', file: 'sc-foxwell-rep.wav', text: 'What is an optimal way to grind Foxwell Enforcement reputation?' },
+  { voice: 'Puck', file: 'sc-mic-l5-routes.wav', text: 'What are some currently profitable trade routes from MIC-L5?' },
+  { voice: 'Puck', file: 'sc-scorpius-buy.wav', text: 'Where can I buy a Scorpius?' },
 ];
 
 /** Wrap raw 16-bit PCM into a WAV (RIFF) container. */

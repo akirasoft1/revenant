@@ -61,6 +61,11 @@ class Config:
     dt_mcp_url: str | None
     dt_platform_token: str | None
 
+    # Star Citizen knowledge MCP (sc-knowledge). Disabled by default so a
+    # sidecar deployed before sc-knowledge exists behaves exactly as before.
+    sc_knowledge_enabled: bool = False
+    sc_knowledge_url: str = "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp"
+
     # Chat circuit breaker behind the Health RPC (see server.ChatCircuitBreaker).
     # Health reports unhealthy after this many consecutive Chat failures, then
     # re-reports healthy after the cooldown to admit one trial Chat. Defaulted
@@ -98,4 +103,8 @@ def load() -> Config:
         otlp_headers=os.environ.get("OTEL_EXPORTER_OTLP_HEADERS"),
         dt_mcp_url=os.environ.get("DT_MCP_URL"),
         dt_platform_token=os.environ.get("DT_PLATFORM_TOKEN"),
+        sc_knowledge_enabled=os.environ.get("SC_KNOWLEDGE_ENABLED", "false").strip().lower() in ("true", "1", "yes"),
+        sc_knowledge_url=os.environ.get(
+            "SC_KNOWLEDGE_URL", "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp",
+        ),
     )

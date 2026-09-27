@@ -77,3 +77,18 @@ def test_receive_raises_on_every_close_with_code_preserved(code, expected):
     with pytest.raises(errors.APIError) as ei:
         asyncio.run(drain())
     assert ei.value.code == expected
+
+
+def test_function_calling_surface_the_bridge_uses():
+    # sc-knowledge function calling (spec §7): _pump_server reads these via
+    # getattr, so a rename would silently stop tool calls being answered.
+    assert {"tool_call", "tool_call_cancellation"} <= set(types.LiveServerMessage.model_fields)
+    assert "function_calls" in types.LiveServerToolCall.model_fields
+    assert "ids" in types.LiveServerToolCallCancellation.model_fields
+    assert {"id", "name", "args"} <= set(types.FunctionCall.model_fields)
+    assert {"id", "name", "response"} <= set(types.FunctionResponse.model_fields)
+    assert {"name", "description", "parameters_json_schema"} <= set(
+        types.FunctionDeclaration.model_fields)
+    assert "function_declarations" in types.Tool.model_fields
+    tr = inspect.signature(live.AsyncSession.send_tool_response).parameters
+    assert "function_responses" in tr

@@ -107,3 +107,112 @@ async def test_converse_bridge_exception_is_logged_not_dropped(caplog):
     assert any(e.WhichOneof("event") == "output_transcript" for e in got)
     assert any("voice bridge task failed" in r.message for r in caplog.records)
     assert handler_calls == []
+
+
+# ---- sc-knowledge startup wiring -----------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from src import server as server_mod  # noqa: E402
+
+
+def _cfg(enabled):
+    return SimpleNamespace(sc_knowledge_enabled=enabled,
+                           sc_knowledge_url="http://sc:8080/mcp")
+
+
+def test_build_sc_executor_respects_flag():
+    assert server_mod._build_sc_executor(_cfg(False)) is None
+    ex = server_mod._build_sc_executor(_cfg(True))
+    assert ex is not None and ex._url == "http://sc:8080/mcp"
+
+
+class _FlakyExecutor:
+    def __init__(self, fail_times):
+        self.fail_times = fail_times
+        self.attempts = 0
+        self.declarations = []
+
+        self.last_error = None
+
+    async def refresh(self):
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            self.last_error = RuntimeError("Client error '421 Misdirected Request'")
+            return False
+        self.last_error = None
+        self.declarations = ["d"]
+        return True
+
+
+async def test_prime_sc_tools_success_needs_no_retry():
+    ex = _FlakyExecutor(0)
+    assert await server_mod._prime_sc_tools(ex, retry_interval_s=0.01) is None
+    assert ex.attempts == 1
+
+
+async def test_prime_sc_tools_failure_warns_and_retries_in_background(caplog):
+    ex = _FlakyExecutor(2)
+    with caplog.at_level(logging.WARNING):
+        task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
+    assert task is not None
+    assert ("sc_knowledge=unreachable or rejected at startup "
+            "(RuntimeError: Client error '421 Misdirected Request'); "
+            "voice runs search-only until refresh succeeds" in caplog.text)
+    await asyncio.wait_for(task, 1.0)
+    assert ex.attempts == 3 and ex.declarations == ["d"]
+
+
+async def test_prime_sc_tools_failure_without_recorded_error_still_warns(caplog):
+    """An executor that records no last_error (older/fake) still gets the
+    warning, with an explicit 'unknown error' rather than a crash."""
+    ex = _FlakyExecutor(1)
+    ex.refresh_orig = ex.refresh
+
+    async def _refresh_no_error():
+        ok = await ex.refresh_orig()
+        ex.last_error = None
+        return ok
+    ex.refresh = _refresh_no_error
+    with caplog.at_level(logging.WARNING):
+        task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
+    assert "sc_knowledge=unreachable or rejected at startup (unknown error)" in caplog.text
+    await asyncio.wait_for(task, 1.0)
+
+
+async def test_prime_sc_tools_none_is_noop():
+    assert await server_mod._prime_sc_tools(None) is None
+
+
+
+class _EmptyExecutor:
+    """Reachable, but the server exposes no sc_* tools."""
+    def __init__(self):
+        self.declarations = []
+        self.attempts = 0
+
+    async def refresh(self):
+        self.attempts += 1
+        return True
+
+
+async def test_prime_sc_tools_reachable_but_no_tools_has_distinct_warning(caplog):
+    ex = _EmptyExecutor()
+    with caplog.at_level(logging.WARNING):
+        task = await server_mod._prime_sc_tools(ex, retry_interval_s=0.01)
+    try:
+        assert "sc_knowledge reachable but exposed no sc_* tools" in caplog.text
+        assert "unreachable" not in caplog.text
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+def test_describe_error_unwraps_exception_groups():
+    inner = ValueError("Client error '421 Misdirected Request' for url 'http://sc/mcp'")
+    grp = ExceptionGroup("unhandled errors in a TaskGroup", [ExceptionGroup("nested", [inner])])
+    assert server_mod._describe_error(grp) == (
+        "ValueError: Client error '421 Misdirected Request' for url 'http://sc/mcp'")
+    assert server_mod._describe_error(OSError("refused")) == "OSError: refused"
+    assert server_mod._describe_error(None) == "unknown error"

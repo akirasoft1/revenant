@@ -41,6 +41,15 @@ spec:
         - podSelector:
             matchLabels:
               app: qdrant
+    # sc-knowledge (Star Citizen data MCP server), in-cluster. It's a ClusterIP
+    # pod on RFC1918, so it needs its own rule — the public-internet :443 rule
+    # below explicitly excludes RFC1918 and would otherwise silently drop this.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sc-knowledge
+      ports:
+        - { protocol: TCP, port: 8080 }
     # K8s API server. On RKE2 the apiserver is a static pod running on the
     # host network, so it can't be matched by namespaceSelector + podSelector.
     # kube-proxy DNATs the kubernetes ClusterIP service to host:6443 — we

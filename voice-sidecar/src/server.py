@@ -57,7 +57,72 @@ class VoiceServicer(voice_pb2_grpc.VoiceServicer):
                 logger.exception("voice bridge task failed")
 
 
-def _build_bridge(config):
+SC_REFRESH_RETRY_INTERVAL_S = 60.0
+
+
+def _build_sc_executor(config):
+    """ScToolExecutor when SC_KNOWLEDGE_ENABLED, else None (search-only)."""
+    if not getattr(config, "sc_knowledge_enabled", False):
+        return None
+    from .sc_tools import ScToolExecutor
+    return ScToolExecutor(config.sc_knowledge_url)
+
+
+def _describe_error(err: BaseException | None) -> str:
+    """'<ExcClass>: <msg>' for the startup warning; an ExceptionGroup (anyio
+    task groups in the MCP client wrap the real HTTP error) is unwrapped to
+    its leaf exceptions so the 421/4xx itself is visible."""
+    if err is None:
+        return "unknown error"
+    if isinstance(err, BaseExceptionGroup):
+        leaves = []
+        stack = list(err.exceptions)
+        while stack:
+            e = stack.pop(0)
+            if isinstance(e, BaseExceptionGroup):
+                stack.extend(e.exceptions)
+            else:
+                leaves.append(e)
+        return "; ".join(f"{type(e).__name__}: {e}" for e in leaves) or f"{type(err).__name__}: {err}"
+    return f"{type(err).__name__}: {err}"
+
+
+async def _prime_sc_tools(executor, retry_interval_s: float = SC_REFRESH_RETRY_INTERVAL_S):
+    """Load sc-knowledge declarations before serving. If sc-knowledge is
+    unreachable, voice starts search-only and a background task retries every
+    `retry_interval_s` until declarations exist; new Live sessions pick them
+    up from then on (`_live_config` reads them per connect). Returns that
+    retry task (caller owns cancelling it), or None."""
+    if executor is None:
+        return None
+    reachable = await executor.refresh()
+    if reachable and executor.declarations:
+        return None
+    if reachable:
+        # Distinct from "unreachable": the server answered list_tools but
+        # none of its tools start with sc_ -- a server/config problem, not a
+        # network one, so the NetworkPolicy is not the thing to debug.
+        logger.warning("sc_knowledge reachable but exposed no sc_* tools; voice runs search-only "
+                       "until a refresh returns some")
+    else:
+        # "unreachable OR rejected", with the actual exception: a 421/4xx
+        # (e.g. sc-knowledge's Host allow-list) is a server-side config
+        # problem, and blaming it on the NetworkPolicy sends the operator
+        # debugging the wrong layer.
+        logger.warning("sc_knowledge=unreachable or rejected at startup (%s); voice runs search-only "
+                       "until refresh succeeds", _describe_error(getattr(executor, "last_error", None)))
+
+    async def _retry() -> None:
+        while not executor.declarations:
+            await asyncio.sleep(retry_interval_s)
+            if await executor.refresh() and executor.declarations:
+                logger.info("sc_knowledge: refresh succeeded; sc_* tools attach to new voice sessions")
+                return
+
+    return asyncio.create_task(_retry())
+
+
+def _build_bridge(config, sc_executor=None):
     from google import genai  # lazy: keep google-genai out of unit-test imports
     from .live_bridge import LiveBridge
 
@@ -70,7 +135,8 @@ def _build_bridge(config):
                        default_voice=config.default_voice_name,
                        compression_trigger_tokens=config.context_compression_trigger_tokens,
                        resumption_enabled=config.session_resumption_enabled,
-                       max_reconnects=config.max_session_reconnects)
+                       max_reconnects=config.max_session_reconnects,
+                       sc_executor=sc_executor)
 
 
 def serve() -> None:
@@ -80,9 +146,11 @@ def serve() -> None:
     )
     config = load_config()
     setup_tracing(config)
-    bridge = _build_bridge(config)
+    sc_executor = _build_sc_executor(config)
+    bridge = _build_bridge(config, sc_executor)
 
     async def _run() -> None:
+        sc_retry = await _prime_sc_tools(sc_executor)
         server = grpc.aio.server()
         voice_pb2_grpc.add_VoiceServicer_to_server(VoiceServicer(bridge=bridge), server)
         server.add_insecure_port(config.grpc_listen_addr)
@@ -96,6 +164,8 @@ def serve() -> None:
         try:
             await stop_event.wait()
         finally:
+            if sc_retry is not None:
+                sc_retry.cancel()
             await server.stop(grace=10)
             # Force-flush + shut down the tracer provider so spans buffered in the
             # BatchSpanProcessor are exported before the process exits on SIGTERM.

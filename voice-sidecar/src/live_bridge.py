@@ -40,6 +40,19 @@ except Exception:  # pragma: no cover
 # without it "10000 ..." matches the "1000" prefix.
 _CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
 
+# Appended to the system instruction ONLY when sc-knowledge function
+# declarations are attached (spec §7 persona note). Voice-only: tables and
+# long number lists are unlistenable, and a silent lookup reads as a hang.
+SC_VOICE_NOTE = (
+    "You can look up live Star Citizen data with the sc_* tools (item stats and where to buy, "
+    "component rankings, faction missions by reputation per minute, trade routes, commodity "
+    "prices, and our org's curated guides on mining, salvage and trading). Use them for any "
+    "Star Citizen item, price, mission, reputation or trade question instead of memory. Before "
+    "a lookup, say a very short natural filler like \"let me check\". When answering, speak "
+    "only the top two or three results in plain sentences and offer the rest; never read "
+    "tables or long number lists aloud."
+)
+
 
 def _is_normal_close(exc) -> bool:
     """True if `exc` is a clean session close (ws code 1000/1001), whether raw
@@ -125,7 +138,7 @@ class _SessionStats:
     __slots__ = ("audio_in_chunks", "audio_in_bytes", "audio_out_chunks",
                  "audio_out_bytes", "turns", "interruptions",
                  "in_tx_chars", "out_tx_chars", "speaker_markers",
-                 "deferral_acks")
+                 "deferral_acks", "tool_calls", "sc_fallbacks")
 
     def __init__(self):
         self.audio_in_chunks = 0
@@ -138,6 +151,8 @@ class _SessionStats:
         self.out_tx_chars = 0
         self.speaker_markers = 0
         self.deferral_acks = 0
+        self.tool_calls = 0
+        self.sc_fallbacks = 0
 
 
 class _ResumeState:
@@ -165,30 +180,47 @@ class _SessionRef:
 class LiveBridge:
     def __init__(self, session_factory, *, model, default_voice,
                  compression_trigger_tokens=25000, resumption_enabled=True,
-                 max_reconnects=5):
+                 max_reconnects=5, sc_executor=None):
         self._session_factory = session_factory
+        # sc_tools.ScToolExecutor, or None when SC_KNOWLEDGE_ENABLED is off.
+        self._sc = sc_executor
         self._model = model
         self._default_voice = default_voice
         self._compression_trigger_tokens = compression_trigger_tokens
         self._resumption_enabled = resumption_enabled
         self._max_reconnects = max_reconnects
 
-    def _live_config(self, start, resumption_handle=None) -> types.LiveConnectConfig:
+    def _sc_tools_attachable(self) -> bool:
+        return self._sc is not None and bool(self._sc.declarations)
+
+    def _live_config(self, start, resumption_handle=None, with_sc=True) -> types.LiveConnectConfig:
         voice = start.voice_name or self._default_voice
+        # Google Search grounding: lets the model answer with current, real
+        # web knowledge (e.g. game specifics) instead of only its training
+        # data. Grounding is handled SERVER-SIDE for the built-in search tool
+        # -- no client-side tool-response plumbing needed (that caveat is only
+        # for function_declarations). gemini-live-2.5-flash supports Search.
+        tools = [types.Tool(google_search=types.GoogleSearch())]
+        system_instruction = start.system_prompt or None
+        # sc-knowledge function calling (spec §7): attached only when the
+        # executor exists AND has loaded declarations -- otherwise this config
+        # is identical to the search-only one (pinned by
+        # tests/test_live_bridge_tools.py). Evaluated per (re)connect, so a
+        # background refresh that succeeds later reaches the next session.
+        # These calls are answered by `_pump_server` via send_tool_response.
+        # with_sc=False is `converse`'s search-only connect fallback.
+        if with_sc and self._sc_tools_attachable():
+            tools.append(types.Tool(function_declarations=list(self._sc.declarations)))
+            system_instruction = (start.system_prompt or "") + "\n\n" + SC_VOICE_NOTE
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            system_instruction=start.system_prompt or None,
+            system_instruction=system_instruction,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
                 )
             ),
-            # Google Search grounding: lets the model answer with current, real
-            # web knowledge (e.g. game specifics) instead of only its training
-            # data. Grounding is handled SERVER-SIDE for the built-in search tool
-            # -- no client-side tool-response plumbing needed (that caveat is only
-            # for function_declarations). gemini-live-2.5-flash supports Search.
-            tools=[types.Tool(google_search=types.GoogleSearch())],
+            tools=tools,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
@@ -267,6 +299,11 @@ class LiveBridge:
             # handle" branch and seed nothing -- even though resume.handle is
             # None. Only set True once context has actually been sent.
             seeded_context = False
+            # SC connect fallback: flips False (for the rest of this Converse
+            # call, reconnects included) the first time an open fails while
+            # sc-knowledge function declarations were attached. See the
+            # open-failure handler below.
+            use_sc = True
             try:
                 while True:
                     # --- (Re)open the Live session for this iteration.
@@ -281,9 +318,11 @@ class LiveBridge:
                     entered = False
                     client_exc = None
                     server_exc = None
+                    sc_attached = use_sc and self._sc_tools_attachable()
                     try:
                         async with self._session_factory(
-                                self._model, self._live_config(start, resume.handle)) as session:
+                                self._model,
+                                self._live_config(start, resume.handle, with_sc=use_sc)) as session:
                             entered = True
                             session_ref.session = session
                             if not seeded_context:
@@ -327,7 +366,8 @@ class LiveBridge:
                             if pump_in is None:
                                 pump_in = asyncio.create_task(
                                     self._pump_client(request_iter, session_ref, stats))
-                            pump_out = asyncio.create_task(self._pump_server(session, emit, stats, resume))
+                            pump_out = asyncio.create_task(
+                                self._pump_server(session, emit, stats, resume, session_ref))
                             try:
                                 done, _pending = await asyncio.wait(
                                     {pump_in, pump_out}, return_when=asyncio.FIRST_COMPLETED)
@@ -363,6 +403,28 @@ class LiveBridge:
                             # logged/classified by the raises above; propagate
                             # unchanged to the outer handler.
                             raise
+                        if sc_attached:
+                            # The open failed WITH sc-knowledge function
+                            # declarations attached. Their JSON schemas (sanitised
+                            # by sc_tools._sanitize_schema, but still) are
+                            # the one part of this config not proven on GEAP
+                            # Live, and a rejection would fail EVERY connect
+                            # while SC_KNOWLEDGE_ENABLED is on -- so retry this
+                            # open ONCE, immediately and outside the reconnect
+                            # budget, search-only (no declarations, no
+                            # SC_VOICE_NOTE), and keep this call search-only.
+                            # If the failure was unrelated (e.g. a transient
+                            # 503) the search-only open fails too and falls
+                            # into the normal budgeted retry below.
+                            use_sc = False
+                            stats.sc_fallbacks += 1
+                            logger.warning(
+                                "voice: Live session open failed with sc_* function declarations "
+                                "attached (%s: %s); retrying once search-only -- this Converse "
+                                "stays search-only (sc_fallbacks=%d)",
+                                type(open_or_body_exc).__name__, open_or_body_exc,
+                                stats.sc_fallbacks, exc_info=True)
+                            continue
                         # The (re)open itself failed. Retry it against the same
                         # reconnect budget with exponential backoff + jitter
                         # (mirrors agent-sidecar's _gemini_retry_options shape
@@ -442,17 +504,20 @@ class LiveBridge:
             span.set_attribute("voice.turns", stats.turns)
             span.set_attribute("voice.interruptions", stats.interruptions)
             span.set_attribute("voice.reconnects", resume.reconnects)
+            span.set_attribute("voice.tool_calls", stats.tool_calls)
+            span.set_attribute("voice.sc_fallbacks", stats.sc_fallbacks)
             span.end()
             logger.info(
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
                 "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d "
-                "speaker_markers=%d deferral_acks=%d",
+                "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
                 resume.reconnects, stats.speaker_markers, stats.deferral_acks,
+                stats.tool_calls, stats.sc_fallbacks,
             )
 
     async def _pump_client(self, request_iter, session_ref, stats) -> None:
@@ -611,10 +676,12 @@ class LiveBridge:
                     logger.debug("voice: send failed on a closing session (%s); dropping frame",
                                  type(e).__name__)
 
-    async def _pump_server(self, session, emit, stats, resume) -> None:
-        # receive() ends per-turn on turn_complete; loop to span the whole session.
+    async def _pump_server(self, session, emit, stats, resume, session_ref=None) -> None:
+        # receive() ends per-turn on turn_complete; `_pump_server_loop` loops to
+        # span the whole session (split out only so the tool-task cleanup below
+        # wraps it; every exception still propagates through unchanged).
         #
-        # How this loop REALLY terminates, verified against the installed
+        # How that loop REALLY terminates, verified against the installed
         # google-genai 2.17.0, re-verified by execution on 2.25.0 (2026-09-26;
         # requirements.txt pins >=; re-check on a bump):
         # `AsyncSession.receive()` (2.25.0 live.py:471-475) is
@@ -648,6 +715,32 @@ class LiveBridge:
         # 2.25.0 live.py:520-540 already does exactly that for its internal loop), or
         # `LiveServerMessage` gaining a falsy `__bool__`/`__len__`. Either is
         # a silent behaviour change, which is why the branch logs at WARNING.
+        #
+        # Tool calls (sc-knowledge, spec §7): each function call is answered by
+        # its OWN task so a lookup (up to the executor's 6s bound) never stops
+        # this loop from reading audio/transcripts/GoAway/further tool calls.
+        # The tasks are per-session: the `finally` below cancels every one
+        # still in flight when this pump exits (session drop, reconnect, end)
+        # -- in-flight calls are DROPPED, not replayed into a resumed session
+        # (the new session never saw that call id). `session_ref` lets a task
+        # confirm, at send time, that its session is still the live one.
+        tool_tasks: dict = {}
+        try:
+            await self._pump_server_loop(session, emit, stats, resume, session_ref, tool_tasks)
+        finally:
+            # Cancel, don't await: reaping could wait on an MCP transport's
+            # teardown and delay the reconnect this exit usually precedes.
+            # Each task logs its own cancellation and re-raises it.
+            outstanding = sorted(str(k) for k, t in tool_tasks.items() if not t.done())
+            for t in list(tool_tasks.values()):
+                t.cancel()
+            tool_tasks.clear()
+            if outstanding:
+                logger.info(
+                    "voice: Live session pump ended; dropped %d in-flight tool call(s) "
+                    "(not replayed): %s", len(outstanding), ", ".join(outstanding))
+
+    async def _pump_server_loop(self, session, emit, stats, resume, session_ref, tool_tasks) -> None:
         while True:
             produced = False
             async for msg in session.receive():
@@ -661,6 +754,20 @@ class LiveBridge:
                 if sru is not None and getattr(sru, "resumable", False) and getattr(sru, "new_handle", None):
                     resume.handle = sru.new_handle
                     logger.debug("voice: session resumption handle updated")
+                tc = getattr(msg, "tool_call", None)
+                if tc is not None:
+                    for fc in (getattr(tc, "function_calls", None) or []):
+                        self._spawn_tool_call(session, session_ref, fc, stats, tool_tasks)
+                tcc = getattr(msg, "tool_call_cancellation", None)
+                if tcc is not None:
+                    for call_id in (getattr(tcc, "ids", None) or []):
+                        task = tool_tasks.pop(call_id, None)
+                        if task is not None and not task.done():
+                            task.cancel()
+                            logger.info("voice: tool_call id=%s cancelled by the model", call_id)
+                        else:
+                            logger.info("voice: tool_call id=%s cancellation for a call not in flight",
+                                        call_id)
                 ga = getattr(msg, "go_away", None)
                 if ga is not None:
                     resume.going_away = True
@@ -701,3 +808,56 @@ class LiveBridge:
                     "Session resumption/reconnect is driven by the raised close and is "
                     "NOT reachable on this path.")
                 break
+
+    def _spawn_tool_call(self, session, session_ref, fc, stats, tool_tasks) -> None:
+        stats.tool_calls += 1
+        key = getattr(fc, "id", None) or f"anon-{stats.tool_calls}"
+        previous = tool_tasks.get(key)
+        if previous is not None and not previous.done():
+            previous.cancel()   # a re-issued id supersedes the earlier call
+        task = asyncio.create_task(self._answer_tool_call(session, session_ref, fc))
+        tool_tasks[key] = task
+
+        def _forget(t, k=key):
+            if tool_tasks.get(k) is t:
+                del tool_tasks[k]
+        task.add_done_callback(_forget)
+
+    async def _answer_tool_call(self, session, session_ref, fc) -> None:
+        name = getattr(fc, "name", None) or ""
+        call_id = getattr(fc, "id", None)
+        started = time.monotonic()
+        try:
+            if self._sc is None:
+                # A tool call with no executor should be impossible (no
+                # declarations are sent), but never leave the model hanging.
+                result = {"error": "tools_unavailable",
+                          "detail": "Star Citizen data tools are not available right now"}
+            elif not name.startswith("sc_"):
+                result = {"error": "unknown_tool", "detail": f"no such tool: {name}"}
+            else:
+                result = await self._sc.call(name, dict(getattr(fc, "args", None) or {}))
+        except asyncio.CancelledError:
+            logger.info("voice: tool_call %s id=%s -> cancelled (%dms)", name, call_id,
+                        int((time.monotonic() - started) * 1000))
+            raise
+        except Exception as e:  # noqa: BLE001 - the executor never raises; belt and braces
+            result = {"error": "tool_failed", "detail": f"{type(e).__name__}: {e}"}
+        code = result.get("error") if isinstance(result, dict) else None
+        outcome = code or "ok"
+        ms = int((time.monotonic() - started) * 1000)
+        # Target the CURRENT live session: after a reconnect the session this
+        # call was issued on is dead, and the new one never saw this call id.
+        if session_ref is not None and session_ref.session is not session:
+            logger.info(
+                "voice: tool_call %s id=%s -> %s (%dms) but its Live session is gone; "
+                "dropping the response", name, call_id, outcome, ms)
+            return
+        try:
+            await session.send_tool_response(function_responses=[
+                types.FunctionResponse(id=call_id, name=name, response=result)])
+        except Exception as e:  # noqa: BLE001 - the session is dying; the reconnect path owns that
+            logger.warning("voice: tool_call %s id=%s -> %s (%dms) but send_tool_response failed (%s: %s)",
+                           name, call_id, outcome, ms, type(e).__name__, e)
+            return
+        logger.info("voice: tool_call %s -> %s (%dms)", name, outcome, ms)

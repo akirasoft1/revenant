@@ -1,0 +1,14 @@
+Mining Salvage Cargo Field Guide
+Data verified on LIVE Build: Alpha 4.10.1
+
+1. Resource Signature Basics
+A resource signature is the scan return you get from a mining scanner or radar sweep before committing to a rock. Strong resource signature readings correlate with higher-yield ore composition, but overlapping signals in dense fields blur individual signature readings and require closer passes to separate.
+
+CLUSTER MULTIPLIER NOTES
+Asteroid clusters near jump points receive a cluster multiplier bonus applied to the base extraction yield. A high cluster multiplier makes a modest resource signature worth prospecting even when composition looks average.
+
+2. Cargo Handling
+Once ore is extracted, cargo pods fill according to a fixed capacity. Compressed cargo grids reduce the volume-per-unit cost but modestly limit total tonnage compared to raw cargo grids.
+
+3. Salvage Yield Notes
+Salvage yield depends on hull integrity remaining at time of scrapping, and inventory refresh ticks at the salvage yard determine how quickly bought material re-lists for resale.
