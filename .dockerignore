@@ -27,6 +27,7 @@ k8s/overlays/deployed/
 # this one leaks build weight into a PUBLIC image.
 agent-sidecar/
 voice-sidecar/
+sc-knowledge/
 **/venv/
 **/.venv/
 **/__pycache__/
