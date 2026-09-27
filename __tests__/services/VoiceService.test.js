@@ -1425,6 +1425,18 @@ describe('deferral: announce and release', () => {
     expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(1);
   });
 
+  test('does NOT announce while a spoken control command is pending (the session is about to end)', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    session.emit('control', { action: 'end', seconds: 0 });
+    expect(g.pendingControl).not.toBeNull();
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).not.toBeNull();
+  });
+
   test('with the flag OFF, behaviour is unchanged', async () => {
     const { svc, guildId, session, player } = await buildActiveVoiceService({});  // default: disabled
     const g = qualifiedWaiter(svc, guildId, 'bob');
@@ -2661,6 +2673,71 @@ describe('voice control commands', () => {
       expect(h.g.session).toBe(h.session);
     });
 
+    // Final review C1: Gemini Live emits a turnComplete for the TOOL-CALL turn
+    // itself (no audio) ~10ms after the tool call, and the confirmation speech
+    // only starts ~250ms later. Control reaches the bot before that bare
+    // turnComplete, so it must not count as "the reply completed".
+    test('a bare tool-call turnComplete (no output) does not tear down', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'quiet', seconds: 600 });
+      h.session.emit('turnComplete'); // the tool-call turn: audio_out=0
+      h.svc._tick('g1'); // player idle -- nothing has been said yet
+      expect(h.g.session).toBe(h.session);
+      expect(h.session.end).not.toHaveBeenCalled();
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'quiet', replyCompleted: false }));
+    });
+
+    test('control -> bare turnComplete -> confirmation audio -> turnComplete -> drain tears down', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'quiet', seconds: 600 });
+      h.session.emit('turnComplete'); // tool-call turn
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.session.emit('audio', Buffer.alloc(480)); // the confirmation
+      h.player.state = { status: 'playing' };
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // still generating
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // generated, still being heard
+      h.player.state = { status: 'idle' };
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
+    });
+
+    test('an output transcript alone also counts as the reply having output', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.session.emit('outputTranscript', 'bye');
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+    });
+
+    test('a phrase request created AT the first output audio counts that audio', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      say(h, " that's all");
+      h.session.emit('audio', Buffer.alloc(480)); // phrase matched here; this IS the reply's output
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase', outputSeen: true }));
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+    });
+
+    test('a reply that never produces output falls to the 10s ceiling', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.session.emit('turnComplete'); // bare tool-call turn, and nothing after it
+      h.setNow(h.now() + CEILING_MS - 1);
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.setNow(h.now() + 1);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(infoLines().some((l) => l.includes('ceiling was reached'))).toBe(true);
+    });
+
     test('the 10s ceiling fires with no turnComplete, measured from the FIRST request', async () => {
       const h = await buildControl();
       h.session.emit('control', { action: 'end', seconds: 0 });
@@ -2809,6 +2886,14 @@ describe('voice control commands', () => {
       reply(h);
       h.svc._tick('g1');
       expect(h.g.session).toBeNull();
+    });
+
+    test('an empty input buffer at the first output does not use up the turn\'s check (late input transcription)', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('audio', Buffer.alloc(480)); // reply starts before any input transcript arrived
+      say(h, " that's all"); // input transcription lands late
+      h.session.emit('turnComplete'); // the re-check at turn end still runs
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase' }));
     });
 
     test('a barge-in (interrupted, no turnComplete) re-arms the check for the next reply', async () => {

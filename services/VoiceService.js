@@ -92,8 +92,10 @@ const ACK_RETRY_MAX_MS = 30000;
 
 // Spoken control commands (end conversation / go quiet).
 //
-// Teardown waits for the model's reply to be GENERATED (a turnComplete seen
-// after the request) AND HEARD (playback drained). Playback drain alone is
+// Teardown waits for the model's reply to be GENERATED (output -- audio or an
+// output transcript -- seen for the request, then a turnComplete after the
+// request; a bare tool-call turnComplete with no output does not count) AND
+// HEARD (playback drained). Playback drain alone is
 // vacuous: when a request arrives the player is idle in both real flows -- the
 // phrase is transcribed while the user is still talking, and the sidecar emits
 // Control on the tool call, before the confirmation audio exists -- so a
@@ -906,9 +908,13 @@ class VoiceService {
     };
     // A fresh session starts a fresh input turn for the phrase backstop.
     g.controlPhraseChecked = false;
+    g.controlInputFrom = 0;
     session.on('audio', (buf) => {
       if (g.session !== session) return;
       this._checkControlPhrase(g, guildId, session); // model is replying => utterance over
+      // AFTER the phrase check, so a request the check just created counts
+      // this audio as its reply's output.
+      this._noteControlOutput(g, session);
       applyGuarded({ type: 'audio', pcm: buf });
     });
     session.on('inputTranscript', (t) => {
@@ -931,13 +937,18 @@ class VoiceService {
     session.on('outputTranscript', (t) => {
       if (g.session !== session) return;
       this._checkControlPhrase(g, guildId, session);
+      this._noteControlOutput(g, session);
       g.buffers.out.push(t);
     });
     session.on('interrupted', () => {
       if (g.session !== session) return;
       // Barge-in: the user is talking again, so the next reply starts a new
       // phrase-backstop evaluation even if no turnComplete closed the last one.
+      // The buffer is not persisted/cleared on a barge-in, so the new
+      // utterance starts at the current end of it: the matcher is anchored at
+      // the START of the utterance and must not see the interrupted one.
       g.controlPhraseChecked = false;
+      g.controlInputFrom = g.buffers.in.length;
       applyGuarded({ type: 'interrupted' });
     });
     session.on('turnComplete', () => {
@@ -954,14 +965,20 @@ class VoiceService {
       // for the next input turn.
       this._checkControlPhrase(g, guildId, session);
       g.controlPhraseChecked = false;
-      // The reply to a pending command is now fully generated; _tick executes
-      // it once that reply has also finished playing.
-      if (hadPending) g.pendingControl.replyCompleted = true;
+      // The reply to a pending command is now fully generated -- but ONLY if
+      // it produced output. Gemini Live emits a bare turnComplete for the
+      // TOOL-CALL turn itself (audio_out=0) ~10ms after the tool call, with
+      // the spoken confirmation starting ~250ms later; the sidecar's Control
+      // reaches the bot before that bare turnComplete. Counting it tore the
+      // session down on the next idle tick before the confirmation existed.
+      // A reply that never produces output falls to CONTROL_DRAIN_CEILING_MS.
+      if (hadPending && g.pendingControl.outputSeen) g.pendingControl.replyCompleted = true;
       // End (not destroy) the turn's playback stream so its buffered audio
       // drains and the resource completes naturally; the next turn opens a
       // fresh stream.
       this._endPlayback(g);
       this._persistTurn(guildId).catch((e) => logger.warn(`voice: persist failed: ${e.message}`));
+      g.controlInputFrom = 0; // _persistTurn cleared the buffer synchronously
       applyGuarded({ type: 'turnComplete' });
     });
     session.on('error', (e) => {
@@ -1207,8 +1224,11 @@ class VoiceService {
     // buffered audio drains afterwards, and Live streams faster than real-time,
     // so the bot is typically still talking for seconds after turnComplete.
     // Announcing then would cut it off mid-word.
+    // Skipped while a spoken control command is pending: the session is about
+    // to end, and an acknowledgment would start a new reply (and release the
+    // floor) on top of the command's confirmation.
     if (this._config.voice && this._config.voice.deferralEnabled
-        && g.session && !g.ackedThisTurn && g.machine.state === 'hot') {
+        && g.session && !g.ackedThisTurn && g.machine.state === 'hot' && !g.pendingControl) {
       // Fail-safe drain check: "neither playing nor buffering", with a missing
       // player/state reading as NOT drained (see _botIsSpeaking).
       const drained = !this._botIsSpeaking(g);
@@ -1395,12 +1415,30 @@ class VoiceService {
   // Phrase backstop, evaluated ONCE per input turn on the complete utterance:
   // at the first sign the model is replying (first output audio or output
   // transcript) or at turnComplete, whichever comes first.
+  //
+  // An EMPTY input buffer does not use up the turn's check: input
+  // transcription can land after the first output audio, and the turnComplete
+  // re-check must still see it. (Known limitation: if SOME fragments arrived
+  // before the first output and the rest after, the check runs on the partial
+  // utterance and is used up -- the model-tool path covers that case.)
   _checkControlPhrase(g, guildId, session) {
     if (g.controlPhraseChecked) return;
-    g.controlPhraseChecked = true;
     if (!this._controlCommandsEnabled()) return;
-    if (!g.buffers.in.length) return;
+    if (this._controlInput(g).length === 0) return;
+    g.controlPhraseChecked = true;
     this._matchControlPhrase(g, guildId, session);
+  }
+
+  // The current input turn's fragments (see controlInputFrom in the
+  // 'interrupted' handler).
+  _controlInput(g) {
+    return g.buffers.in.slice(g.controlInputFrom || 0);
+  }
+
+  // The pending request's reply has produced output (audio or an output
+  // transcript) -- the precondition for a later turnComplete to count.
+  _noteControlOutput(g, session) {
+    if (g.pendingControl && g.pendingControl.session === session) g.pendingControl.outputSeen = true;
   }
 
   // Match the current turn's joined input transcript. Gemini sends fragments
@@ -1411,8 +1449,8 @@ class VoiceService {
     let match = null;
     try {
       match = betterControlMatch(
-        matchControlPhrase(g.buffers.in.join('')),
-        matchControlPhrase(g.buffers.in.join(' ')));
+        matchControlPhrase(this._controlInput(g).join('')),
+        matchControlPhrase(this._controlInput(g).join(' ')));
     } catch (e) {
       logger.warn(`voice: control phrase matching failed in guild ${guildId}: ${e && e.stack ? e.stack : e}`);
       return;
@@ -1447,7 +1485,7 @@ class VoiceService {
       }
       return;
     }
-    g.pendingControl = { action, seconds: normSeconds, source, requestedAt: this._deps.now(), session, guildId, replyCompleted: false };
+    g.pendingControl = { action, seconds: normSeconds, source, requestedAt: this._deps.now(), session, guildId, replyCompleted: false, outputSeen: false };
     logger.info(`voice: voice command requested in guild ${guildId}: action ${action}, seconds ${normSeconds === null ? 'not given' : normSeconds}, source ${source} (floor holder ${g.floor && g.floor.holder()}); executing once the reply completes and playback drains (at most ${CONTROL_DRAIN_CEILING_MS}ms)`);
   }
 
