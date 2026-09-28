@@ -267,7 +267,9 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         joined with "or"); an unrecognised category is ignored with a note.
         exclusive_only=true keeps only the items unique to that place.
         Each item lists its section, category, the shops there and their
-        buy prices; exclusive items sort first. Data is player-reported to
+        buy prices; exclusive items sort first. A long list is trimmed
+        evenly across sections and section_counts gives the full per-section
+        totals, so say what else exists there. Data is player-reported to
         UEX (crowd-sourced) and may miss shops -- say so, and mention the
         data age. Prefer this over memory -- locations and shop stock change
         every patch; do NOT use the sandbox."""

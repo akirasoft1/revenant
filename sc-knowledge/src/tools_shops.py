@@ -37,7 +37,7 @@ from rapidfuzz import fuzz, process
 from .cache import CacheResult, TTLCache
 from .envelope import error
 from .http import UpstreamError
-from .names import normalise, token_match
+from .names import normalise, token_match, tokens
 from .uex import UexClient
 
 logger = logging.getLogger("sc_knowledge.shops")
@@ -123,12 +123,22 @@ def _merge_freshness(*results: CacheResult) -> dict:
     return {"stale": True, "age_minutes": round(worst.age_s / 60)}
 
 
-def resolve_location(query: str, terminals: list[dict]) -> tuple[list[dict], str]:
-    """(matched LIVE terminals, label). Empty list when nothing matches."""
-    q = normalise(query)
-    live = [t for t in terminals if _is_live(t)]
-    if len(q) < 2:
-        return [], query
+_CONNECTOR_TOKENS = frozenset({"in", "at", "on", "the"})
+
+
+def _resolve_exact(q: str, live: list[dict]) -> tuple[list[dict], str | None]:
+    """Whole-field equality (normalised), most specific tier first."""
+    for tier in _LOCATION_TIERS:
+        matched = [t for t in live
+                   if any(t.get(f) and normalise(str(t.get(f))) == q for f in tier)]
+        if matched:
+            label = next(str(t.get(f)) for t in matched for f in tier
+                         if t.get(f) and normalise(str(t.get(f))) == q)
+            return matched, label
+    return [], None
+
+
+def _resolve_tokens(q: str, live: list[dict]) -> tuple[list[dict], set[str]]:
     for tier in _LOCATION_TIERS:
         matched: list[dict] = []
         values: set[str] = set()
@@ -142,7 +152,41 @@ def resolve_location(query: str, terminals: list[dict]) -> tuple[list[dict], str
             if hit:
                 matched.append(t)
         if matched:
-            label = next(iter(values)) if len(values) == 1 else query
+            return matched, values
+    return [], set()
+
+
+def _resolve_norm(q: str, query: str, live: list[dict]) -> tuple[list[dict], str]:
+    # Exact whole-field match first: "Nyx" is the SYSTEM, not the three
+    # "Nyx Gateway" stations (in Stanton/Pyro/Nyx) that token-match it at the
+    # station tier; "ArcCorp" is the PLANET (incl. Area 18), not the
+    # "ArcCorp Mining Area 0xx" outposts.
+    matched, label = _resolve_exact(q, live)
+    if matched:
+        return matched, label
+    matched, values = _resolve_tokens(q, live)
+    if matched:
+        return matched, (next(iter(values)) if len(values) == 1 else query)
+    return [], query
+
+
+def resolve_location(query: str, terminals: list[dict]) -> tuple[list[dict], str]:
+    """(matched LIVE terminals, label). Empty list when nothing matches.
+
+    Tries the query as given, then again with standalone connector words
+    (in/at/on/the) dropped -- "Teach's in Levski" -> "Teach's Levski". The
+    as-given attempt goes first so a place whose own name contains one of
+    those words still matches exactly."""
+    live = [t for t in terminals if _is_live(t)]
+    attempts = [normalise(query)]
+    stripped = "".join(tok for tok in tokens(query) if tok not in _CONNECTOR_TOKENS)
+    if stripped != attempts[0]:
+        attempts.append(stripped)
+    for q in attempts:
+        if len(q) < 2:
+            continue
+        matched, label = _resolve_norm(q, query, live)
+        if matched:
             return matched, label
     return [], query
 
@@ -196,6 +240,32 @@ def resolve_categories(category: str | None,
         return None, [f"Category '{category}' not recognised; showing all categories."]
     notes = [f"Category '{p}' not recognised; ignored." for p in unknown]
     return allowed, notes
+
+
+def _sort_key(i: dict) -> tuple:
+    return (not i["exclusive"], i["section"] or "~", i["name"] or "")
+
+
+def _select(rows: list[dict], cap: int) -> list[dict]:
+    """Up to `cap` items, round-robin across sections so a truncated list
+    never starves a whole section (plain section-sorted truncation of a
+    Levski "ship parts or fps equipment" query returned only Armor and
+    Clothing). Within a section exclusive items come first, then name; the
+    selection is returned in the usual exclusive/section/name order."""
+    if len(rows) <= cap:
+        return rows
+    by_section: dict = {}
+    for i in rows:
+        by_section.setdefault(i["section"] or "~", []).append(i)
+    queues = [sorted(v, key=_sort_key) for _k, v in sorted(by_section.items())]
+    picked: list[dict] = []
+    depth = 0
+    while len(picked) < cap:
+        for q in queues:
+            if depth < len(q) and len(picked) < cap:
+                picked.append(q[depth])
+        depth += 1
+    return sorted(picked, key=_sort_key)
 
 
 class ShopTools:
@@ -313,12 +383,21 @@ class ShopTools:
             rows = [i for i in rows if i["exclusive"]]
         for i in rows:
             i["terminals"].sort(key=lambda t: (_num(t["price_buy"]), t["terminal"] or ""))
-        rows.sort(key=lambda i: (not i["exclusive"], i["section"] or "~", i["name"] or ""))
+        rows.sort(key=_sort_key)
 
         cap = max(1, min(int(limit or 0), _MAX_LIMIT))
+        section_counts: dict = {}
+        for i in rows:
+            c = section_counts.setdefault(i["section"] or "Unknown", {"total": 0, "exclusive": 0})
+            c["total"] += 1
+            c["exclusive"] += 1 if i["exclusive"] else 0
         notes = [_NOTE_CROWD_SOURCED, *notes]
         if not rows:
             notes.append(f"No player-reported item sales match at {label}.")
+        elif len(rows) > cap:
+            notes.append(f"Showing {cap} of {len(rows)} items, spread across sections; "
+                         "section_counts has the full per-section totals -- narrow with "
+                         "category or exclusive_only to see the rest.")
 
         return {
             "source": SOURCE,
@@ -326,7 +405,8 @@ class ShopTools:
             "terminals": sorted(t.get("name") or "" for t in matched),
             "total_items": len(rows),
             "exclusive_count": sum(1 for i in rows if i["exclusive"]),
-            "items": rows[:cap],
+            "section_counts": section_counts,
+            "items": _select(rows, cap),
             "truncated": len(rows) > cap,
             "notes": notes,
             "latest_report": _iso(latest),

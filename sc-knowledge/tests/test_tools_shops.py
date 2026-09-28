@@ -43,6 +43,14 @@ TERMINALS = [
     _t(200, "Dumper's Depot - Area 18", system="Stanton", planet="ArcCorp", city="Area18"),
     _t(201, "Old Shop - Lorville", live=0, system="Stanton", planet="Hurston", city="Lorville"),
     _t(300, "Cargo Deck - Pyro Gateway (Nyx)", station="Pyro Gateway", orbit="Pyro Gateway"),
+    # Gateway station in STANTON named after Nyx: token-matches "Nyx" at the
+    # station tier, but "Nyx" the system must win (exact whole-field match).
+    _t(301, "Admin - Nyx Gateway (Stanton)", system="Stanton", station="Nyx Gateway",
+       orbit="Nyx Gateway (Stanton system)"),
+    # Outpost named after the planet: token-matches "ArcCorp" at the outpost
+    # tier, but "ArcCorp" the planet must win (and include Area 18).
+    _t(210, "Admin - ArcCorp Mining Area 045", system="Stanton", planet="ArcCorp",
+       outpost="ArcCorp Mining Area 045"),
     # Its NAME token-matches "Levski", but it's in Orison: a city match must win.
     _t(502, "Levski Souvenirs - Orison", system="Stanton", planet="Crusader", city="Orison"),
 ]
@@ -97,10 +105,10 @@ LEVSKI_ITEMS = {"NN-13 Cannon", "Omnisky III Cannon", "Strata Helmet", "Drake Fl
 
 
 def _transport(fail: set[str] | None = None, calls: list | None = None,
-               gate: asyncio.Event | None = None):
+               gate: asyncio.Event | None = None, prices: list | None = None):
     fail = fail if fail is not None else set()
     data = {"/2.0/terminals": TERMINALS, "/2.0/categories": CATEGORIES,
-            "/2.0/items_prices_all": PRICES}
+            "/2.0/items_prices_all": PRICES if prices is None else prices}
 
     async def handler(req: httpx.Request) -> httpx.Response:
         if calls is not None:
@@ -116,8 +124,8 @@ def _transport(fail: set[str] | None = None, calls: list | None = None,
     return httpx.MockTransport(handler)
 
 
-def _tools(fail=None, calls=None, clock=None, gate=None):
-    uex = build_uex(load(), transport=_transport(fail, calls, gate))
+def _tools(fail=None, calls=None, clock=None, gate=None, prices=None):
+    uex = build_uex(load(), transport=_transport(fail, calls, gate, prices))
     cache = TTLCache(clock=clock) if clock else TTLCache()
     return ShopTools(uex, cache)
 
@@ -331,3 +339,60 @@ async def test_warm_populates_cache_and_swallows_failures():
 
     broken = _tools(fail={"/2.0/items_prices_all", "/2.0/categories", "/2.0/terminals"})
     await broken.warm()  # must not raise
+
+
+# --- Fix round 1 -------------------------------------------------------------
+
+async def test_system_exact_match_beats_gateway_station_token_match():
+    out = await _tools().location_shops("Nyx")
+    assert "Admin - Nyx Gateway (Stanton)" not in out["terminals"]
+    assert "Teach's Item Shop - Levski" in out["terminals"]
+    assert out["location"] == "Nyx"
+
+
+async def test_planet_exact_match_beats_outpost_token_match():
+    out = await _tools().location_shops("ArcCorp")
+    assert sorted(out["terminals"]) == ["Admin - ArcCorp Mining Area 045",
+                                        "Dumper's Depot - Area 18"]
+    assert out["location"] == "ArcCorp"
+
+
+async def test_station_exact_name_still_resolves():
+    out = await _tools().location_shops("Nyx Gateway")
+    assert out["terminals"] == ["Admin - Nyx Gateway (Stanton)"]
+
+
+async def test_connector_words_are_ignored():
+    for q in ("Teach's in Levski", "Teach's at Levski", "the Teach's Levski"):
+        out = await _tools().location_shops(q)
+        assert out.get("terminals") == ["Teach's Item Shop - Levski"], q
+
+
+EXTRA_ARMOR = [_p(100 + n, 100 + n, f"Armor Piece {n}", 3, 791, 1000 + n) for n in range(4)]
+
+
+async def test_truncation_round_robins_across_sections():
+    """Section-sorted truncation would return only Armor (5 exclusive armor
+    items sort first); round-robin must represent every section."""
+    out = await _tools(prices=PRICES + EXTRA_ARMOR).location_shops("Levski", limit=5)
+    assert out["truncated"] is True
+    assert out["total_items"] == 10
+    sections = {i["section"] for i in out["items"]}
+    assert sections == {"Armor", "Avionics", "Personal Weapons", "Utility", "Vehicle Weapons"}
+    # Within a section exclusive first: NN-13 (exclusive) over Omnisky.
+    assert "NN-13 Cannon" in _by_name(out)
+    keys = [(not i["exclusive"], i["section"], i["name"]) for i in out["items"]]
+    assert keys == sorted(keys)
+
+
+async def test_section_counts_cover_full_filtered_set():
+    out = await _tools(prices=PRICES + EXTRA_ARMOR).location_shops("Levski", limit=2)
+    assert out["section_counts"] == {
+        "Armor": {"total": 5, "exclusive": 5},
+        "Avionics": {"total": 1, "exclusive": 1},
+        "Personal Weapons": {"total": 1, "exclusive": 1},
+        "Utility": {"total": 1, "exclusive": 1},
+        "Vehicle Weapons": {"total": 2, "exclusive": 1},
+    }
+    out = await _tools().location_shops("Levski", category="helmets")
+    assert out["section_counts"] == {"Armor": {"total": 1, "exclusive": 1}}
