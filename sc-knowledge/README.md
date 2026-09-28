@@ -25,6 +25,7 @@ envelope.
 | `sc_faction_missions(faction, current_rank=None, system=None, limit=10)` | Faction missions ranked by reputation gained per estimated minute. |
 | `sc_trade_routes(origin, destination=None, commodity=None, cargo_scu=None, budget_auec=None, limit=5)` | Profitable UEX commodity trade routes from an origin, capped by cargo/budget when given. |
 | `sc_commodity_prices(commodity, location=None, side="sell", limit=5)` | Current UEX buy/sell prices for a commodity, best price first. |
+| `sc_location_shops(location, category=None, exclusive_only=False, limit=40)` | What a place's live UEX shops sell, and which of those items are sold nowhere else. Optional category filter (with ship-parts/FPS-gear aliases) and exclusive-only flag. |
 | `sc_org_guides(query, limit=3)` | BM25 search over privately-synced org guide text (mining/salvage/trading strategy notes; live data from the other tools wins for prices/stats). |
 
 Every successful result includes `source` and (except `sc_org_guides`, whose
@@ -82,6 +83,7 @@ immediately, so an outage does not cost every caller the full retry budget.
 | Item shop prices | 7200 |
 | Item stats / missions / factions | 43200 |
 | Terminal/commodity name index, UEX game versions | 21600 |
+| Location shops (`items_prices_all`, `categories`) | 3600, stale-while-revalidate, warmed at startup |
 
 Rate limits: Wiki <=60/min, UEX <=120/min. HTTP timeouts: connect 3s, total
 8s; up to 2 jittered retries on 429/5xx only.

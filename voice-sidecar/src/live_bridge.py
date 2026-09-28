@@ -46,12 +46,14 @@ _CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
 # long number lists are unlistenable, and a silent lookup reads as a hang.
 SC_VOICE_NOTE = (
     "You can look up live Star Citizen data with the sc_* tools (item stats and where to buy, "
-    "component rankings, faction missions by reputation per minute, trade routes, commodity "
-    "prices, and our org's curated guides on mining, salvage and trading). Use them for any "
-    "Star Citizen item, price, mission, reputation or trade question instead of memory. Before "
-    "a lookup, say a very short natural filler like \"let me check\". When answering, speak "
-    "only the top two or three results in plain sentences and offer the rest; never read "
-    "tables or long number lists aloud."
+    "what a place's shops sell and what's unique to it, component rankings, faction missions by "
+    "reputation per minute, trade routes, commodity prices, and our org's curated guides on "
+    "mining, salvage and trading). Use them for any Star Citizen item, price, mission, "
+    "reputation, trade or location question instead of memory; never assert from memory that "
+    "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
+    "results beat memory. Before a lookup, say a very short natural filler like \"let me check\". "
+    "When answering, speak only the top two or three results in plain sentences and offer the "
+    "rest; never read tables or long number lists aloud."
 )
 
 # Local voice control tools (spec 2026-09-27-voice-control-commands). Declared

@@ -258,12 +258,14 @@ def test_live_config_unchanged_without_executor_or_declarations():
 def test_sc_voice_note_verbatim():
     assert SC_VOICE_NOTE == (
         "You can look up live Star Citizen data with the sc_* tools (item stats and where to buy, "
-        "component rankings, faction missions by reputation per minute, trade routes, commodity "
-        "prices, and our org's curated guides on mining, salvage and trading). Use them for any "
-        "Star Citizen item, price, mission, reputation or trade question instead of memory. Before "
-        "a lookup, say a very short natural filler like \"let me check\". When answering, speak "
-        "only the top two or three results in plain sentences and offer the rest; never read "
-        "tables or long number lists aloud.")
+        "what a place's shops sell and what's unique to it, component rankings, faction missions by "
+        "reputation per minute, trade routes, commodity prices, and our org's curated guides on "
+        "mining, salvage and trading). Use them for any Star Citizen item, price, mission, "
+        "reputation, trade or location question instead of memory; never assert from memory that "
+        "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
+        "results beat memory. Before a lookup, say a very short natural filler like \"let me check\". "
+        "When answering, speak only the top two or three results in plain sentences and offer the "
+        "rest; never read tables or long number lists aloud.")
 
 
 # ---- search-only connect fallback (fix round 1) ---------------------------
