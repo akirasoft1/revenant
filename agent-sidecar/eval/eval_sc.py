@@ -112,7 +112,8 @@ async def _preflight(sc_tools: ScToolsProvider, sc_knowledge_url: str) -> None:
 
 
 def _sc_prompts_with_outage(records: list[tuple[dict, AgentChatResult]]) -> list[str]:
-    """Prompts among the *SC* prompts (expect_tool is not None) whose result
+    """Prompts among the *SC* prompts (expect_tool is not None, or flagged
+    uncovered_sc) whose result
     ran with sc_state != "available" -- i.e. sc-knowledge went unhealthy
     partway through the run (the health-probe TTL expired into an outage
     after preflight passed). Without this check these turns look like
@@ -120,7 +121,7 @@ def _sc_prompts_with_outage(records: list[tuple[dict, AgentChatResult]]) -> list
     actually are."""
     return [
         c["prompt"] for c, r in records
-        if c.get("expect_tool") is not None and r.sc_state != "available"
+        if (c.get("expect_tool") is not None or c.get("uncovered_sc")) and r.sc_state != "available"
     ]
 
 
@@ -150,7 +151,11 @@ def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hi
             print(f"  [{expect:22}] {rate:4.0%}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
         elif case.get("uncovered_sc"):
             called = ",".join(sorted({n for r in case_records for n in r.sc_tool_names})) or "none"
-            print(f"  [{'uncovered-sc':22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}  sc_calls={called}")
+            no_search = sum(1 for r in case_records if not getattr(r, "web_search_queries", 0))
+            # Soft signal, not a gate: an uncovered SC question should normally
+            # go to google_search rather than an unconfirmed-memory answer.
+            flag = f"  <-- NO WEB SEARCH in {no_search}/{len(case_records)} runs" if no_search else ""
+            print(f"  [{'uncovered-sc':22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}  sc_calls={called}{flag}")
         else:
             bad_n = sum(1 for r in case_records if r.sc_tool_names)
             flag = "  <-- FALSE SC CALL" if bad_n else ""

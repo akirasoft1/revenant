@@ -74,3 +74,23 @@ def test_sc_prompts_with_outage_flags_unavailable_sc_prompts_only():
         ({"prompt": "c", "expect_tool": None}, _result(sc_state="unavailable")),
     ]
     assert _sc_prompts_with_outage(recs) == ["b"]
+
+
+def test_sc_prompts_with_outage_includes_uncovered_sc_prompts():
+    recs = [
+        ({"prompt": "u", "expect_tool": None, "uncovered_sc": True}, _result(sc_state="unavailable")),
+        ({"prompt": "c", "expect_tool": None}, _result(sc_state="unavailable")),
+    ]
+    assert _sc_prompts_with_outage(recs) == ["u"]
+
+
+def test_report_flags_uncovered_sc_runs_without_web_search(capsys, monkeypatch):
+    import eval.eval_sc as E
+    case = {"prompt": "what turret does the Anvil Spartan have", "expect_tool": None, "uncovered_sc": True}
+    monkeypatch.setattr(E, "SC_EVAL_SET", [case])
+    recs = [(case, AgentChatResult("x", [], False, sc_state="available", web_search_queries=0)),
+            (case, AgentChatResult("x", [], False, sc_state="available", web_search_queries=2))]
+    score = E.score_sc(recs)
+    E._print_report(recs, 2, 0.9, score, [])
+    out = capsys.readouterr().out
+    assert "NO WEB SEARCH" in out and "1/2" in out

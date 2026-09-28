@@ -81,3 +81,10 @@ async def test_refusal_detail_points_to_location_shops_and_google_search():
     t = RunInSandboxTool(orch=Orch(), user_id="u", call_budget=5)
     r = await t.run(language="bash", code="curl https://starcitizen.tools")
     assert "sc_location_shops" in r["detail"] and "google_search" in r["detail"]
+
+
+async def test_refusal_log_names_matched_host(caplog):
+    t = RunInSandboxTool(orch=Orch(), user_id="u", call_budget=5)
+    with caplog.at_level("INFO", logger="src.tools"):
+        await t.run(language="bash", code="curl https://www.erkul.games/live")
+    assert any("erkul.games" in r.getMessage() for r in caplog.records)

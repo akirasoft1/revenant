@@ -139,6 +139,16 @@ def test_google_search_not_attached_for_a_non_gemini_model_object(monkeypatch):
     assert "google_search" not in cap["instruction"]
 
 
+def test_google_search_not_attached_for_gemini_object_with_non_gemini_name(monkeypatch):
+    # ADK's google_search raises "not supported" unless is_gemini_model(model.model).
+    from google.adk.models import Gemini
+    ag, cap = _agent(monkeypatch)
+    monkeypatch.setattr(A, "_build_model", lambda spec: Gemini(model="my-tuned-endpoint"))
+    _chat(ag)
+    assert google_search not in cap["tools"]
+    assert "google_search" not in cap["instruction"]
+
+
 def test_never_uses_bypass_mode_google_search_tool(monkeypatch):
     # GoogleSearchTool(bypass_multi_tools_limit=True) crashes in ADK 2.10;
     # only the stock module-level instance may be attached.
@@ -154,9 +164,27 @@ def test_never_uses_bypass_mode_google_search_tool(monkeypatch):
 def test_web_search_preamble_content():
     p = WEB_SEARCH_PREAMBLE
     assert "google_search" in p
-    for s in ("news", "patch notes", "website", "training data"):
+    for s in ("news", "patch notes", "docs", "training data"):
         assert s in p
-    assert "never use run_in_sandbox to fetch or scrape web pages or search engines" in p
+    # look-up clause
+    assert ("never use run_in_sandbox to scrape web pages or query search engines "
+            "to find information") in p
+    # carve-out clause: sandbox stays correct for live network behavior/recon,
+    # so it doesn't contradict TOOL_AVAILABILITY_PREAMBLE
+    assert "The sandbox is still correct when the live network behavior of a specific target" in p
+    for s in ("headers", "TLS", "redirects", "raw content of a URL the user named", "recon of a host"):
+        assert s in p
+
+
+def test_web_search_preamble_verbatim():
+    assert WEB_SEARCH_PREAMBLE == (
+        "You also have google_search. To look up information — news, patch notes, docs, what "
+        "sources say about a topic, anything past your training data — use google_search; never "
+        "use run_in_sandbox to scrape web pages or query search engines to find information. The "
+        "sandbox is still correct when the live network behavior of a specific target is itself "
+        "the subject — an HTTP response's status, headers, TLS, redirects or timing, the raw "
+        "content of a URL the user named, or recon of a host."
+    )
 
 
 def test_tool_availability_preamble_itself_is_unchanged_and_search_free():
@@ -186,7 +214,9 @@ def test_sc_preamble_lists_location_shops_and_memory_rule(web):
     assert "years out of date" in p
     for s in ("vaulted", "removed", "not in the game", "located somewhere"):
         assert s in p
-    assert "the results win" in p
+    assert "results win" in p
+    assert ("tool or search results" in p) is web
+    assert ("tool results win" in p) is (not web)
     # never-sandbox rule kept
     assert "never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data" in p
     # the old, dishonest "web search" sentence is gone
@@ -204,6 +234,14 @@ def test_sc_preamble_ordered_policy_names_search_only_when_attached():
     assert on.index("(1)") < on.index("(2)") < on.index("(3)")
     assert on.index("google_search") < on.index("(3)")
     assert "google_search" not in off
+    # empty / not_found results fall through too, not only "no tool covers it"
+    two_on = on[on.index("(2)"):on.index("(3)")]
+    assert "return nothing" in two_on and "not_found" in two_on
+    three_on = on[on.index("(3)"):]
+    assert three_on.startswith("(3) if that still yields nothing reliable")
+    two_off = off[off.index("(2)"):]
+    assert "return nothing" in two_off and "not_found" in two_off
+    assert "never" in two_off and "memory" in two_off
 
 
 @pytest.mark.parametrize("web", [True, False])
@@ -211,7 +249,9 @@ def test_sc_unavailable_note_rules(web):
     n = sc_tools_unavailable_note(web_search=web)
     assert ("google_search" in n) is web
     assert "run_in_sandbox" in n
-    assert "vaulted" in n and "the results win" in n
+    assert "vaulted" in n and "results win" in n
+    assert ("tool or search results" in n) is web
+    assert ("tool results win" in n) is (not web)
 
 
 def test_legacy_constants_are_the_no_search_variants():

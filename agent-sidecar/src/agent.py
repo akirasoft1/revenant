@@ -14,6 +14,7 @@ from google.adk.agents import Agent
 from google.adk.models import Gemini
 from google.adk.runners import InMemoryRunner
 from google.adk.tools import google_search
+from google.adk.utils.model_name_utils import is_gemini_model
 from google.adk.tools.base_toolset import BaseToolset
 from google.genai import types
 
@@ -270,15 +271,17 @@ auto-attached via reaction reveal).
 # google_search is actually attached (Gemini-native model + flag on), so the
 # prompt never promises a tool the model doesn't have.
 WEB_SEARCH_PREAMBLE = """
-You also have google_search. For current or external facts - news, patch notes, what a website says, anything past your training data - use google_search; never use run_in_sandbox to fetch or scrape web pages or search engines.
+You also have google_search. To look up information — news, patch notes, docs, what sources say about a topic, anything past your training data — use google_search; never use run_in_sandbox to scrape web pages or query search engines to find information. The sandbox is still correct when the live network behavior of a specific target is itself the subject — an HTTP response's status, headers, TLS, redirects or timing, the raw content of a URL the user named, or recon of a host.
 """.strip()
 
-_SC_MEMORY_RULE = (
-    "Your Star Citizen training knowledge is years out of date — locations, systems and items "
-    "get added and moved every patch. Never assert from memory that something is vaulted, "
-    "removed, not in the game, or located somewhere; when tool or search results contradict "
-    "your memory, the results win."
-)
+def _sc_memory_rule(*, web_search: bool) -> str:
+    results = "tool or search results contradict your memory, the results win" if web_search \
+        else "tool results contradict your memory, tool results win"
+    return (
+        "Your Star Citizen training knowledge is years out of date — locations, systems and items "
+        "get added and moved every patch. Never assert from memory that something is vaulted, "
+        f"removed, not in the game, or located somewhere; when {results}."
+    )
 
 _SC_UNCOVERED = "vehicle loadouts, crafting/blueprints, lore, patch news, location facilities"
 
@@ -294,13 +297,15 @@ def sc_tools_preamble(*, web_search: bool) -> str:
     if web_search:
         policy = (
             "(1) call the sc_* tools first; "
-            f"(2) if no sc_* tool covers it ({_SC_UNCOVERED}), use google_search and say the answer is web-sourced; "
-            f"(3) otherwise {_SC_MEMORY_FALLBACK}."
+            f"(2) if no sc_* tool covers it ({_SC_UNCOVERED}) or the tools return nothing / not_found, "
+            "use google_search and say the answer is web-sourced; "
+            f"(3) if that still yields nothing reliable, {_SC_MEMORY_FALLBACK}."
         )
     else:
         policy = (
             "(1) call the sc_* tools first; "
-            f"(2) if no sc_* tool covers it ({_SC_UNCOVERED}), {_SC_MEMORY_FALLBACK}."
+            f"(2) if no sc_* tool covers it ({_SC_UNCOVERED}) or the tools return nothing / not_found, "
+            f"{_SC_MEMORY_FALLBACK}."
         )
     return (
         "Star Citizen: you have live-data tools for the game Star Citizen — sc_find_item (item stats + where to buy it, with prices), "
@@ -309,7 +314,7 @@ def sc_tools_preamble(*, web_search: bool) -> str:
         "sc_location_shops (what the shops at a place sell, and which items are unique to that place), "
         "and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). "
         f"For ANY Star Citizen question, in order: {policy} "
-        f"{_SC_MEMORY_RULE} "
+        f"{_sc_memory_rule(web_search=web_search)} "
         "Tool numbers are already ranked and computed; never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data. "
         "Mention the data's patch or age when prices or availability matter. "
         "If a tool returns an error or candidates, say so or ask which one was meant — do not invent values."
@@ -326,7 +331,7 @@ def sc_tools_unavailable_note(*, web_search: bool) -> str:
     return (
         "Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen, "
         f"say live data is unavailable right now and {fallback} — do not use run_in_sandbox to fetch Star Citizen data. "
-        f"{_SC_MEMORY_RULE}"
+        f"{_sc_memory_rule(web_search=web_search)}"
     )
 
 
@@ -396,7 +401,14 @@ class ChannelVoiceAgent:
         is the native `Gemini` one _build_model returns — ADK's built-in
         search is a Gemini feature (ADK raises for any other model), and
         LiteLlm-wrapped models never get it."""
-        return bool(getattr(self._config, "agent_web_search_enabled", False)) and isinstance(model, Gemini)
+        # isinstance alone isn't enough: GoogleSearchTool raises "not supported"
+        # (failing every turn) unless ADK's own is_gemini_model() accepts the
+        # model NAME, e.g. a Gemini(...) pointed at a custom endpoint id.
+        return (
+            bool(getattr(self._config, "agent_web_search_enabled", False))
+            and isinstance(model, Gemini)
+            and is_gemini_model(getattr(model, "model", None))
+        )
 
     def _compose_instruction(
         self, *, system_prompt: str, sc_state: str = "off", web_search: bool = False,

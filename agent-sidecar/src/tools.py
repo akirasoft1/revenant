@@ -16,6 +16,9 @@ log = logging.getLogger(__name__)
 # should be accessed via sc_* tools (or google_search) instead of the
 # sandbox. The second group are the community sites the model was caught
 # scraping through the sandbox for questions no sc_* tool covered.
+# Blocking all of robertsspaceindustries.com (not just a few paths) is
+# deliberate: the only reason to reach RSI from the sandbox here is scraping
+# game data / patch notes, which google_search covers without a pod.
 SC_DATA_HOST_PATTERN = re.compile(
     r"(uexcorp\.(space|uk)|star-citizen\.wiki|sc-trade\.tools|scunpacked"
     r"|starcitizen\.tools|erkul\.games|cstone\.space|sc-craft\.tools"
@@ -54,8 +57,10 @@ class RunInSandboxTool:
 
         # Check for SC host refusal BEFORE budget and orchestrator.
         # This refusal does NOT consume budget or append to execution_ids/results.
-        if SC_DATA_HOST_PATTERN.search(code or "") or SC_DATA_HOST_PATTERN.search(stdin or ""):
-            log.info("run_in_sandbox refused: Star Citizen data host in code; use sc_* tools or google_search")
+        m = SC_DATA_HOST_PATTERN.search(code or "") or SC_DATA_HOST_PATTERN.search(stdin or "")
+        if m:
+            log.info("run_in_sandbox refused: Star Citizen data host %s in code/stdin; "
+                     "use sc_* tools or google_search", m.group(0))
             return {
                 "exit_code": -4,
                 "error": "use_sc_tools",
