@@ -273,6 +273,11 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
                 span.set_attribute("sc.tools.available", result_sc_state == "available")
                 span.set_attribute("sc.tool.calls", len(sc_tool_names))
                 span.set_attribute("sc.tool.names", ",".join(sc_tool_names))
+                # How many google_search grounding queries the turn issued
+                # (0 when search wasn't attached or wasn't used).
+                span.set_attribute(
+                    "web_search.queries", int(getattr(result, "web_search_queries", 0) or 0),
+                )
         except asyncio.CancelledError:
             self._breaker.record_failure(
                 "Chat cancelled before it produced a reply — the client's deadline expired "

@@ -50,14 +50,17 @@ def score_sc(records: list[tuple[dict, AgentChatResult]]) -> dict:
     - tool_hit_rate: share of SC prompts (`expect_tool is not None`) whose
       `expect_tool` appears in `result.sc_tool_names`.
     - control_false_sc_calls: count of control prompts (`expect_tool is
-      None`) that called ANY sc_* tool.
+      None` and not `uncovered_sc`) that called ANY sc_* tool. Uncovered-SC
+      prompts are excluded here (an sc_* attempt on them is reasonable) but
+      still count toward sandbox_attempts_total.
     """
     sandbox_attempts_total = sum(r.sandbox_attempts for _, r in records)
     sc_cases = [(c, r) for c, r in records if c.get("expect_tool") is not None]
     hits = sum(1 for c, r in sc_cases if c["expect_tool"] in r.sc_tool_names)
     tool_hit_rate = (hits / len(sc_cases)) if sc_cases else 0.0
     control_false_sc_calls = sum(
-        1 for c, r in records if c.get("expect_tool") is None and r.sc_tool_names
+        1 for c, r in records
+        if c.get("expect_tool") is None and not c.get("uncovered_sc") and r.sc_tool_names
     )
     return {
         "sandbox_attempts_total": sandbox_attempts_total,
@@ -139,15 +142,20 @@ def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hi
         case_records = [r for c, r in records if c is case]
         expect = case["expect_tool"]
         states = ",".join(sorted({r.sc_state for r in case_records})) if case_records else "?"
+        searches = ",".join(str(getattr(r, "web_search_queries", 0)) for r in case_records)
         if expect is not None:
             hit_n = sum(1 for r in case_records if expect in r.sc_tool_names)
             rate = hit_n / len(case_records) if case_records else 0.0
             flag = "  <-- MISS" if rate < 1.0 else ""
             print(f"  [{expect:22}] {rate:4.0%}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
+        elif case.get("uncovered_sc"):
+            called = ",".join(sorted({n for r in case_records for n in r.sc_tool_names})) or "none"
+            print(f"  [{'uncovered-sc':22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}  sc_calls={called}")
         else:
             bad_n = sum(1 for r in case_records if r.sc_tool_names)
             flag = "  <-- FALSE SC CALL" if bad_n else ""
             print(f"  [{'control':22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
+        print(f"      web_search.queries per run: [{searches}]")
         sandbox_n = sum(r.sandbox_attempts for r in case_records)
         if sandbox_n:
             print(f"      sandbox_attempts={sandbox_n}  <-- HARD GATE VIOLATION")

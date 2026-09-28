@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from google.adk.agents import Agent
 from google.adk.models import Gemini
 from google.adk.runners import InMemoryRunner
+from google.adk.tools import google_search
 from google.adk.tools.base_toolset import BaseToolset
 from google.genai import types
 
@@ -181,6 +182,21 @@ def _gemini_retry_options():
     )
 
 
+def _normalize_model_spec(model_spec: str) -> str:
+    spec = (model_spec or "").strip() or "gemini-3.8-flash"
+    if spec.startswith("gemini/"):
+        spec = spec[len("gemini/"):]
+    return spec
+
+
+def _is_gemini_native(model_spec: str) -> bool:
+    """True when _build_model returns a native `Gemini` model (not LiteLlm).
+    Single authority for both the model choice and whether Gemini-only
+    built-ins such as google_search can be attached."""
+    spec = _normalize_model_spec(model_spec)
+    return spec.startswith("gemini") or "/" not in spec
+
+
 def _build_model(model_spec: str):
     """Map an `AGENT_MODEL` env value to whatever ADK's `Agent(model=…)`
     expects. For Gemini we return a `Gemini` model wired with SDK-level
@@ -193,10 +209,8 @@ def _build_model(model_spec: str):
       "openai/gpt-6-luna"           -> LiteLlm("openai/gpt-6-luna")
       "anthropic/claude-opus-4-7"   -> LiteLlm("anthropic/...")
     """
-    spec = (model_spec or "").strip() or "gemini-3.8-flash"
-    if spec.startswith("gemini/"):
-        spec = spec[len("gemini/"):]
-    if spec.startswith("gemini") or "/" not in spec:
+    spec = _normalize_model_spec(model_spec)
+    if _is_gemini_native(model_spec):
         return Gemini(model=spec, retry_options=_gemini_retry_options())
     # Non-Gemini providers go through LiteLlm. Imported lazily so we don't
     # require the litellm dependency just to run the default Gemini path.
@@ -252,13 +266,73 @@ prefix your reply with a personality header; don't paste long code (it's
 auto-attached via reaction reveal).
 """.strip()
 
-SC_TOOLS_PREAMBLE = """
-Star Citizen: you have live-data tools for the game Star Citizen — sc_find_item (item stats + where to buy it, with prices), sc_compare_components (rank ship components of a type and size), sc_faction_missions (a faction's rank ladder and missions ranked by reputation per minute), sc_trade_routes (profitable commodity routes from a location, profit already computed for the cargo/budget), sc_commodity_prices, and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). For ANY Star Citizen question about items, ship components, shops, prices, missions, reputation, or trading, call these tools instead of answering from memory — the game changes every patch. Their numbers are already ranked and computed; never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data. Use web search on top of them only for community strategy or opinions. Mention the data's patch or age when prices or availability matter. If a tool returns an error or candidates, say so or ask which one was meant — do not invent values.
+# Appended after TOOL_AVAILABILITY_PREAMBLE only on turns where ADK's native
+# google_search is actually attached (Gemini-native model + flag on), so the
+# prompt never promises a tool the model doesn't have.
+WEB_SEARCH_PREAMBLE = """
+You also have google_search. For current or external facts - news, patch notes, what a website says, anything past your training data - use google_search; never use run_in_sandbox to fetch or scrape web pages or search engines.
 """.strip()
 
-SC_TOOLS_UNAVAILABLE_NOTE = """
-Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen items, prices, missions or trade, say live data is unavailable right now and answer only with clearly-labelled general knowledge — do not use run_in_sandbox to fetch Star Citizen data.
-""".strip()
+_SC_MEMORY_RULE = (
+    "Your Star Citizen training knowledge is years out of date — locations, systems and items "
+    "get added and moved every patch. Never assert from memory that something is vaulted, "
+    "removed, not in the game, or located somewhere; when tool or search results contradict "
+    "your memory, the results win."
+)
+
+_SC_UNCOVERED = "vehicle loadouts, crafting/blueprints, lore, patch news, location facilities"
+
+_SC_MEMORY_FALLBACK = (
+    "answer only as clearly-labelled, possibly outdated general knowledge and say live data "
+    "couldn't confirm it"
+)
+
+
+def sc_tools_preamble(*, web_search: bool) -> str:
+    """Star Citizen tools note for a turn where the sc_* tools are attached.
+    The ordered fallback policy only names google_search when it is attached."""
+    if web_search:
+        policy = (
+            "(1) call the sc_* tools first; "
+            f"(2) if no sc_* tool covers it ({_SC_UNCOVERED}), use google_search and say the answer is web-sourced; "
+            f"(3) otherwise {_SC_MEMORY_FALLBACK}."
+        )
+    else:
+        policy = (
+            "(1) call the sc_* tools first; "
+            f"(2) if no sc_* tool covers it ({_SC_UNCOVERED}), {_SC_MEMORY_FALLBACK}."
+        )
+    return (
+        "Star Citizen: you have live-data tools for the game Star Citizen — sc_find_item (item stats + where to buy it, with prices), "
+        "sc_compare_components (rank ship components of a type and size), sc_faction_missions (a faction's rank ladder and missions ranked by reputation per minute), "
+        "sc_trade_routes (profitable commodity routes from a location, profit already computed for the cargo/budget), sc_commodity_prices, "
+        "sc_location_shops (what the shops at a place sell, and which items are unique to that place), "
+        "and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). "
+        f"For ANY Star Citizen question, in order: {policy} "
+        f"{_SC_MEMORY_RULE} "
+        "Tool numbers are already ranked and computed; never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data. "
+        "Mention the data's patch or age when prices or availability matter. "
+        "If a tool returns an error or candidates, say so or ask which one was meant — do not invent values."
+    )
+
+
+def sc_tools_unavailable_note(*, web_search: bool) -> str:
+    """Star Citizen note for a turn where sc-knowledge is down."""
+    fallback = (
+        "use google_search and say the answer is web-sourced, or else answer only with clearly-labelled, possibly outdated general knowledge"
+        if web_search else
+        "answer only with clearly-labelled, possibly outdated general knowledge"
+    )
+    return (
+        "Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen, "
+        f"say live data is unavailable right now and {fallback} — do not use run_in_sandbox to fetch Star Citizen data. "
+        f"{_SC_MEMORY_RULE}"
+    )
+
+
+# The no-search variants, kept under their historical names.
+SC_TOOLS_PREAMBLE = sc_tools_preamble(web_search=False)
+SC_TOOLS_UNAVAILABLE_NOTE = sc_tools_unavailable_note(web_search=False)
 
 
 @dataclass
@@ -287,6 +361,10 @@ class AgentChatResult:
     # "off" (sc tools disabled entirely), "available" (health + sc_* tool listing passed, attached
     # this turn), or "unavailable" (either check failed; turn ran without them).
     sc_state: str = "off"
+    # Number of google_search grounding queries the model issued this turn:
+    # the sum of `grounding_metadata.web_search_queries` across the turn's
+    # events. 0 when search wasn't attached or wasn't used.
+    web_search_queries: int = 0
 
 
 class ChannelVoiceAgent:
@@ -313,19 +391,33 @@ class ChannelVoiceAgent:
         it, so the flag can never disagree with what was actually sent."""
         return not (system_prompt and system_prompt.strip())
 
-    def _compose_instruction(self, *, system_prompt: str, sc_state: str = "off") -> str:
+    def _web_search_attached(self, model) -> bool:
+        """google_search rides along only when enabled AND this turn's model
+        is the native `Gemini` one _build_model returns — ADK's built-in
+        search is a Gemini feature (ADK raises for any other model), and
+        LiteLlm-wrapped models never get it."""
+        return bool(getattr(self._config, "agent_web_search_enabled", False)) and isinstance(model, Gemini)
+
+    def _compose_instruction(
+        self, *, system_prompt: str, sc_state: str = "off", web_search: bool = False,
+    ) -> str:
         """Build the ADK Agent instruction: bot-supplied system_prompt when
         present, else the sidecar's own base prompt (old-bot-client
         backward compat), always followed by the sandbox tool preamble, then
         (when sc_state != "off") a Star Citizen tools note. With sc_state
         "off" (the default) this is byte-identical to before sc-knowledge
-        existed — pinned by test_instruction_off_is_byte_identical_to_today."""
+        existed — pinned by test_instruction_off_is_byte_identical_to_today.
+        `web_search` must be True only when google_search is actually on the
+        Agent this turn; it adds WEB_SEARCH_PREAMBLE and switches the SC notes
+        to their search-aware variants."""
         base = self._base_system_prompt if self._uses_base_prompt(system_prompt) else system_prompt.strip()
         instruction = f"{base}\n\n{TOOL_AVAILABILITY_PREAMBLE}"
+        if web_search:
+            instruction = f"{instruction}\n\n{WEB_SEARCH_PREAMBLE}"
         if sc_state == "available":
-            instruction = f"{instruction}\n\n{SC_TOOLS_PREAMBLE}"
+            instruction = f"{instruction}\n\n{sc_tools_preamble(web_search=web_search)}"
         elif sc_state == "unavailable":
-            instruction = f"{instruction}\n\n{SC_TOOLS_UNAVAILABLE_NOTE}"
+            instruction = f"{instruction}\n\n{sc_tools_unavailable_note(web_search=web_search)}"
         return instruction
 
     def _compose_context_block(self, *, memory_context: str, history) -> str:
@@ -408,16 +500,25 @@ class ChannelVoiceAgent:
             except ToolBudgetExceeded:
                 return {"exit_code": -3, "error": "turn_call_budget_exceeded"}
 
+        model = _build_model(self._config.agent_model)
+        web_search = self._web_search_attached(model)
         tools = [run_in_sandbox] + (
             [_PerTurnToolsetProxy(ts) for ts in self._sc_tools.toolsets]
             if sc_state == "available" else []
         )
+        if web_search:
+            # The stock instance ONLY. GoogleSearchTool(bypass_multi_tools_limit=True)
+            # crashes in google-adk 2.10 (PydanticSerializationError / MockValSer);
+            # the stock built-in combines natively with function tools on Gemini 3.x.
+            tools.append(google_search)
         agent = Agent(
             name="channel_voice",
             description="Discord channel-voice agent with sandboxed execution capabilities.",
-            instruction=self._compose_instruction(system_prompt=system_prompt, sc_state=sc_state),
+            instruction=self._compose_instruction(
+                system_prompt=system_prompt, sc_state=sc_state, web_search=web_search,
+            ),
             tools=tools,
-            model=_build_model(self._config.agent_model),
+            model=model,
             generate_content_config=_build_generate_content_config(),
         )
         runner = InMemoryRunner(agent=agent, app_name=_APP_NAME)
@@ -430,10 +531,15 @@ class ChannelVoiceAgent:
         new_message = types.Content(role="user", parts=[types.Part(text=text)])
         message_text = ""
         sc_tool_names: list[str] = []
+        web_search_queries = 0
         try:
             async for event in runner.run_async(
                 user_id=user_id, session_id=user_id, new_message=new_message,
             ):
+                # Grounding metadata can arrive on an event without content,
+                # so read it before the content check below.
+                grounding = getattr(event, "grounding_metadata", None)
+                web_search_queries += len(getattr(grounding, "web_search_queries", None) or [])
                 content = getattr(event, "content", None)
                 if content is None:
                     continue
@@ -472,6 +578,8 @@ class ChannelVoiceAgent:
             except Exception:  # noqa: BLE001
                 log.debug("runner.close() failed", exc_info=True)
 
+        if web_search_queries > 0:
+            log.info("agent turn used google_search: web_search.queries=%d", web_search_queries)
         any_failed = any(getattr(r, "exit_code", 0) != 0 for r in tool.results)
         return AgentChatResult(
             message_text=message_text,
@@ -481,4 +589,5 @@ class ChannelVoiceAgent:
             sc_tool_names=sc_tool_names,
             sandbox_attempts=tool.attempts,
             sc_state=sc_state,
+            web_search_queries=web_search_queries,
         )

@@ -13,9 +13,13 @@ from .orchestrator import (
 log = logging.getLogger(__name__)
 
 # Compiled regex, case-insensitive, matching Star Citizen data hosts that
-# should be accessed via sc_* tools instead of the sandbox.
+# should be accessed via sc_* tools (or google_search) instead of the
+# sandbox. The second group are the community sites the model was caught
+# scraping through the sandbox for questions no sc_* tool covered.
 SC_DATA_HOST_PATTERN = re.compile(
-    r"(uexcorp\.(space|uk)|star-citizen\.wiki|sc-trade\.tools|scunpacked)",
+    r"(uexcorp\.(space|uk)|star-citizen\.wiki|sc-trade\.tools|scunpacked"
+    r"|starcitizen\.tools|erkul\.games|cstone\.space|sc-craft\.tools"
+    r"|robertsspaceindustries\.com|spviewer\.eu|scmdb\.net)",
     re.IGNORECASE,
 )
 
@@ -51,11 +55,11 @@ class RunInSandboxTool:
         # Check for SC host refusal BEFORE budget and orchestrator.
         # This refusal does NOT consume budget or append to execution_ids/results.
         if SC_DATA_HOST_PATTERN.search(code or "") or SC_DATA_HOST_PATTERN.search(stdin or ""):
-            log.info("run_in_sandbox refused: Star Citizen data host in code; use sc_* tools")
+            log.info("run_in_sandbox refused: Star Citizen data host in code; use sc_* tools or google_search")
             return {
                 "exit_code": -4,
                 "error": "use_sc_tools",
-                "detail": "Star Citizen data is available through the sc_find_item, sc_compare_components, sc_faction_missions, sc_trade_routes, sc_commodity_prices and sc_org_guides tools. Do not fetch it in the sandbox.",
+                "detail": "Star Citizen data is available through the sc_find_item, sc_compare_components, sc_faction_missions, sc_trade_routes, sc_commodity_prices, sc_location_shops and sc_org_guides tools; for anything they don't cover, use google_search if you have it. Do not fetch or scrape it in the sandbox.",
                 "execution_id": None,
             }
 
