@@ -13,7 +13,7 @@ from src.server import _patch_note, build_app
 from tests.conftest import fixture_transport
 
 EXPECTED = {"sc_find_item", "sc_compare_components", "sc_faction_missions",
-            "sc_trade_routes", "sc_commodity_prices", "sc_org_guides"}
+            "sc_trade_routes", "sc_commodity_prices", "sc_org_guides", "sc_location_shops"}
 
 GUIDES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "guides")
 
@@ -71,7 +71,7 @@ async def server_url():
         yield url
 
 
-async def test_lists_exactly_the_six_tools(server_url):
+async def test_lists_exactly_the_seven_tools(server_url):
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     async with streamable_http_client(f"{server_url}/mcp") as streams:
@@ -353,3 +353,36 @@ async def test_tool_call_returns_fast_without_note_patch_when_game_versions_hang
     assert "note_patch" not in data
     assert data["where_to_buy"][0]["price_auec"] == 352000
     assert elapsed < 1.2
+
+
+async def test_call_location_shops_round_trip():
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from tests.test_tools_shops import _transport
+    app = build_app(load(), uex_transport=_transport(), guides_dir=GUIDES_DIR)
+    async with _running(app) as url:
+        async with streamable_http_client(f"{url}/mcp") as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                res = await s.call_tool("sc_location_shops",
+                                        {"location": "Levski", "exclusive_only": True})
+    assert not res.is_error
+    data = res.structured_content or json.loads(res.content[0].text)
+    data = data.get("result", data)
+    assert data["location"] == "Levski"
+    assert data["items"] and all(i["exclusive"] for i in data["items"])
+
+
+async def test_startup_warms_shop_data_in_background():
+    """The voice path bounds a tool call at 6s; items_prices_all is ~6 MB, so
+    startup must prefetch it (plus categories and terminals) into the cache
+    without blocking the server from starting."""
+    from tests.test_tools_shops import _transport
+    calls: list = []
+    app = build_app(load(), uex_transport=_transport(calls=calls), guides_dir=GUIDES_DIR)
+    async with _running(app):
+        for _ in range(100):
+            if {"/2.0/items_prices_all", "/2.0/categories", "/2.0/terminals"} <= set(calls):
+                break
+            await asyncio.sleep(0.05)
+    assert {"/2.0/items_prices_all", "/2.0/categories", "/2.0/terminals"} <= set(calls)

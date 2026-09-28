@@ -40,6 +40,14 @@ class UexClient:
     async def items_prices(self, id_item: int) -> list[dict]:
         return await self._data("items_prices", {"id_item": id_item})
 
+    async def items_prices_all(self) -> list[dict]:
+        """Every player-reported item price row across all terminals (~24k
+        rows, ~6 MB) -- cached and warmed at startup by ShopTools."""
+        return await self._data("items_prices_all")
+
+    async def categories(self) -> list[dict]:
+        return await self._data("categories")
+
     async def vehicles(self) -> list[dict]:
         return await self._data("vehicles")
 
