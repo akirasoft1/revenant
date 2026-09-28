@@ -47,12 +47,18 @@ TERMINALS = [
     # station tier, but "Nyx" the system must win (exact whole-field match).
     _t(301, "Admin - Nyx Gateway (Stanton)", system="Stanton", station="Nyx Gateway",
        orbit="Nyx Gateway (Stanton system)"),
+    # Same station name on the Pyro side: "Nyx Gateway" spans two systems.
+    _t(302, "Admin - Nyx Gateway (Pyro)", system="Pyro", station="Nyx Gateway",
+       orbit="Nyx Gateway (Pyro system)"),
     # Outpost named after the planet: token-matches "ArcCorp" at the outpost
     # tier, but "ArcCorp" the planet must win (and include Area 18).
     _t(210, "Admin - ArcCorp Mining Area 045", system="Stanton", planet="ArcCorp",
        outpost="ArcCorp Mining Area 045"),
     # Its NAME token-matches "Levski", but it's in Orison: a city match must win.
     _t(502, "Levski Souvenirs - Orison", system="Stanton", planet="Crusader", city="Orison"),
+    # A big system: 30 live shops, for the payload caps.
+    *[_t(900 + n, f"Bigsys Shop {n:02d}", system="Bigsys", city=f"Bigcity {n:02d}")
+      for n in range(30)],
 ]
 
 CATEGORIES = [
@@ -359,7 +365,8 @@ async def test_planet_exact_match_beats_outpost_token_match():
 
 async def test_station_exact_name_still_resolves():
     out = await _tools().location_shops("Nyx Gateway")
-    assert out["terminals"] == ["Admin - Nyx Gateway (Stanton)"]
+    assert sorted(out["terminals"]) == ["Admin - Nyx Gateway (Pyro)",
+                                        "Admin - Nyx Gateway (Stanton)"]
 
 
 async def test_connector_words_are_ignored():
@@ -396,3 +403,45 @@ async def test_section_counts_cover_full_filtered_set():
     }
     out = await _tools().location_shops("Levski", category="helmets")
     assert out["section_counts"] == {"Armor": {"total": 1, "exclusive": 1}}
+
+
+# --- Fix round 2 -------------------------------------------------------------
+
+BIG_PRICES = PRICES + [_p(2000 + n, 500, "Everywhere Gadget", 28, 900 + n, 100 + n)
+                       for n in range(30)]
+
+
+async def test_many_terminals_are_capped_with_count_and_note():
+    out = await _tools(prices=BIG_PRICES).location_shops("Bigsys")
+    assert out["terminal_count"] == 30
+    assert out["terminals"] == [f"Bigsys Shop {n:02d}" for n in range(25)]
+    assert any("30" in n and "terminal" in n.lower() for n in out["notes"])
+
+
+async def test_few_terminals_are_not_capped():
+    out = await _tools().location_shops("Levski")
+    assert out["terminal_count"] == 2
+    assert len(out["terminals"]) == 2
+    assert not any("showing 25" in n.lower() for n in out["notes"])
+
+
+async def test_item_terminals_capped_to_cheapest_three():
+    out = await _tools(prices=BIG_PRICES).location_shops("Bigsys")
+    item = _by_name(out)["Everywhere Gadget"]
+    assert [t["price_buy"] for t in item["terminals"]] == [100, 101, 102]
+    assert item["terminal_count"] == 30
+    # Broad (capped) queries drop per-shop dates; latest_report stays.
+    assert all("reported_at" not in t for t in item["terminals"])
+    assert out["latest_report"]
+    # An item at only a few terminals carries no terminal_count.
+    lev = _by_name(await _tools().location_shops("Levski"))["NN-13 Cannon"]
+    assert "terminal_count" not in lev
+    assert lev["terminals"][0]["reported_at"]
+
+
+async def test_multi_system_match_gets_a_note():
+    out = await _tools().location_shops("Nyx Gateway")
+    joined = " ".join(out["notes"])
+    assert "Pyro" in joined and "Stanton" in joined
+    single = await _tools().location_shops("Levski")
+    assert not any("star systems" in n for n in single["notes"])

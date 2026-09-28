@@ -53,6 +53,11 @@ _TERMINALS_KEY = "uex:terminals"
 _TERMINALS_TTL = 21600
 
 _MAX_LIMIT = 100
+# Payload caps (a system-wide query like "Stanton" matches ~460 terminals):
+# the top-level terminal list and each item's per-shop list are trimmed,
+# with the true counts kept alongside.
+_MAX_TERMINALS_LISTED = 25
+_MAX_ITEM_TERMINALS = 3
 
 # Most specific kind of place first; the first tier with any live match wins.
 _LOCATION_TIERS: tuple[tuple[str, ...], ...] = (
@@ -381,8 +386,17 @@ class ShopTools:
         rows = list(items.values())
         if exclusive_only:
             rows = [i for i in rows if i["exclusive"]]
+        broad = len(matched) > _MAX_TERMINALS_LISTED
         for i in rows:
+            if broad:
+                # Per-shop dates are ~40 bytes x 3 x 40 items; for a
+                # system-wide answer latest_report carries the data age.
+                for t in i["terminals"]:
+                    t.pop("reported_at", None)
             i["terminals"].sort(key=lambda t: (_num(t["price_buy"]), t["terminal"] or ""))
+            if len(i["terminals"]) > _MAX_ITEM_TERMINALS:
+                i["terminal_count"] = len(i["terminals"])
+                i["terminals"] = i["terminals"][:_MAX_ITEM_TERMINALS]
         rows.sort(key=_sort_key)
 
         cap = max(1, min(int(limit or 0), _MAX_LIMIT))
@@ -392,6 +406,18 @@ class ShopTools:
             c["total"] += 1
             c["exclusive"] += 1 if i["exclusive"] else 0
         notes = [_NOTE_CROWD_SOURCED, *notes]
+        terminal_names = sorted(t.get("name") or "" for t in matched)
+        if len(terminal_names) > _MAX_TERMINALS_LISTED:
+            notes.append(f"{label} matches {len(terminal_names)} shop terminals; showing "
+                         f"{_MAX_TERMINALS_LISTED} names, and each item lists only its "
+                         f"{_MAX_ITEM_TERMINALS} cheapest shops (no per-shop dates; latest_report is "
+                         "the newest report). Name a city, station or outpost for a "
+                         "shop-level answer.")
+        systems = sorted({t.get("star_system_name") for t in matched if t.get("star_system_name")})
+        if len(systems) > 1:
+            notes.append(f"'{location}' matched places in {len(systems)} star systems "
+                         f"({', '.join(systems)}); ask with a more specific place name "
+                         "(or the system) if only one was meant.")
         if not rows:
             notes.append(f"No player-reported item sales match at {label}.")
         elif len(rows) > cap:
@@ -402,7 +428,8 @@ class ShopTools:
         return {
             "source": SOURCE,
             "location": label,
-            "terminals": sorted(t.get("name") or "" for t in matched),
+            "terminal_count": len(terminal_names),
+            "terminals": terminal_names[:_MAX_TERMINALS_LISTED],
             "total_items": len(rows),
             "exclusive_count": sum(1 for i in rows if i["exclusive"]),
             "section_counts": section_counts,
