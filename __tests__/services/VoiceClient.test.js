@@ -121,6 +121,22 @@ describe('VoiceClient', () => {
     c.close();
   });
 
+  test('a control server event is surfaced as a session control event', () => {
+    const c = makeClient();
+    const fakeCall = makeFakeCall();
+    stubConverse(c, fakeCall);
+
+    const session = c.converse();
+    const seen = [];
+    session.on('control', (ctl) => seen.push(ctl));
+
+    fakeCall.emit('data', { control: { action: 'quiet', seconds: 600 }, event: 'control' });
+    fakeCall.emit('data', { control: { action: 'end', seconds: 0 }, event: 'control' });
+
+    expect(seen).toEqual([{ action: 'quiet', seconds: 600 }, { action: 'end', seconds: 0 }]);
+    c.close();
+  });
+
   test('call-level error and end are forwarded to the session', () => {
     const c = makeClient();
     const fakeCall = makeFakeCall();

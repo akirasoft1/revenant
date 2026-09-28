@@ -32,6 +32,15 @@ message TurnComplete {}
 message Interrupted {}
 message ErrorEvent { string message = 1; }
 
+// A spoken control command, recognised by the Live model calling one of the
+// sidecar's local control tools. action is "end" (end the conversation now)
+// or "quiet" (end it AND ignore the wake word for `seconds`; 0 = not given,
+// the bot applies its default and clamps).
+message Control {
+  string action  = 1;
+  int32  seconds = 2;
+}
+
 // Identity of the speaker whose audio follows. Sent only when the speaker
 // CHANGES, so it is decoupled from the audio cadence.
 message SetSpeaker {
@@ -66,5 +75,6 @@ message VoiceServerEvent {
     TurnComplete turn_complete      = 4;
     Interrupted  interrupted        = 5;
     ErrorEvent   error              = 6;
+    Control      control            = 7;
   }
 }

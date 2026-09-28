@@ -90,6 +90,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 - `/voice join` — bot joins your current voice channel; `/voice leave` — bot leaves
 - **Wake Word**: Say the wake phrase (default `"hey jarvis"`) to get the bot's attention, then speak your question — it replies out loud via a Gemini Live session. Detection is keyless and fully offline (openWakeWord ONNX models run in-process)
 - **Hot Follow-up Window**: After a reply, a brief window lets you keep talking without repeating the wake word
+- **Voice Control Commands**: Start what you say with "that's all" / "end the conversation" (after at most a wake phrase, "please", "thanks", or "can you") to end the session once the bot's short confirmation has played, or "go quiet for ten minutes" to also ignore the wake word from everyone for that long (1–120 min, default 15); `/voice resume` ends quiet mode early
 - **Dedicated Sidecar**: Runs on its own `discord-article-bot-voice` gRPC sidecar (separate from the agent sandbox sidecar), so voice sessions scale independently
 - **Channel Voice Personality**: Spoken replies reuse the same learned communication-style prompt as text chat
 - **Transcripts**: Every voice exchange is stored like a regular message, so it shows up in `/tldr` and memory recall
@@ -371,6 +372,7 @@ Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWa
 | `VOICE_MAX_SESSIONS` | `2` | Max concurrent voice sessions across the bot |
 | `VOICE_MAX_SESSION_SECONDS` | `600` | Hard cap on a single voice session's length (cost guard) |
 | `VOICE_SYSTEM_PROMPT` | `` | Overrides the system prompt passed to the Live session (defaults to the channel-voice personality prompt) |
+| `VOICE_CONTROL_COMMANDS_ENABLED` | `true` | Enable spoken "end conversation"/"go quiet" voice control commands (phrase backstop + `Control` events); the sidecar's own `VOICE_CONTROL_TOOLS_ENABLED` must also be `true` for the model-tool detection layer |
 
 ### Star Citizen Knowledge Configuration
 
@@ -451,6 +453,7 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 |---------|-------------|
 | `/voice join` | Bot joins your current voice channel; say the wake phrase (default `"hey jarvis"`) to talk to it |
 | `/voice leave` | Bot leaves the voice channel |
+| `/voice resume` | Ends "go quiet" mode early (quiet mode is started by saying e.g. "go quiet for ten minutes" or "stop listening for 20 minutes"; "thanks jarvis, that's all" only ends the current conversation and does NOT start quiet mode) — reports how much quiet time was left, cancels a quiet request whose confirmation hadn't finished playing yet, or says it wasn't in quiet mode |
 
 ### Utility
 | Command | Description |

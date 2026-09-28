@@ -1425,6 +1425,18 @@ describe('deferral: announce and release', () => {
     expect(session.sendAcknowledgeWaiting).toHaveBeenCalledTimes(1);
   });
 
+  test('does NOT announce while a spoken control command is pending (the session is about to end)', async () => {
+    const { svc, guildId, session, player } = await buildActiveVoiceService({ deferralEnabled: true });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+    session.emit('control', { action: 'end', seconds: 0 });
+    expect(g.pendingControl).not.toBeNull();
+    svc._tick(guildId);
+    expect(session.sendAcknowledgeWaiting).not.toHaveBeenCalled();
+    expect(g.floor.holder()).not.toBeNull();
+  });
+
   test('with the flag OFF, behaviour is unchanged', async () => {
     const { svc, guildId, session, player } = await buildActiveVoiceService({});  // default: disabled
     const g = qualifiedWaiter(svc, guildId, 'bob');
@@ -2570,5 +2582,548 @@ describe('2.8 — leave() always releases the guild', () => {
 
     expect(connection.destroy).toHaveBeenCalledTimes(1);
     expect(svc._guilds.has('g1')).toBe(false);
+  });
+});
+
+// --- Spoken control commands: end conversation / go quiet -------------------
+//
+// Two sources feed ONE idempotent request per session: the sidecar's local
+// `end_conversation` / `go_quiet` Live tools (a `control` session event) and a
+// bot-side phrase backstop over the current turn's input transcript. Teardown
+// waits for playback to drain (so the spoken confirmation is heard), bounded by
+// a 10s ceiling.
+describe('voice control commands', () => {
+  const CEILING_MS = 10000;
+
+  // Player is IDLE throughout unless a test is specifically about playback --
+  // that is what it really is when a request arrives (the user is still
+  // talking, or the model has only just emitted the tool call).
+  async function buildControl(configOverrides = {}) {
+    let t = 1000;
+    let wake = true;
+    const gate = { push: jest.fn(() => wake), reset: jest.fn() };
+    const deps = makeDeps({ makeWakeGate: () => gate, now: () => t });
+    const { svc, voiceClient, mongoService } = makeService(deps, configOverrides);
+    await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+    await svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024)); // wake -> session opens
+    wake = false;
+    const session = voiceClient.converse.mock.results[0].value;
+    const player = deps.createAudioPlayer.mock.results[0].value;
+    const g = svc._guilds.get('g1');
+    return {
+      svc, g, session, player, gate, voiceClient, mongoService, deps,
+      setNow: (v) => { t = v; }, now: () => t, setWake: (w) => { wake = w; },
+    };
+  }
+
+  // The user's utterance, fragment by fragment, then the model's reply turn.
+  function say(h, ...fragments) { for (const f of fragments) h.session.emit('inputTranscript', f); }
+  function reply(h, session = h.session) {
+    session.emit('audio', Buffer.alloc(480));
+    session.emit('outputTranscript', 'okay');
+    session.emit('turnComplete');
+  }
+  // Tool request + the spoken confirmation that follows it + drain.
+  function toolThenReply(h, action, seconds) {
+    h.session.emit('control', { action, seconds });
+    reply(h);
+    h.svc._tick('g1');
+  }
+
+  const infoLines = () => logger.info.mock.calls.map((c) => c[0]);
+
+  beforeEach(() => { logger.info.mockClear(); logger.warn.mockClear(); logger.debug.mockClear(); });
+
+  describe('execution timing', () => {
+    test('a tool request alone does not tear down (the confirmation has not been generated yet)', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'tool' }));
+      h.svc._tick('g1');
+      h.setNow(h.now() + 5000);
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      expect(h.session.end).not.toHaveBeenCalled();
+      expect(infoLines().some((l) => l.includes('voice command requested') && l.includes('end') && l.includes('tool'))).toBe(true);
+    });
+
+    test('request -> audio -> turnComplete -> drain tears down', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.session.emit('audio', Buffer.alloc(480));
+      h.player.state = { status: 'playing' };
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // reply done, but still being heard
+      h.player.state = { status: 'idle' }; // drained
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.session.end).toHaveBeenCalled();
+      expect(h.g.machine.state).toBe('idle');
+      expect(h.g.pendingControl).toBeNull();
+      expect(h.g.quietUntil || null).toBeNull();
+      expect(infoLines().some((l) => l.includes('ended by voice command (tool)'))).toBe(true);
+    });
+
+    test('a turnComplete from BEFORE the request does not count', async () => {
+      const h = await buildControl();
+      reply(h); // an earlier, unrelated turn
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+    });
+
+    // Final review C1: Gemini Live emits a turnComplete for the TOOL-CALL turn
+    // itself (no audio) ~10ms after the tool call, and the confirmation speech
+    // only starts ~250ms later. Control reaches the bot before that bare
+    // turnComplete, so it must not count as "the reply completed".
+    test('a bare tool-call turnComplete (no output) does not tear down', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'quiet', seconds: 600 });
+      h.session.emit('turnComplete'); // the tool-call turn: audio_out=0
+      h.svc._tick('g1'); // player idle -- nothing has been said yet
+      expect(h.g.session).toBe(h.session);
+      expect(h.session.end).not.toHaveBeenCalled();
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'quiet', replyCompleted: false }));
+    });
+
+    test('control -> bare turnComplete -> confirmation audio -> turnComplete -> drain tears down', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'quiet', seconds: 600 });
+      h.session.emit('turnComplete'); // tool-call turn
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.session.emit('audio', Buffer.alloc(480)); // the confirmation
+      h.player.state = { status: 'playing' };
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // still generating
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // generated, still being heard
+      h.player.state = { status: 'idle' };
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
+    });
+
+    test('an output transcript alone also counts as the reply having output', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.session.emit('outputTranscript', 'bye');
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+    });
+
+    test('a phrase request created AT the first output audio counts that audio', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      say(h, " that's all");
+      h.session.emit('audio', Buffer.alloc(480)); // phrase matched here; this IS the reply's output
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase', outputSeen: true }));
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+    });
+
+    test('a reply that never produces output falls to the 10s ceiling', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.session.emit('turnComplete'); // bare tool-call turn, and nothing after it
+      h.setNow(h.now() + CEILING_MS - 1);
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.setNow(h.now() + 1);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(infoLines().some((l) => l.includes('ceiling was reached'))).toBe(true);
+    });
+
+    test('the 10s ceiling fires with no turnComplete, measured from the FIRST request', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.setNow(h.now() + 9000);
+      h.session.emit('control', { action: 'end', seconds: 0 }); // duplicate does not extend
+      h.setNow(h.now() + CEILING_MS - 9000 - 1);
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.setNow(h.now() + 1);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.g.machine.state).toBe('idle');
+    });
+
+    test('after an "end" the very next wake word opens a new session (no quiet)', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'end', 0);
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      expect(h.voiceClient.converse).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('quiet duration', () => {
+    test('a tool "quiet" sets quietUntil AFTER the reset, with the requested duration', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 600);
+      expect(h.g.session).toBeNull();
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
+      expect(infoLines().some((l) => l.includes('ended by voice command (tool)'))).toBe(true);
+      expect(infoLines().some((l) => l.includes('quiet') && l.includes(new Date(h.now() + 600000).toISOString()))).toBe(true);
+      expect(h.svc.quietStatus('g1')).toEqual({ quiet: true, remainingMs: 600000 });
+    });
+
+    test.each([
+      [0, 900], // 0 on the wire = "not given" -> default 15 min
+      [null, 900],
+      [5, 60], // clamped to 1 min
+      [999999, 7200], // clamped to 120 min
+      [-30, 900],
+    ])('quiet seconds %p resolves to %p seconds', async (seconds, expected) => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', seconds);
+      expect(h.g.quietUntil).toBe(h.now() + expected * 1000);
+    });
+  });
+
+  describe('phrase backstop', () => {
+    test('is not evaluated per fragment -- only once the model starts replying', async () => {
+      const h = await buildControl();
+      say(h, " that's", ' all');
+      expect(h.g.pendingControl || null).toBeNull();
+      h.session.emit('audio', Buffer.alloc(480)); // end of the user's utterance
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase' }));
+    });
+
+    test('a command split across fragments executes after the reply to it', async () => {
+      const h = await buildControl();
+      say(h, ' end the', ' conversation');
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(infoLines().some((l) => l.includes('ended by voice command (phrase)'))).toBe(true);
+    });
+
+    test('evaluated at turnComplete when the reply carried no audio/transcript first -- but that turnComplete does not count as its reply', async () => {
+      const h = await buildControl();
+      say(h, ' end the conversation');
+      h.session.emit('turnComplete');
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase', replyCompleted: false }));
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // NOT torn down on the same turnComplete
+      reply(h); // the next reply turn (e.g. the confirmation)
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+    });
+
+    test('a phrase request created at turnComplete still tears down at the ceiling', async () => {
+      // Deployed follow-up window is 60s; the harness default (1s) would idle the
+      // session out long before the 10s ceiling and mask what is under test.
+      const h = await buildControl({ followupWindowMs: 60000 });
+      say(h, ' end the conversation');
+      h.session.emit('turnComplete');
+      h.setNow(h.now() + CEILING_MS - 1);
+      h.svc._tick('g1');
+      expect(h.g.pendingControl).not.toBeNull();
+      h.setNow(h.now() + 1);
+      h.svc._tick('g1');
+      expect(h.g.pendingControl).toBeNull();
+      expect(infoLines().some((l) => l.includes('ended by voice command (phrase)'))).toBe(true);
+    });
+
+    test('tool + phrase on one utterance, turnComplete BEFORE the confirmation audio: waits for the confirmation turnComplete + drain', async () => {
+      const h = await buildControl();
+      say(h, ' go quiet for ten minutes');
+      h.session.emit('turnComplete'); // tool-call-only model turn: phrase matched here
+      h.session.emit('control', { action: 'quiet', seconds: 600 }); // Control arrives after
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      h.session.emit('audio', Buffer.alloc(480)); // the spoken confirmation
+      h.player.state = { status: 'playing' };
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session); // still being heard
+      h.player.state = { status: 'idle' };
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
+    });
+
+    test.each([
+      [[' stop', ' listening', ' to him']],
+      [[" that's all", ' I wanted,', ' but also']],
+    ])('a prefix that is not the whole command never triggers: %j', async (fragments) => {
+      const h = await buildControl();
+      say(h, ...fragments);
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.pendingControl || null).toBeNull();
+      expect(h.g.session).toBe(h.session);
+      expect(infoLines().some((l) => l.includes('voice command'))).toBe(false);
+    });
+
+    test('"go quiet" + " for ten minutes" as fragments yields 600s, not the default', async () => {
+      const h = await buildControl();
+      say(h, ' go quiet', ' for ten minutes');
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
+    });
+
+    test('also matches fragments that carry no spaces of their own', async () => {
+      const h = await buildControl();
+      say(h, 'go', 'quiet');
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.quietUntil).toBe(h.now() + 900000);
+    });
+
+    test('is evaluated once per turn and re-armed for the next turn', async () => {
+      const h = await buildControl();
+      say(h, ' what time is it');
+      reply(h);
+      expect(h.g.pendingControl || null).toBeNull();
+      say(h, " that's all");
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+    });
+
+    test('an empty input buffer at the first output does not use up the turn\'s check (late input transcription)', async () => {
+      const h = await buildControl({ followupWindowMs: 60000 });
+      h.session.emit('audio', Buffer.alloc(480)); // reply starts before any input transcript arrived
+      say(h, " that's all"); // input transcription lands late
+      h.session.emit('turnComplete'); // the re-check at turn end still runs
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase' }));
+    });
+
+    test('a barge-in (interrupted, no turnComplete) re-arms the check for the next reply', async () => {
+      const h = await buildControl();
+      say(h, ' tell me a long story');
+      h.session.emit('audio', Buffer.alloc(480)); // checked: no match
+      h.session.emit('interrupted');
+      say(h, " that's all");
+      h.session.emit('audio', Buffer.alloc(480));
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'end', source: 'phrase' }));
+    });
+  });
+
+  describe('idempotence', () => {
+    test('the tool and phrase firing for the same utterance log one request; first wins', async () => {
+      const h = await buildControl();
+      say(h, "that's all");
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      h.session.emit('audio', Buffer.alloc(480)); // phrase evaluated now
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      expect(infoLines().filter((l) => l.includes('voice command requested')).length).toBe(1);
+      expect(h.g.pendingControl.source).toBe('tool');
+    });
+
+    test('a later "quiet" upgrades an earlier "end"; a later "end" never downgrades a "quiet"', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      say(h, ' go quiet for ten minutes');
+      h.session.emit('audio', Buffer.alloc(480));
+      expect(h.g.pendingControl).toEqual(expect.objectContaining({ action: 'quiet', seconds: 600 }));
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      expect(h.g.pendingControl.action).toBe('quiet');
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.quietUntil).toBe(h.now() + 600000);
+    });
+
+    test('a quiet with a duration fills in a pending quiet that had none', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'quiet', seconds: 0 });
+      h.session.emit('control', { action: 'quiet', seconds: 300 });
+      h.session.emit('control', { action: 'quiet', seconds: 1200 }); // first explicit wins
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.quietUntil).toBe(h.now() + 300000);
+    });
+
+    test('an unknown action is ignored', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'explode', seconds: 0 });
+      expect(h.g.pendingControl || null).toBeNull();
+    });
+
+    test('no re-trigger after execution: the dead session cannot request again and the next session starts clean', async () => {
+      const h = await buildControl();
+      say(h, "that's all");
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      // Late in-flight frames from the torn-down stream.
+      h.session.emit('inputTranscript', ' thanks');
+      h.session.emit('control', { action: 'end', seconds: 0 });
+      reply(h);
+      expect(h.g.pendingControl || null).toBeNull();
+      // A fresh wake: the old turn's transcript must not be re-matched.
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      h.setWake(false);
+      const second = h.voiceClient.converse.mock.results[1].value;
+      second.emit('inputTranscript', ' what time is it');
+      reply(h, second);
+      expect(h.g.pendingControl || null).toBeNull();
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(second);
+    });
+  });
+
+  test('the turn transcript is persisted when the ceiling tears the session down before turnComplete', async () => {
+    const h = await buildControl();
+    say(h, "that's all");
+    h.session.emit('outputTranscript', 'bye'); // phrase evaluated; no turnComplete ever
+    h.setNow(h.now() + CEILING_MS);
+    h.svc._tick('g1');
+    await new Promise((r) => setImmediate(r));
+    expect(h.g.session).toBeNull();
+    expect(h.mongoService.recordChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ content: "that's all", authorId: 'u1' }));
+    expect(h.mongoService.recordChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ content: 'bye', isBot: true }));
+  });
+
+  describe('quiet gating', () => {
+    test('the wake word is ignored entirely while quiet: no wake-gate feed, no session, no pre-roll', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 120);
+      h.gate.push.mockClear();
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      await h.svc._handleUserPcm('g1', 'u2', Buffer.alloc(1024));
+      expect(h.g.quietUntil).not.toBeNull(); // guard: the test really is quiet
+      expect(h.gate.push).not.toHaveBeenCalled();
+      expect(h.voiceClient.converse).toHaveBeenCalledTimes(1);
+      for (const u of h.g.perUser.values()) expect(u.preroll).toEqual([]);
+    });
+
+    test('quiet expires: logged at INFO in _tick, and the wake word works again', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 120);
+      h.setNow(h.now() + 120000);
+      h.svc._tick('g1');
+      expect(h.g.quietUntil || null).toBeNull();
+      expect(infoLines().some((l) => l.includes('quiet') && l.includes('expired'))).toBe(true);
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      expect(h.voiceClient.converse).toHaveBeenCalledTimes(2);
+    });
+
+    test('an expired quiet is also honoured by the wake branch before _tick clears it', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 120);
+      h.setNow(h.now() + 120000);
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      expect(h.voiceClient.converse).toHaveBeenCalledTimes(2);
+      expect(h.g.quietUntil || null).toBeNull();
+    });
+
+    test('a pending quiet is still honoured if the session is torn down by another path first', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'quiet', seconds: 300 });
+      h.session.emit('end'); // sidecar closes the stream before the reply completed
+      expect(h.g.session).toBeNull();
+      expect(h.g.quietUntil).toBe(h.now() + 300000);
+      expect(h.g.pendingControl || null).toBeNull();
+    });
+  });
+
+  describe('resume / quietStatus / leave / listen', () => {
+    test('resume() clears quiet early and reports how much was left', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 600);
+      h.setNow(h.now() + 100000);
+      expect(h.svc.resume('g1')).toEqual({ wasQuiet: true, remainingMs: 500000, cancelledPending: false });
+      expect(h.svc.quietStatus('g1')).toEqual({ quiet: false, remainingMs: 0 });
+      expect(infoLines().some((l) => l.includes('resume'))).toBe(true);
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      expect(h.voiceClient.converse).toHaveBeenCalledTimes(2);
+    });
+
+    test('resume() when not quiet (or not in the guild) is a harmless no-op', async () => {
+      const h = await buildControl();
+      expect(h.svc.resume('g1')).toEqual({ wasQuiet: false, remainingMs: 0, cancelledPending: false });
+      expect(h.svc.resume('nope')).toEqual({ wasQuiet: false, remainingMs: 0, cancelledPending: false });
+      expect(h.svc.quietStatus('nope')).toEqual({ quiet: false, remainingMs: 0 });
+    });
+
+    test('resume() while a quiet request is still pending downgrades it to a plain end (cancelledPending)', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'quiet', seconds: 600 });
+      expect(h.svc.resume('g1')).toEqual({ wasQuiet: false, remainingMs: 0, cancelledPending: true });
+      reply(h);
+      h.svc._tick('g1');
+      expect(h.g.session).toBeNull();
+      expect(h.svc.quietStatus('g1').quiet).toBe(false);
+    });
+
+    test('leave() clears quiet (the guild entry is gone; a rejoin is not quiet)', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 600);
+      await h.svc.leave('g1');
+      expect(h.svc.quietStatus('g1')).toEqual({ quiet: false, remainingMs: 0 });
+      await h.svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+      h.setWake(true);
+      await h.svc._handleUserPcm('g1', 'u1', Buffer.alloc(1024));
+      expect(h.voiceClient.converse).toHaveBeenCalledTimes(2);
+    });
+
+    test('leave() with a quiet still pending logs it as dropped, not as started', async () => {
+      const h = await buildControl();
+      h.session.emit('control', { action: 'quiet', seconds: 600 });
+      await h.svc.leave('g1');
+      expect(infoLines().some((l) => l.includes('quiet mode started'))).toBe(false);
+      expect(infoLines().some((l) => l.includes('dropped') && l.includes('quiet'))).toBe(true);
+    });
+
+    test('listen() clears quiet: the explicit admin action wins', async () => {
+      const h = await buildControl();
+      toolThenReply(h, 'quiet', 600);
+      const res = await h.svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+      expect(res.listening).toBe(true);
+      expect(h.svc.quietStatus('g1')).toEqual({ quiet: false, remainingMs: 0 });
+    });
+
+    test('an "end" also ends /voice listen continuous mode', async () => {
+      const deps = makeDeps();
+      const { svc, voiceClient } = makeService(deps);
+      await svc.listen({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1', userId: 'admin1' });
+      const g = svc._guilds.get('g1');
+      expect(g.continuousRequested).toBe(true);
+      const s = voiceClient.converse.mock.results[0].value;
+      s.emit('control', { action: 'end', seconds: 0 });
+      s.emit('audio', Buffer.alloc(480));
+      s.emit('turnComplete');
+      svc._tick('g1');
+      expect(g.continuousRequested).toBe(false);
+      expect(g.session).toBeNull();
+      expect(g.machine.state).toBe('idle');
+    });
+  });
+
+  describe('kill switch (controlCommandsEnabled: false) is byte-identical', () => {
+    test('control events are ignored (DEBUG) and nothing is scheduled', async () => {
+      const h = await buildControl({ controlCommandsEnabled: false });
+      toolThenReply(h, 'quiet', 600);
+      expect(h.g.pendingControl || null).toBeNull();
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('control'));
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      expect(h.g.quietUntil || null).toBeNull();
+    });
+
+    test('no phrase matching', async () => {
+      const h = await buildControl({ controlCommandsEnabled: false });
+      say(h, ' go quiet for ten minutes');
+      h.session.emit('audio', Buffer.alloc(480));
+      expect(h.g.pendingControl || null).toBeNull();
+      expect(h.g.buffers.in).toEqual([' go quiet for ten minutes']);
+      h.session.emit('turnComplete');
+      h.svc._tick('g1');
+      expect(h.g.session).toBe(h.session);
+      expect(infoLines().some((l) => l.includes('voice command'))).toBe(false);
+    });
   });
 });

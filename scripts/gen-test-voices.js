@@ -37,6 +37,15 @@ const CLIPS = [
   { voice: 'Puck', file: 'sc-foxwell-rep.wav', text: 'What is an optimal way to grind Foxwell Enforcement reputation?' },
   { voice: 'Puck', file: 'sc-mic-l5-routes.wav', text: 'What are some currently profitable trade routes from MIC-L5?' },
   { voice: 'Puck', file: 'sc-scorpius-buy.wav', text: 'Where can I buy a Scorpius?' },
+  // Voice control commands smoke test (scripts/smoke-voice-control.js) --
+  // single speaker. Two positive fixtures (go quiet / end conversation) and
+  // one NEGATIVE fixture asserting the model does NOT fire a control tool
+  // for a merely superficial phrase-lookalike ("that's all I know about X"),
+  // per the Task 1 review ruling in
+  // .superpowers/sdd/2026-09-27-voice-control-commands/progress.md.
+  { voice: 'Puck', file: 'ctl-quiet.wav', text: 'Hey Jarvis, go quiet for two minutes.' },
+  { voice: 'Puck', file: 'ctl-end.wav', text: "Thanks Jarvis, that's all." },
+  { voice: 'Puck', file: 'ctl-negative.wav', text: "Hey Jarvis, that's all I know about shields, what do you think?" },
 ];
 
 /** Wrap raw 16-bit PCM into a WAV (RIFF) container. */

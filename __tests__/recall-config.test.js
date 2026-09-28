@@ -85,3 +85,25 @@ describe('VOICE_DEFERRAL_MIN_SPEECH_MS config', () => {
     warnSpy.mockRestore();
   });
 });
+
+// Default ON; only the literal string 'false' turns it off. The `=== 'true' ||
+// true` shape (always true) is the bug class this pins against.
+describe('VOICE_CONTROL_COMMANDS_ENABLED config', () => {
+  beforeEach(() => { jest.resetModules(); });
+  afterEach(() => { delete process.env.VOICE_CONTROL_COMMANDS_ENABLED; });
+
+  it('defaults to true when unset', () => {
+    delete process.env.VOICE_CONTROL_COMMANDS_ENABLED;
+    expect(require('../config/config').voice.controlCommandsEnabled).toBe(true);
+  });
+
+  it('is false when set to "false"', () => {
+    process.env.VOICE_CONTROL_COMMANDS_ENABLED = 'false';
+    expect(require('../config/config').voice.controlCommandsEnabled).toBe(false);
+  });
+
+  it('is true when set to "true"', () => {
+    process.env.VOICE_CONTROL_COMMANDS_ENABLED = 'true';
+    expect(require('../config/config').voice.controlCommandsEnabled).toBe(true);
+  });
+});

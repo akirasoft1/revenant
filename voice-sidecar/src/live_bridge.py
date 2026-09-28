@@ -1,6 +1,7 @@
 """Bridge between the Node bot's Converse gRPC stream and a Gemini Live session."""
 import asyncio
 import logging
+import math
 import random
 import re
 import time
@@ -52,6 +53,59 @@ SC_VOICE_NOTE = (
     "only the top two or three results in plain sentences and offer the rest; never read "
     "tables or long number lists aloud."
 )
+
+# Local voice control tools (spec 2026-09-27-voice-control-commands). Declared
+# to the Live model independently of sc-knowledge (present even when SC is
+# off/unavailable) and answered IN THE SIDECAR -- never sent to the MCP
+# executor. The call itself is the detection; enforcement (teardown after
+# playback drains, the quiet deadline, clamping) is bot-side, driven by the
+# `Control` event `_answer_control_call` emits.
+END_CONVERSATION_TOOL = "end_conversation"
+GO_QUIET_TOOL = "go_quiet"
+CONTROL_TOOL_NAMES = frozenset({END_CONVERSATION_TOOL, GO_QUIET_TOOL})
+CONTROL_TOOL_DECLARATIONS = (
+    types.FunctionDeclaration(
+        name=END_CONVERSATION_TOOL,
+        description=(
+            "End the current voice conversation now. Call this when the user says they are done "
+            "or dismisses you, e.g. \"that's all\", \"thanks, that's it\", \"we're done\", "
+            "\"end conversation\", \"bye\". Takes no arguments."),
+    ),
+    types.FunctionDeclaration(
+        name=GO_QUIET_TOOL,
+        description=(
+            "Stop listening for a while: ends the conversation and ignores the wake word from "
+            "everyone until the time is up. Call this when asked to go quiet, be quiet, mute, "
+            "stop listening or leave people alone for some time. Pass `minutes` when the user "
+            "gives a duration (convert hours to minutes); omit it if they don't."),
+        parameters_json_schema={"type": "object", "properties": {"minutes": {"type": "number"}}},
+    ),
+)
+# Appended to the system instruction ONLY when the control tools are declared.
+CONTROL_NOTE = (
+    "Call end_conversation when the user is done with you or dismisses you, and call go_quiet "
+    "(with minutes, if they say how long) when asked to stop listening or be quiet for a while. "
+    "When you call either, say only a very short confirmation."
+)
+# Control.seconds is an int32 on the wire.
+_INT32_MAX = 2**31 - 1
+
+
+def _quiet_seconds(minutes) -> int:
+    """go_quiet `minutes` -> whole seconds for `Control.seconds`. Anything
+    missing/unusable (None, non-numeric, bool, NaN/inf, negative) is 0, which
+    the bot reads as "not given" and replaces with its default; clamping to
+    the allowed range is bot-side too. Only the int32 wire limit is enforced
+    here, because protobuf raises on an out-of-range value."""
+    if minutes is None or isinstance(minutes, bool):
+        return 0
+    try:
+        value = float(minutes)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(value) or value < 0:
+        return 0
+    return min(round(value * 60), _INT32_MAX)
 
 
 def _is_normal_close(exc) -> bool:
@@ -180,8 +234,13 @@ class _SessionRef:
 class LiveBridge:
     def __init__(self, session_factory, *, model, default_voice,
                  compression_trigger_tokens=25000, resumption_enabled=True,
-                 max_reconnects=5, sc_executor=None):
+                 max_reconnects=5, sc_executor=None, control_tools_enabled=False):
         self._session_factory = session_factory
+        # Local end_conversation/go_quiet tools. The constructor default is
+        # OFF so a bare LiveBridge keeps the pre-control config; server.py
+        # passes config.control_tools_enabled (VOICE_CONTROL_TOOLS_ENABLED,
+        # default true).
+        self._control_enabled = bool(control_tools_enabled)
         # sc_tools.ScToolExecutor, or None when SC_KNOWLEDGE_ENABLED is off.
         self._sc = sc_executor
         self._model = model
@@ -193,7 +252,8 @@ class LiveBridge:
     def _sc_tools_attachable(self) -> bool:
         return self._sc is not None and bool(self._sc.declarations)
 
-    def _live_config(self, start, resumption_handle=None, with_sc=True) -> types.LiveConnectConfig:
+    def _live_config(self, start, resumption_handle=None, with_sc=True,
+                     with_control=True) -> types.LiveConnectConfig:
         voice = start.voice_name or self._default_voice
         # Google Search grounding: lets the model answer with current, real
         # web knowledge (e.g. game specifics) instead of only its training
@@ -209,9 +269,24 @@ class LiveBridge:
         # background refresh that succeeds later reaches the next session.
         # These calls are answered by `_pump_server` via send_tool_response.
         # with_sc=False is `converse`'s search-only connect fallback.
+        #
+        # Control tools (end_conversation/go_quiet) are independent of SC:
+        # prepended to the SAME function-declarations Tool when SC is
+        # attached, or in their own Tool when it isn't. with_control=False is
+        # the second (control-only) step of the connect fallback. With the
+        # flag off this whole block is skipped -> today's config exactly.
+        declarations = []
+        notes = []
+        if with_control and self._control_enabled:
+            declarations.extend(CONTROL_TOOL_DECLARATIONS)
         if with_sc and self._sc_tools_attachable():
-            tools.append(types.Tool(function_declarations=list(self._sc.declarations)))
-            system_instruction = (start.system_prompt or "") + "\n\n" + SC_VOICE_NOTE
+            declarations.extend(self._sc.declarations)
+            notes.append(SC_VOICE_NOTE)
+        if with_control and self._control_enabled:
+            notes.append(CONTROL_NOTE)
+        if declarations:
+            tools.append(types.Tool(function_declarations=declarations))
+            system_instruction = "\n\n".join([start.system_prompt or ""] + notes)
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=system_instruction,
@@ -304,6 +379,13 @@ class LiveBridge:
             # sc-knowledge function declarations were attached. See the
             # open-failure handler below.
             use_sc = True
+            # Control-tool connect fallback: the same single-shot rule, one
+            # layer further down. Flips False (sticky for this Converse) the
+            # first time an open fails with the control declarations attached
+            # and NO sc_* declarations (SC is always dropped first), so a
+            # rejected control schema degrades to today's search-only config
+            # instead of failing every connect.
+            use_control = True
             try:
                 while True:
                     # --- (Re)open the Live session for this iteration.
@@ -319,10 +401,12 @@ class LiveBridge:
                     client_exc = None
                     server_exc = None
                     sc_attached = use_sc and self._sc_tools_attachable()
+                    control_attached = use_control and self._control_enabled
                     try:
                         async with self._session_factory(
                                 self._model,
-                                self._live_config(start, resume.handle, with_sc=use_sc)) as session:
+                                self._live_config(start, resume.handle, with_sc=use_sc,
+                                                  with_control=use_control)) as session:
                             entered = True
                             session_ref.session = session
                             if not seeded_context:
@@ -416,14 +500,43 @@ class LiveBridge:
                             # If the failure was unrelated (e.g. a transient
                             # 503) the search-only open fails too and falls
                             # into the normal budgeted retry below.
+                            #
+                            # Control tools, when declared, are KEPT on this
+                            # retry: only the SC layer is dropped here. If the
+                            # control declarations are the problem, the next
+                            # open fails too and the branch below drops them.
                             use_sc = False
                             stats.sc_fallbacks += 1
+                            if control_attached:
+                                logger.warning(
+                                    "voice: Live session open failed with sc_* function declarations "
+                                    "attached (%s: %s); retrying once without sc_* tools (control "
+                                    "tools kept) -- this Converse stays without sc_* tools "
+                                    "(sc_fallbacks=%d)",
+                                    type(open_or_body_exc).__name__, open_or_body_exc,
+                                    stats.sc_fallbacks, exc_info=True)
+                            else:
+                                logger.warning(
+                                    "voice: Live session open failed with sc_* function declarations "
+                                    "attached (%s: %s); retrying once search-only -- this Converse "
+                                    "stays search-only (sc_fallbacks=%d)",
+                                    type(open_or_body_exc).__name__, open_or_body_exc,
+                                    stats.sc_fallbacks, exc_info=True)
+                            continue
+                        if control_attached:
+                            # Same single-shot, out-of-budget retry for the
+                            # control declarations (end_conversation/go_quiet)
+                            # once SC is no longer attached: retry with NO
+                            # function declarations and no CONTROL_NOTE, and
+                            # keep this Converse that way. The bot's transcript
+                            # phrase backstop still catches the commands.
+                            use_control = False
                             logger.warning(
-                                "voice: Live session open failed with sc_* function declarations "
-                                "attached (%s: %s); retrying once search-only -- this Converse "
-                                "stays search-only (sc_fallbacks=%d)",
-                                type(open_or_body_exc).__name__, open_or_body_exc,
-                                stats.sc_fallbacks, exc_info=True)
+                                "voice: Live session open failed with the control tool declarations "
+                                "(end_conversation/go_quiet) attached (%s: %s); retrying once "
+                                "without them -- this Converse stays search-only; spoken control "
+                                "commands fall back to the bot's phrase matcher",
+                                type(open_or_body_exc).__name__, open_or_body_exc, exc_info=True)
                             continue
                         # The (re)open itself failed. Retry it against the same
                         # reconnect budget with exponential backoff + jitter
@@ -757,7 +870,7 @@ class LiveBridge:
                 tc = getattr(msg, "tool_call", None)
                 if tc is not None:
                     for fc in (getattr(tc, "function_calls", None) or []):
-                        self._spawn_tool_call(session, session_ref, fc, stats, tool_tasks)
+                        self._spawn_tool_call(session, session_ref, fc, stats, tool_tasks, emit)
                 tcc = getattr(msg, "tool_call_cancellation", None)
                 if tcc is not None:
                     for call_id in (getattr(tcc, "ids", None) or []):
@@ -809,19 +922,67 @@ class LiveBridge:
                     "NOT reachable on this path.")
                 break
 
-    def _spawn_tool_call(self, session, session_ref, fc, stats, tool_tasks) -> None:
+    def _spawn_tool_call(self, session, session_ref, fc, stats, tool_tasks, emit=None) -> None:
         stats.tool_calls += 1
         key = getattr(fc, "id", None) or f"anon-{stats.tool_calls}"
         previous = tool_tasks.get(key)
         if previous is not None and not previous.done():
             previous.cancel()   # a re-issued id supersedes the earlier call
-        task = asyncio.create_task(self._answer_tool_call(session, session_ref, fc))
+        name = getattr(fc, "name", None) or ""
+        if self._control_enabled and name in CONTROL_TOOL_NAMES:
+            # Local control tool: same per-call task machinery (cancellation,
+            # CURRENT-session targeting, cleanup on pump exit), but answered
+            # in-sidecar -- never the MCP executor, never unknown_tool.
+            coro = self._answer_control_call(session, session_ref, fc, emit)
+        else:
+            coro = self._answer_tool_call(session, session_ref, fc)
+        task = asyncio.create_task(coro)
         tool_tasks[key] = task
 
         def _forget(t, k=key):
             if tool_tasks.get(k) is t:
                 del tool_tasks[k]
         task.add_done_callback(_forget)
+
+    async def _answer_control_call(self, session, session_ref, fc, emit) -> None:
+        """Answer an end_conversation/go_quiet call locally and tell the bot.
+
+        The FunctionResponse (`{"ok": true, ...}`) lets the model speak its
+        short confirmation; it goes only to the CURRENT session, exactly like
+        an sc_* answer. The `Control` event is emitted FIRST and regardless of
+        whether that response can be delivered: the user's request is real
+        either way, the bot's handler is idempotent, and awaiting the send
+        first let a hung send_tool_response delay (or, on pump teardown, lose)
+        the command. The bot does not act on it until the model's reply turn
+        has produced output and completed, so emitting early cannot cut the
+        confirmation short."""
+        name = getattr(fc, "name", None) or ""
+        call_id = getattr(fc, "id", None)
+        args = dict(getattr(fc, "args", None) or {})
+        if name == END_CONVERSATION_TOOL:
+            action, seconds = "end", 0
+            result = {"ok": True, "action": "end"}
+        else:
+            action = "quiet"
+            seconds = _quiet_seconds(args.get("minutes"))
+            result = {"ok": True, "action": "quiet",
+                      "minutes": (seconds / 60) if seconds else None}
+        if emit is not None:
+            await emit(voice_pb2.VoiceServerEvent(
+                control=voice_pb2.Control(action=action, seconds=seconds)))
+        logger.info("voice: control %s (%ds) via tool id=%s", action, seconds, call_id)
+        if session_ref is not None and session_ref.session is not session:
+            logger.info(
+                "voice: control tool_call %s id=%s answered but its Live session is gone; "
+                "dropping the response (control event already sent)", name, call_id)
+        else:
+            try:
+                await session.send_tool_response(function_responses=[
+                    types.FunctionResponse(id=call_id, name=name, response=result)])
+            except Exception as e:  # noqa: BLE001 - the session is dying; the reconnect path owns that
+                logger.warning(
+                    "voice: control tool_call %s id=%s send_tool_response failed (%s: %s); "
+                    "control event already sent", name, call_id, type(e).__name__, e)
 
     async def _answer_tool_call(self, session, session_ref, fc) -> None:
         name = getattr(fc, "name", None) or ""

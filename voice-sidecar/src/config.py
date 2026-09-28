@@ -21,6 +21,10 @@ class Config:
     # default: off = today's search-only Live config, byte-identical.
     sc_knowledge_enabled: bool = False
     sc_knowledge_url: str = DEFAULT_SC_KNOWLEDGE_URL
+    # Local voice control tools (end_conversation / go_quiet) declared to the
+    # Live model and answered in-sidecar (never MCP). On by default; off =
+    # today's Live config, byte-identical.
+    control_tools_enabled: bool = True
 
 
 def load() -> Config:
@@ -55,4 +59,7 @@ def load() -> Config:
         sc_knowledge_enabled=os.environ.get("SC_KNOWLEDGE_ENABLED", "false").strip().lower()
         in ("true", "1", "yes"),
         sc_knowledge_url=os.environ.get("SC_KNOWLEDGE_URL", DEFAULT_SC_KNOWLEDGE_URL),
+        control_tools_enabled=os.environ.get(
+            "VOICE_CONTROL_TOOLS_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "off"),
     )

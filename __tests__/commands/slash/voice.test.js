@@ -25,6 +25,7 @@ describe('/voice', () => {
       listen: jest.fn().mockResolvedValue({ listening: true, channelId: 'c1' }),
       wakeWord: jest.fn(() => 'hey jarvis'),
       maxSessionSeconds: jest.fn(() => 600),
+      resume: jest.fn(() => ({ wasQuiet: false, remainingMs: 0 })),
     };
     command = new VoiceSlashCommand(voiceService);
   });
@@ -227,5 +228,62 @@ describe('/voice', () => {
     const content = i.reply.mock.calls[0][0].content;
     expect(content).toContain('destroy boom');
     expect(content).not.toContain('Left the voice channel');
+  });
+
+  // --- /voice resume ---------------------------------------------------------
+
+  test('resume: quiet was active reports how much time was left', async () => {
+    voiceService.resume.mockReturnValue({ wasQuiet: true, remainingMs: 500000 });
+    const i = fakeInteraction({ sub: 'resume' });
+    await command.execute(i, {});
+    expect(voiceService.resume).toHaveBeenCalledWith('g1');
+    const content = i.reply.mock.calls[0][0].content;
+    expect(content).toBe('Quiet mode ended (8 min left).');
+  });
+
+  test('resume: not in quiet mode says so', async () => {
+    voiceService.resume.mockReturnValue({ wasQuiet: false, remainingMs: 0 });
+    const i = fakeInteraction({ sub: 'resume' });
+    await command.execute(i, {});
+    expect(i.reply.mock.calls[0][0].content).toBe("I wasn't in quiet mode.");
+  });
+
+  // Bot not in voice in this guild at all collapses to the same VoiceService
+  // return shape as "in voice but not quiet" ({wasQuiet:false, remainingMs:0}
+  // -- see VoiceService.resume()'s own "not quiet (or not in the guild)" test),
+  // so the command necessarily gives the same honest reply for both.
+  test('resume: bot not in voice in this guild at all also says "not in quiet mode"', async () => {
+    voiceService.resume.mockReturnValue({ wasQuiet: false, remainingMs: 0 });
+    const i = fakeInteraction({ sub: 'resume', inChannel: false });
+    await command.execute(i, {});
+    expect(voiceService.resume).toHaveBeenCalledWith('g1');
+    expect(i.reply.mock.calls[0][0].content).toBe("I wasn't in quiet mode.");
+  });
+
+  // resume() cancelling a still-pending "go quiet" (confirmation not yet
+  // played) is reported distinctly from an already-active quiet mode ending.
+  test('resume: cancels a still-pending go-quiet request', async () => {
+    voiceService.resume.mockReturnValue({ wasQuiet: false, remainingMs: 0, cancelledPending: true });
+    const i = fakeInteraction({ sub: 'resume' });
+    await command.execute(i, {});
+    expect(i.reply.mock.calls[0][0].content).toBe("Cancelled the quiet request — I'm still listening for the wake word.");
+  });
+
+  // Forward/backward compatible with VoiceService.resume() before it grows
+  // cancelledPending: a missing field must not be treated as truthy.
+  test('resume: a result with no cancelledPending field behaves as if it were false', async () => {
+    voiceService.resume.mockReturnValue({ wasQuiet: true, remainingMs: 60000 });
+    const i = fakeInteraction({ sub: 'resume' });
+    await command.execute(i, {});
+    expect(i.reply.mock.calls[0][0].content).toBe('Quiet mode ended (1 min left).');
+  });
+
+  test('resume replies via editReply when the interaction is already deferred', async () => {
+    voiceService.resume.mockReturnValue({ wasQuiet: true, remainingMs: 120000 });
+    const i = fakeInteraction({ sub: 'resume' });
+    i.deferred = true;
+    await command.execute(i, {});
+    expect(i.editReply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Quiet mode ended (2 min left).' }));
+    expect(i.reply).not.toHaveBeenCalled();
   });
 });

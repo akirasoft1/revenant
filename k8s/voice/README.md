@@ -28,7 +28,7 @@ enabled so OneAgent and this pod's own OTLP spans both reach Dynatrace.
 
 | File | Purpose |
 |---|---|
-| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. `SC_KNOWLEDGE_ENABLED` (default `"false"`) + `SC_KNOWLEDGE_URL` attach the sc-knowledge Star Citizen tools to Live as function declarations; flip to true only after sc-knowledge is deployed. |
+| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. `SC_KNOWLEDGE_ENABLED` (default `"false"`) + `SC_KNOWLEDGE_URL` attach the sc-knowledge Star Citizen tools to Live as function declarations; flip to true only after sc-knowledge is deployed. `VOICE_CONTROL_TOOLS_ENABLED` (default `"true"` when unset) declares the local `end_conversation`/`go_quiet` voice-control tools to Live (independent of the SC tools); set `"false"` to stop declaring them — the bot's phrase backstop (`VOICE_CONTROL_COMMANDS_ENABLED`, bot env) still works without them. |
 | `voice-service.yaml` | ClusterIP Service exposing the sidecar's gRPC port (50051). |
 | `voice-networkpolicy.yaml` | Egress: kube-dns, GEAP/Vertex AI (`aiplatform.googleapis.com`, public 443 minus RFC1918), Dynatrace OTLP (4317/4318), sc-knowledge pods (`app: sc-knowledge`, TCP 8080 -- in-cluster RFC1918, so the public-443 rule would not cover it). Ingress only from the bot pod on 50051. |
 

@@ -13,6 +13,7 @@ const logger = require('../logger');
 const VoiceSessionMachine = require('./voice/VoiceSessionMachine');
 const FloorControl = require('./voice/FloorControl');
 const { downsampleTo16kMono, upsample24kMonoTo48kStereo } = require('./voice/audio');
+const { matchControlPhrase } = require('./voice/controlPhrases');
 const { Readable, PassThrough } = require('stream');
 
 // Rolling pre-roll depth while idle: ~3s of ~20ms frames. Captures the wake
@@ -88,6 +89,35 @@ const DEFAULT_SPEECH_END_SILENCE_MS = 800;
 // can fail transiently -- so back off exponentially instead of hammering.
 const ACK_RETRY_BASE_MS = 1000;
 const ACK_RETRY_MAX_MS = 30000;
+
+// Spoken control commands (end conversation / go quiet).
+//
+// Teardown waits for the model's reply to be GENERATED (output -- audio or an
+// output transcript -- seen for the request, then a turnComplete after the
+// request; a bare tool-call turnComplete with no output does not count) AND
+// HEARD (playback drained). Playback drain alone is
+// vacuous: when a request arrives the player is idle in both real flows -- the
+// phrase is transcribed while the user is still talking, and the sidecar emits
+// Control on the tool call, before the confirmation audio exists -- so a
+// drain-only check tore the session down on the next tick with nothing said.
+// CONTROL_DRAIN_CEILING_MS bounds the wait from the FIRST request, so a turn
+// that never completes (or a player that never reports idle) cannot keep the
+// session alive forever.
+const CONTROL_DRAIN_CEILING_MS = 10000;
+// Quiet duration: missing/unusable -> default; anything else clamped to 1-120 min.
+const QUIET_DEFAULT_SECONDS = 900;
+const QUIET_MIN_SECONDS = 60;
+const QUIET_MAX_SECONDS = 7200;
+
+// Pick the more specific of two phrase matches: quiet beats end (a quiet is an
+// end plus a deadline), and a quiet with a spoken duration beats one without.
+function betterControlMatch(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  if (a.action !== b.action) return a.action === 'quiet' ? a : b;
+  if (a.action === 'quiet' && a.seconds == null && b.seconds != null) return b;
+  return a;
+}
 
 // Qualification bar for announcing a waiting speaker, used when the injected
 // config carries no usable value. Must match config/config.js's documented
@@ -263,7 +293,13 @@ class VoiceService {
       // session that is merely slow to open (the _contextBuilder await).
       sessionOpening: false,
       // Set by a successful listen(); see _noteContinuousEnded.
-      continuousRequested: false };
+      continuousRequested: false,
+      // Spoken control commands. `pendingControl` is the ONE request for the
+      // current session ({action, seconds, source, requestedAt, session});
+      // `quietUntil` is the epoch-ms deadline of a "go quiet" (null = not
+      // quiet). quietUntil deliberately lives OUTSIDE everything _endSession /
+      // _resetToIdle rebuild -- it must survive the reset that starts it.
+      pendingControl: null, quietUntil: null };
     this._guilds.set(guildId, state);
 
     connection.receiver.speaking.on('start', (userId) => {
@@ -378,6 +414,14 @@ class VoiceService {
       logger.info(`voice: listen requested for channel ${channel.id} but guild ${guildId} is connected to channel ${g.channelId}`);
       return { listening: false, reason: 'other-channel', channelId: g.channelId, joined };
     }
+    // An explicit admin /voice listen beats a spoken "go quiet": clear it before
+    // opening, so the continuous session is not followed by a guild that still
+    // ignores the wake word once listen mode ends.
+    if (g.quietUntil) {
+      const remainingMs = Math.max(0, g.quietUntil - this._deps.now());
+      g.quietUntil = null;
+      logger.info(`voice: quiet mode cleared in guild ${guildId} by /voice listen (user ${userId}) with ${remainingMs}ms remaining`);
+    }
     const actions = g.machine.forceListen();
     if (!actions.length) {
       logger.info(`voice: listen requested but a session is already active in guild ${guildId}`);
@@ -451,6 +495,14 @@ class VoiceService {
     const pcm16 = downsampleTo16kMono(pcm48Stereo);
 
     if (g.machine.state === 'idle') {
+      // "Go quiet": skip wake detection ENTIRELY -- no wake-gate feed, no
+      // session, and no pre-roll either. The pre-roll is not merely harmless to
+      // keep here, it would be wrong: it is flushed into the NEXT session as the
+      // words spoken with the wake phrase, so anything it held from the quiet
+      // period would reach the model as current speech. _endSession emptied it
+      // at the reset that started the quiet; not appending keeps it empty, and
+      // it refills naturally (~3s) once quiet ends.
+      if (this._isQuiet(g, guildId, this._deps.now())) return;
       const u = this._perUser(g, userId);
       // Per-speaker pre-roll so the words spoken WITH the wake phrase aren't lost.
       u.preroll.push(pcm16);
@@ -854,17 +906,79 @@ class VoiceService {
       if (g.session !== session) return;
       this._apply(guildId, g.machine.onServerEvent(evt)).catch((e) => logger.warn(`voice: apply failed: ${e.message}`));
     };
-    session.on('audio', (buf) => applyGuarded({ type: 'audio', pcm: buf }));
-    session.on('inputTranscript', (t) => { if (g.session !== session) return; g.buffers.in.push(t); });
-    session.on('outputTranscript', (t) => { if (g.session !== session) return; g.buffers.out.push(t); });
-    session.on('interrupted', () => applyGuarded({ type: 'interrupted' }));
+    // A fresh session starts a fresh input turn for the phrase backstop.
+    g.controlPhraseChecked = false;
+    g.controlInputFrom = 0;
+    session.on('audio', (buf) => {
+      if (g.session !== session) return;
+      this._checkControlPhrase(g, guildId, session); // model is replying => utterance over
+      // AFTER the phrase check, so a request the check just created counts
+      // this audio as its reply's output.
+      this._noteControlOutput(g, session);
+      applyGuarded({ type: 'audio', pcm: buf });
+    });
+    session.on('inputTranscript', (t) => {
+      if (g.session !== session) return;
+      g.buffers.in.push(t);
+      // NOT matched here. Matching per fragment fires on a prefix before the
+      // sentence is complete: " stop listening" matches while " stop listening
+      // to him" does not, and "go quiet" would lock in the default before
+      // " for ten minutes" lands. See _checkControlPhrase.
+    });
+    // The sidecar's local end_conversation / go_quiet tools.
+    session.on('control', (c) => {
+      if (g.session !== session) return;
+      if (!this._controlCommandsEnabled()) {
+        logger.debug(`voice: ignoring control event ${JSON.stringify(c)} in guild ${guildId} — VOICE_CONTROL_COMMANDS_ENABLED is off`);
+        return;
+      }
+      this._requestControl(g, guildId, c && c.action, c && c.seconds, 'tool', session);
+    });
+    session.on('outputTranscript', (t) => {
+      if (g.session !== session) return;
+      this._checkControlPhrase(g, guildId, session);
+      this._noteControlOutput(g, session);
+      g.buffers.out.push(t);
+    });
+    session.on('interrupted', () => {
+      if (g.session !== session) return;
+      // Barge-in: the user is talking again, so the next reply starts a new
+      // phrase-backstop evaluation even if no turnComplete closed the last one.
+      // The buffer is not persisted/cleared on a barge-in, so the new
+      // utterance starts at the current end of it: the matcher is anchored at
+      // the START of the utterance and must not see the interrupted one.
+      g.controlPhraseChecked = false;
+      g.controlInputFrom = g.buffers.in.length;
+      applyGuarded({ type: 'interrupted' });
+    });
     session.on('turnComplete', () => {
       if (g.session !== session) return;
+      // Only a request that existed BEFORE this turnComplete has had its reply
+      // generated by it. Captured before the phrase check below, which can
+      // CREATE a request: a phrase matched AT this turnComplete (e.g. a
+      // tool-call-only model turn, no audio/transcript first) must wait for
+      // the NEXT turnComplete + drain or the ceiling -- otherwise the next
+      // idle tick tears down before the sidecar's confirmation is ever spoken.
+      const hadPending = !!(g.pendingControl && g.pendingControl.session === session);
+      // Phrase backstop for a reply that carried no audio/transcript first
+      // (must run before _persistTurn clears the input buffer), then re-arm it
+      // for the next input turn.
+      this._checkControlPhrase(g, guildId, session);
+      g.controlPhraseChecked = false;
+      // The reply to a pending command is now fully generated -- but ONLY if
+      // it produced output. Gemini Live emits a bare turnComplete for the
+      // TOOL-CALL turn itself (audio_out=0) ~10ms after the tool call, with
+      // the spoken confirmation starting ~250ms later; the sidecar's Control
+      // reaches the bot before that bare turnComplete. Counting it tore the
+      // session down on the next idle tick before the confirmation existed.
+      // A reply that never produces output falls to CONTROL_DRAIN_CEILING_MS.
+      if (hadPending && g.pendingControl.outputSeen) g.pendingControl.replyCompleted = true;
       // End (not destroy) the turn's playback stream so its buffered audio
       // drains and the resource completes naturally; the next turn opens a
       // fresh stream.
       this._endPlayback(g);
       this._persistTurn(guildId).catch((e) => logger.warn(`voice: persist failed: ${e.message}`));
+      g.controlInputFrom = 0; // _persistTurn cleared the buffer synchronously
       applyGuarded({ type: 'turnComplete' });
     });
     session.on('error', (e) => {
@@ -1056,6 +1170,10 @@ class VoiceService {
       return;
     }
 
+    // Quiet expiry is noticed here as well as in the wake branch, so the INFO
+    // line lands when the quiet actually ends rather than on the next audio.
+    this._isQuiet(g, guildId, now);
+
     // Belt-and-suspenders cost guard: hard-cap a session's wall-clock
     // duration regardless of idle timeout / follow-up window state.
     const capMs = (this._config.voice.maxSessionSeconds || 0) * 1000;
@@ -1063,6 +1181,17 @@ class VoiceService {
       logger.warn(`voice: maxSessionSeconds cap reached in guild ${guildId}, force-ending session`);
       this._resetToIdle(g, guildId, `the ${this._config.voice.maxSessionSeconds}s maxSessionSeconds cap was reached`);
       return;
+    }
+
+    // Spoken control command: execute once the reply to it has completed AND
+    // finished playing (see CONTROL_DRAIN_CEILING_MS), or at the ceiling.
+    if (g.pendingControl && g.session === g.pendingControl.session) {
+      const pc = g.pendingControl;
+      const waitedMs = now - pc.requestedAt;
+      if ((pc.replyCompleted && !this._botIsSpeaking(g)) || waitedMs >= CONTROL_DRAIN_CEILING_MS) {
+        this._executeControl(g, guildId, now, waitedMs);
+        return;
+      }
     }
 
     // Debounced end-of-speech: once the user has been quiet for
@@ -1095,8 +1224,11 @@ class VoiceService {
     // buffered audio drains afterwards, and Live streams faster than real-time,
     // so the bot is typically still talking for seconds after turnComplete.
     // Announcing then would cut it off mid-word.
+    // Skipped while a spoken control command is pending: the session is about
+    // to end, and an acknowledgment would start a new reply (and release the
+    // floor) on top of the command's confirmation.
     if (this._config.voice && this._config.voice.deferralEnabled
-        && g.session && !g.ackedThisTurn && g.machine.state === 'hot') {
+        && g.session && !g.ackedThisTurn && g.machine.state === 'hot' && !g.pendingControl) {
       // Fail-safe drain check: "neither playing nor buffering", with a missing
       // player/state reading as NOT drained (see _botIsSpeaking).
       const drained = !this._botIsSpeaking(g);
@@ -1209,7 +1341,21 @@ class VoiceService {
     this._apply(guildId, g.machine.onTick(now)).catch((e) => logger.warn(`voice: tick apply failed: ${e.message}`));
   }
 
-  _endSession(g) {
+  _endSession(g, { leaving = false } = {}) {
+    // A control request belongs to the session being ended. If it is still
+    // pending here, something else tore the session down first (sidecar close,
+    // cost cap, an error, /voice leave) -- an "end" is then already satisfied,
+    // but a "go quiet" is still what the person asked for, so honour it --
+    // unless the guild entry itself is going away (leave), where a deadline
+    // would be meaningless and logging it as started would be a lie.
+    if (g.pendingControl) {
+      const pc = g.pendingControl;
+      g.pendingControl = null;
+      if (pc.action === 'quiet') {
+        if (leaving) logger.info(`voice: pending go-quiet command (${pc.source}) dropped in guild ${pc.guildId} — the bot is leaving the channel`);
+        else this._startQuiet(g, pc.guildId, pc.seconds, `${pc.source}, applied when the session ended before the command executed`);
+      }
+    }
     // Tear down any in-progress playback so a half-streamed reply doesn't linger
     // into the next session.
     this._stopPlayback(g);
@@ -1257,6 +1403,154 @@ class VoiceService {
         u.withheldMs = 0;
       }
     }
+  }
+
+  // --- Spoken control commands ---------------------------------------------
+
+  _controlCommandsEnabled() {
+    const v = this._config.voice;
+    return !!v && v.controlCommandsEnabled !== false;
+  }
+
+  // Phrase backstop, evaluated ONCE per input turn on the complete utterance:
+  // at the first sign the model is replying (first output audio or output
+  // transcript) or at turnComplete, whichever comes first.
+  //
+  // An EMPTY input buffer does not use up the turn's check: input
+  // transcription can land after the first output audio, and the turnComplete
+  // re-check must still see it. (Known limitation: if SOME fragments arrived
+  // before the first output and the rest after, the check runs on the partial
+  // utterance and is used up -- the model-tool path covers that case.)
+  _checkControlPhrase(g, guildId, session) {
+    if (g.controlPhraseChecked) return;
+    if (!this._controlCommandsEnabled()) return;
+    if (this._controlInput(g).length === 0) return;
+    g.controlPhraseChecked = true;
+    this._matchControlPhrase(g, guildId, session);
+  }
+
+  // The current input turn's fragments (see controlInputFrom in the
+  // 'interrupted' handler).
+  _controlInput(g) {
+    return g.buffers.in.slice(g.controlInputFrom || 0);
+  }
+
+  // The pending request's reply has produced output (audio or an output
+  // transcript) -- the precondition for a later turnComplete to count.
+  _noteControlOutput(g, session) {
+    if (g.pendingControl && g.pendingControl.session === session) g.pendingControl.outputSeen = true;
+  }
+
+  // Match the current turn's joined input transcript. Gemini sends fragments
+  // that usually carry their own leading spaces (" go", " quiet"), so '' is the
+  // faithful join; ' ' covers fragments that don't. Both are cheap, and
+  // betterControlMatch picks the more specific result.
+  _matchControlPhrase(g, guildId, session) {
+    let match = null;
+    try {
+      match = betterControlMatch(
+        matchControlPhrase(this._controlInput(g).join('')),
+        matchControlPhrase(this._controlInput(g).join(' ')));
+    } catch (e) {
+      logger.warn(`voice: control phrase matching failed in guild ${guildId}: ${e && e.stack ? e.stack : e}`);
+      return;
+    }
+    if (match) this._requestControl(g, guildId, match.action, match.seconds, 'phrase', session);
+  }
+
+  // One idempotent request per session, from either source. First request
+  // wins -- the tool and the phrase backstop routinely fire for the SAME
+  // utterance -- with two upgrades: a "quiet" upgrades a pending "end" (quiet
+  // is end plus a deadline), and a quiet with an explicit duration fills in a
+  // pending quiet that had none (a later transcript fragment added "for ten
+  // minutes"). `requestedAt` is never moved, so duplicates cannot extend the
+  // drain ceiling.
+  _requestControl(g, guildId, action, seconds, source, session) {
+    if (action !== 'end' && action !== 'quiet') {
+      logger.warn(`voice: ignoring voice command with unknown action ${JSON.stringify(action)} from ${source} in guild ${guildId}`);
+      return;
+    }
+    if (!session || g.session !== session) return;
+    // 0 (proto default) / negative / non-numeric all mean "no duration given".
+    const secs = Number(seconds);
+    const normSeconds = action === 'quiet' && Number.isFinite(secs) && secs > 0 ? secs : null;
+    const pc = g.pendingControl;
+    if (pc && pc.session === session) {
+      if (action === 'quiet' && pc.action === 'end') {
+        pc.action = 'quiet'; pc.seconds = normSeconds; pc.source = source;
+        logger.info(`voice: voice command upgraded from end to quiet (seconds ${normSeconds === null ? 'not given' : normSeconds}) by ${source} in guild ${guildId}`);
+      } else if (action === 'quiet' && pc.seconds === null && normSeconds !== null) {
+        pc.seconds = normSeconds;
+        logger.info(`voice: voice command quiet duration filled in as ${normSeconds}s by ${source} in guild ${guildId}`);
+      }
+      return;
+    }
+    g.pendingControl = { action, seconds: normSeconds, source, requestedAt: this._deps.now(), session, guildId, replyCompleted: false, outputSeen: false };
+    logger.info(`voice: voice command requested in guild ${guildId}: action ${action}, seconds ${normSeconds === null ? 'not given' : normSeconds}, source ${source} (floor holder ${g.floor && g.floor.holder()}); executing once the reply completes and playback drains (at most ${CONTROL_DRAIN_CEILING_MS}ms)`);
+  }
+
+  _executeControl(g, guildId, now, waitedMs) {
+    const pc = g.pendingControl;
+    // Cleared BEFORE the reset so _endSession's "still pending" branch does not
+    // also apply it.
+    g.pendingControl = null;
+    const how = pc.replyCompleted && !this._botIsSpeaking(g)
+      ? 'the reply completed and playback drained'
+      : `the ${CONTROL_DRAIN_CEILING_MS}ms ceiling was reached (reply completed: ${!!pc.replyCompleted}, playback still running: ${this._botIsSpeaking(g)})`;
+    logger.info(`voice: executing voice command ${pc.action} (source ${pc.source}) in guild ${guildId} after ${waitedMs}ms: ${how}`);
+    // The command usually lands before turnComplete (the turn that carried it
+    // is cut short), so persist whatever this turn transcribed now or it is
+    // lost with the session. The buffer read/reset is synchronous.
+    this._persistTurn(guildId).catch((e) => logger.warn(`voice: persist failed: ${e.message}`));
+    // _resetToIdle also ends /voice listen continuous mode (fresh machine,
+    // continuousRequested cleared + logged).
+    this._resetToIdle(g, guildId, `ended by voice command (${pc.source})`);
+    // AFTER the reset, which must not (and does not) touch quietUntil.
+    if (pc.action === 'quiet') this._startQuiet(g, guildId, pc.seconds, pc.source, now);
+  }
+
+  _startQuiet(g, guildId, seconds, why, now = this._deps.now()) {
+    const requested = seconds == null ? QUIET_DEFAULT_SECONDS : seconds;
+    const effective = Math.min(QUIET_MAX_SECONDS, Math.max(QUIET_MIN_SECONDS, requested));
+    g.quietUntil = now + effective * 1000;
+    logger.info(`voice: quiet mode started in guild ${guildId} (${why}): ignoring the wake word from everyone for ${effective}s (requested ${seconds == null ? `nothing, default ${QUIET_DEFAULT_SECONDS}s` : `${seconds}s`}) until ${new Date(g.quietUntil).toISOString()}`);
+  }
+
+  // True while the guild is quiet. Clears and logs an expired deadline.
+  _isQuiet(g, guildId, now) {
+    if (!g || !g.quietUntil) return false;
+    if (now < g.quietUntil) return true;
+    logger.info(`voice: quiet mode expired in guild ${guildId} (deadline ${new Date(g.quietUntil).toISOString()}); the wake word works again`);
+    g.quietUntil = null;
+    return false;
+  }
+
+  // Remaining quiet time for a guild; never mutates.
+  quietStatus(guildId) {
+    const g = this._guilds.get(guildId);
+    const remainingMs = g && g.quietUntil ? Math.max(0, g.quietUntil - this._deps.now()) : 0;
+    return { quiet: remainingMs > 0, remainingMs };
+  }
+
+  // /voice resume: clear quiet early. A "go quiet" that is still pending
+  // (confirmation still playing) is downgraded to a plain end -- otherwise it
+  // would silence the guild seconds AFTER the person was told it was listening.
+  resume(guildId) {
+    const g = this._guilds.get(guildId);
+    if (!g) return { wasQuiet: false, remainingMs: 0, cancelledPending: false };
+    let cancelledPending = false;
+    if (g.pendingControl && g.pendingControl.action === 'quiet') {
+      g.pendingControl.action = 'end';
+      g.pendingControl.seconds = null;
+      cancelledPending = true;
+      logger.info(`voice: resume in guild ${guildId} downgraded a pending go-quiet command to a plain end`);
+    }
+    const { quiet, remainingMs } = this.quietStatus(guildId);
+    g.quietUntil = null;
+    logger.info(quiet
+      ? `voice: quiet mode resumed early in guild ${guildId} with ${remainingMs}ms remaining; the wake word works again`
+      : `voice: resume requested in guild ${guildId} but it was not quiet${cancelledPending ? ' (a pending go-quiet was cancelled)' : ''}`);
+    return { wasQuiet: quiet, remainingMs: quiet ? remainingMs : 0, cancelledPending };
   }
 
   async leave(guildId) {
@@ -1308,7 +1602,7 @@ class VoiceService {
     // teardown and the delete, leaking the 250ms tick timer against a guild
     // nothing could clean up afterwards.
     step('clearing the tick timer', () => { if (g.tickTimer) this._deps.clearInterval(g.tickTimer); });
-    step('ending the live session', () => this._endSession(g));
+    step('ending the live session', () => this._endSession(g, { leaving: true }));
     step('destroying the voice connection', () => { if (g.connection && g.connection.destroy) g.connection.destroy(); });
     this._guilds.delete(guildId);
     if (firstError) throw firstError;

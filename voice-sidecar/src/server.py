@@ -136,7 +136,8 @@ def _build_bridge(config, sc_executor=None):
                        compression_trigger_tokens=config.context_compression_trigger_tokens,
                        resumption_enabled=config.session_resumption_enabled,
                        max_reconnects=config.max_session_reconnects,
-                       sc_executor=sc_executor)
+                       sc_executor=sc_executor,
+                       control_tools_enabled=getattr(config, "control_tools_enabled", True))
 
 
 def serve() -> None:
