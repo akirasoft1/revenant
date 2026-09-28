@@ -107,7 +107,7 @@ even trying).
 
 `eval/sc_eval_set.py` (`SC_EVAL_SET`) labels each prompt with the `sc_*` tool
 that must be called (`expect_tool`), or `None` for a non-SC control prompt
-where no `sc_*` tool may be called at all. `eval/eval_sc.py` builds the
+where no `sc_*` tool may be called at all. Prompts flagged `uncovered_sc` are Star Citizen questions no `sc_*` tool covers (vehicle loadouts, crafting): they are excluded from `tool_hit_rate` and `control_false_sc_calls`, but still count toward the sandbox hard gate and the mid-run outage check, and the report prints a soft `NO WEB SEARCH in N/M runs` flag when the model answered them without `google_search` (a hint it may have answered from memory — not a failing gate). `eval/eval_sc.py` builds the
 **real** `ChannelVoiceAgent` wired to the **real** sc-knowledge MCP server
 (via `build_mcp_toolsets("channel_voice", ...)` + `ScToolsProvider`) but a
 **fake** sandbox orchestrator (`eval.harness.FakeOrchestrator`) — so a

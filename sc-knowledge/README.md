@@ -29,7 +29,9 @@ envelope.
 | `sc_org_guides(query, limit=3)` | BM25 search over privately-synced org guide text (mining/salvage/trading strategy notes; live data from the other tools wins for prices/stats). |
 
 Every successful result includes `source` and (except `sc_org_guides`, whose
-sections each carry their own `version` instead) a top-level `game_version`.
+sections each carry their own `version` instead, and `sc_location_shops`, whose
+UEX price rows carry no game version — it reports data age as `latest_report`)
+a top-level `game_version`.
 When a tool result's game version differs from the live game version (UEX
 `game_versions()["live"]`), the response gets an extra `note_patch` field
 flagging that the data may be stale relative to the current patch -- this
