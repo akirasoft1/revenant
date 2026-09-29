@@ -290,10 +290,12 @@ ${context}`;
    * @param {string} params.userMessage - Current user message (drives recall query + voice few-shot)
    * @param {string} [params.personalityId] - Personality to resolve (defaults to channel-voice)
    * @param {{id: string, content: string, authorId?: string|null}|null} [params.referencedMessage]
-   *   The bot message a Discord reply points at. Injected as an assistant turn
-   *   immediately before the current turn when it is NOT already in the
-   *   fetched history window (see _injectReferencedMessage).
-   * @returns {Promise<{systemPrompt: string, memoryBlock: string, historyTurns: Array<{role: 'user'|'assistant', content: string}>}>}
+   *   The bot message a Discord reply points at. Named explicitly on the
+   *   returned `currentTurn` (see _annotateReplyTarget); history is untouched.
+   * @returns {Promise<{systemPrompt: string, memoryBlock: string, historyTurns: Array<{role: 'user'|'assistant', content: string}>, currentTurn: string}>}
+   *   `currentTurn` is the user turn to send to the model: `userMessage`
+   *   prefixed with the reply target when there is a usable referencedMessage,
+   *   otherwise `userMessage` unchanged. Recall and dedupe use the raw text.
    */
   async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice', referencedMessage = null }) {
     void guildId; // reserved for future per-guild scoping; not used yet
@@ -321,7 +323,6 @@ ${context}`;
     // getRecentChannelMessages(channelId, limit) already returns the most
     // recent `limit` docs sorted oldest->newest, matching the contract.
     let historyTurns = [];
-    let historyDocs = [];
     try {
       const docs = this.mongoService?.getRecentChannelMessages
         ? await this.mongoService.getRecentChannelMessages(
@@ -329,13 +330,11 @@ ${context}`;
             this.config?.channelContext?.promptRecentCount || 10
           )
         : [];
-      historyDocs = (docs || []).filter((m) => m && m.content);
-      historyTurns = historyDocs
+      historyTurns = (docs || []).filter((m) => m && m.content)
         .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
     } catch (error) {
       logger.debug(`buildTurnContext: history lookup failed, degrading to []: ${error.message}`);
       historyTurns = [];
-      historyDocs = [];
     }
 
     // bot.js persists the incoming user message to channel_messages
@@ -347,11 +346,12 @@ ${context}`;
     // other branch) since there's simply nothing to match.
     historyTurns = this._dropDuplicatedCurrentTurn(historyTurns, userMessage);
 
-    // A Discord reply names its target explicitly. When that bot message has
-    // scrolled out of the promptRecentCount window, the follow-up ("and where
-    // would it be best to refine it?") used to be answered from unrelated
-    // history. Carry it in, right before the current turn.
-    historyTurns = this._injectReferencedMessage(historyTurns, historyDocs, referencedMessage);
+    // A Discord reply names its target explicitly, so say so on the current
+    // turn — on EVERY reply, not only when the target has left the window.
+    // Applied AFTER the dedupe above, which must compare against the raw text.
+    // History stays chronological: moving the target next to the current turn
+    // would read as the answer to whatever newer question sat in between.
+    const currentTurn = this._annotateReplyTarget(userMessage, referencedMessage);
 
     // Deliberate: memoryBlock/historyTurns are returned as-is, WITHOUT the
     // legacy `config.recall.promptMaxTokens` trim that `_buildGroupSystemPrompt`
@@ -361,38 +361,37 @@ ${context}`;
     // upstream by RecallService's own budget (`maxItems`/`tokenBudget`) and by
     // the `channelContext.promptRecentCount` history cap above. Not DRY debt —
     // see CLAUDE.md's Agentic Sandbox section for the split rationale.
-    return { systemPrompt, memoryBlock: memoryContext || '', historyTurns };
+    return { systemPrompt, memoryBlock: memoryContext || '', historyTurns, currentTurn };
   }
 
   /**
-   * Append the replied-to bot message as an assistant turn (i.e. immediately
-   * before the separately-forwarded current user turn) unless it is already
-   * in the fetched window. Presence is checked by `messageId` first (the
-   * stored row holds the raw model output, which differs from the Discord
-   * text, so id is the reliable key), then by exact content for rows that
-   * carry no messageId. The injected text is the Discord message content with
-   * display-only decoration removed (the ⚠️ fallback banner and wrapUrls'
-   * `<url>` embed-suppression), for the same reason bot replies are stored
-   * raw: the model would otherwise read markup as its own previous words.
-   * No-op without a usable referencedMessage.
-   * @param {Array<{role: 'user'|'assistant', content: string}>} historyTurns
-   * @param {Array<Object>} historyDocs - The channel_messages docs the turns came from
+   * Prefix the current user turn with the bot message a Discord reply points
+   * at: `[Replying to your earlier message: "<text>"]\n<userMessage>`.
+   *
+   * Done on every turn with a usable reference, regardless of whether the
+   * target is also in the history window. Window position is not a usable
+   * signal: in the 2026-09-29 incident the replied-to answer (Levski) WAS in
+   * the window, followed by a newer, unrelated question from another user
+   * (Ruin Station), and the model resolved "they" to the newest topic. The
+   * target is NOT moved/appended in history instead, because placing it after
+   * a newer question would make it look like the answer to that question.
+   *
+   * The text is the Discord message content with display-only decoration
+   * removed (the ⚠️ fallback banner and wrapUrls' `<url>` embed-suppression),
+   * for the same reason bot replies are stored raw: the model would otherwise
+   * read markup as its own previous words. Full text — never truncated.
+   * Returns userMessage unchanged without a usable (non-empty after
+   * stripping) referencedMessage.
+   * @param {string} userMessage - Raw current user text
    * @param {{id: string, content: string}|null} referencedMessage
-   * @returns {Array<{role: 'user'|'assistant', content: string}>}
+   * @returns {string}
    * @private
    */
-  _injectReferencedMessage(historyTurns, historyDocs, referencedMessage) {
-    if (!referencedMessage || typeof referencedMessage.content !== 'string') return historyTurns;
+  _annotateReplyTarget(userMessage, referencedMessage) {
+    if (!referencedMessage || typeof referencedMessage.content !== 'string') return userMessage;
     const content = ChatService._stripDisplayDecoration(referencedMessage.content);
-    if (!content) return historyTurns;
-
-    const inWindow = (historyDocs || []).some((d) =>
-      (referencedMessage.id && d.messageId === referencedMessage.id)
-      || (typeof d.content === 'string'
-        && (d.content === referencedMessage.content || d.content.trim() === content)));
-    if (inWindow) return historyTurns;
-
-    return [...historyTurns, { role: 'assistant', content }];
+    if (!content) return userMessage;
+    return `[Replying to your earlier message: "${content}"]\n${userMessage}`;
   }
 
   /**
@@ -712,7 +711,7 @@ ${context}`;
    * @param {Object} [options]
    * @param {{id: string, content: string, authorId?: string|null}} [options.referencedMessage]
    *   The bot message a Discord reply points at (reply fall-through in bot.js);
-   *   forwarded to buildTurnContext so it survives outside the history window.
+   *   forwarded to buildTurnContext, which names it on the current turn.
    * @returns {Object} Response with message and token usage
    */
   async chat(personalityId, userMessage, user, channelId = null, guildId = null, imageUrl = null, options = {}) {
@@ -754,7 +753,11 @@ ${context}`;
           channelId: channelId || '',
           guildId: guildId || '',
           interactionId: user.interactionId || '',
-          userMessage,
+          // Reply-annotated current turn from buildTurnContext. On the degraded
+          // path (buildTurnContext threw) there is no currentTurn and the raw
+          // userMessage is sent — deliberately not re-annotated there, so a
+          // throw inside the annotation can't also take down the turn.
+          userMessage: turnCtx.currentTurn || userMessage,
           imageUrl: imageUrl || '',
           systemPrompt: turnCtx.systemPrompt,
           memoryContext: turnCtx.memoryBlock,
