@@ -283,6 +283,28 @@ def _sc_memory_rule(*, web_search: bool) -> str:
         f"removed, not in the game, or located somewhere; when {results}."
     )
 
+def _sc_dispute_rule(*, web_search: bool) -> str:
+    """Disputed / uncertain game mechanics (2026-09-29 voice incident: the
+    model argued ~10 times from stale memory about quantum-drive speed while
+    the player described NAV-mode behaviour they were seeing live). Mechanics
+    are outside every sc_* tool, so with search attached the rule routes them
+    to google_search; without it, the model defers instead of repeating
+    itself. Mirrored for voice in voice-sidecar SC_VOICE_NOTE."""
+    if web_search:
+        return (
+            "Game mechanics (flight modes, quantum travel, how ship systems behave, anything the sc_* "
+            "tools don't cover): look them up with google_search rather than answering from memory. "
+            "If a player disputes your claim or describes what they are seeing in-game right now, "
+            "search again before repeating it; if you still can't confirm it, defer to the player's "
+            "live observation — never argue a game mechanic from memory."
+        )
+    return (
+        "Game mechanics (flight modes, quantum travel, how ship systems behave) change between "
+        "patches: if a player disputes a mechanics claim or describes what they are seeing in-game "
+        "right now, don't repeat the claim from memory — say you can't verify it live and defer to "
+        "their observation."
+    )
+
 _SC_UNCOVERED = "vehicle loadouts, crafting/blueprints, lore, patch news, location facilities"
 
 _SC_MEMORY_FALLBACK = (
@@ -315,6 +337,7 @@ def sc_tools_preamble(*, web_search: bool) -> str:
         "and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). "
         f"For ANY Star Citizen question, in order: {policy} "
         f"{_sc_memory_rule(web_search=web_search)} "
+        f"{_sc_dispute_rule(web_search=web_search)} "
         "Tool numbers are already ranked and computed; never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data. "
         "Mention the data's patch or age when prices or availability matter. "
         "If a tool returns an error or candidates, say so or ask which one was meant — do not invent values."
@@ -331,7 +354,8 @@ def sc_tools_unavailable_note(*, web_search: bool) -> str:
     return (
         "Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen, "
         f"say live data is unavailable right now and {fallback} — do not use run_in_sandbox to fetch Star Citizen data. "
-        f"{_sc_memory_rule(web_search=web_search)}"
+        f"{_sc_memory_rule(web_search=web_search)} "
+        f"{_sc_dispute_rule(web_search=web_search)}"
     )
 
 

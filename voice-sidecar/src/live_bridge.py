@@ -44,6 +44,11 @@ _CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
 # Appended to the system instruction ONLY when sc-knowledge function
 # declarations are attached (spec §7 persona note). Voice-only: tables and
 # long number lists are unlistenable, and a silent lookup reads as a hang.
+# The mechanics/dispute sentence (2026-09-29 incident: ~10 turns arguing
+# quantum-drive speed from stale memory against a player's live NAV-mode
+# observation) mirrors agent-sidecar `_sc_dispute_rule(web_search=True)`;
+# Google Search is always attached on the Live config, so voice only needs
+# the search variant.
 SC_VOICE_NOTE = (
     "You can look up live Star Citizen data with the sc_* tools (item stats and where to buy, "
     "what a place's shops sell and what's unique to it, component rankings, faction missions by "
@@ -51,7 +56,11 @@ SC_VOICE_NOTE = (
     "mining, salvage and trading). Use them for any Star Citizen item, price, mission, "
     "reputation, trade or location question instead of memory; never assert from memory that "
     "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
-    "results beat memory. Before a lookup, say a very short natural filler like \"let me check\". "
+    "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
+    "travel, how ship systems behave), use Google Search, not memory. If a player disputes you "
+    "or describes what they're seeing in-game right now, search again before repeating yourself; "
+    "if you still can't confirm it, go with what they're seeing -- never argue a game mechanic "
+    "from memory. Before a lookup, say a very short natural filler like \"let me check\". "
     "When answering, speak only the top two or three results in plain sentences and offer the "
     "rest; never read tables or long number lists aloud."
 )

@@ -263,7 +263,11 @@ def test_sc_voice_note_verbatim():
         "mining, salvage and trading). Use them for any Star Citizen item, price, mission, "
         "reputation, trade or location question instead of memory; never assert from memory that "
         "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
-        "results beat memory. Before a lookup, say a very short natural filler like \"let me check\". "
+        "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
+        "travel, how ship systems behave), use Google Search, not memory. If a player disputes you "
+        "or describes what they're seeing in-game right now, search again before repeating yourself; "
+        "if you still can't confirm it, go with what they're seeing -- never argue a game mechanic "
+        "from memory. Before a lookup, say a very short natural filler like \"let me check\". "
         "When answering, speak only the top two or three results in plain sentences and offer the "
         "rest; never read tables or long number lists aloud.")
 
