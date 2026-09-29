@@ -49,3 +49,42 @@ async def test_refusal_detail_names_every_sc_tool():
     for name in ("sc_find_item", "sc_compare_components", "sc_faction_missions",
                  "sc_trade_routes", "sc_commodity_prices", "sc_org_guides"):
         assert name in r["detail"]
+
+
+@pytest.mark.parametrize("code", [
+    "curl -s https://starcitizen.tools/Anvil_Spartan",
+    "requests.get('https://www.erkul.games/live/calculator')",
+    "curl https://finder.cstone.space/Search/levski",
+    "fetch('https://sc-craft.tools/blueprints')",
+    "curl https://robertsspaceindustries.com/comm-link",
+    "wget https://www.spviewer.eu/performance",
+    "curl https://scmdb.net/",
+    "curl https://STARCITIZEN.TOOLS/x",
+])
+async def test_new_sc_hosts_refused(code):
+    orch = Orch()
+    t = RunInSandboxTool(orch=orch, user_id="u", call_budget=5)
+    r = await t.run(language="bash", code=code)
+    assert r["error"] == "use_sc_tools" and orch.calls == 0
+
+
+@pytest.mark.parametrize("code", [
+    "curl https://en.wikipedia.org/wiki/Star_Citizen",
+    "curl https://example.com/tools",
+    "print('citizen tools')",
+])
+def test_pattern_does_not_match_non_sc_hosts(code):
+    assert not SC_DATA_HOST_PATTERN.search(code)
+
+
+async def test_refusal_detail_points_to_location_shops_and_google_search():
+    t = RunInSandboxTool(orch=Orch(), user_id="u", call_budget=5)
+    r = await t.run(language="bash", code="curl https://starcitizen.tools")
+    assert "sc_location_shops" in r["detail"] and "google_search" in r["detail"]
+
+
+async def test_refusal_log_names_matched_host(caplog):
+    t = RunInSandboxTool(orch=Orch(), user_id="u", call_budget=5)
+    with caplog.at_level("INFO", logger="src.tools"):
+        await t.run(language="bash", code="curl https://www.erkul.games/live")
+    assert any("erkul.games" in r.getMessage() for r in caplog.records)

@@ -26,13 +26,12 @@ succeed) still returns the successful routes with a notes line, only
 failing outright when EVERY origin terminal's fetch fails.
 """
 import asyncio
-import re
 from datetime import datetime, timezone
 
 from .cache import TTLCache
 from .envelope import error, freshness
 from .http import UpstreamError
-from .names import NameIndex, commodity_entries, normalise, terminal_entries
+from .names import NameIndex, commodity_entries, normalise, terminal_entries, token_match
 from .uex import UexClient
 
 _INDEX_TTL = 21600
@@ -137,36 +136,9 @@ def _place(row: dict) -> str:
     return ", ".join(out)
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-
-
-def _tokens(s: str) -> list[str]:
-    return _TOKEN_RE.findall((s or "").lower())
-
-
-def _token_match(field_value: str, query_norm: str) -> bool:
-    """True when `query_norm` (a fully-normalised query, e.g. normalise("MIC-L5")
-    == "micl5") equals the concatenation of some run of CONSECUTIVE lowercase
-    alnum tokens found in field_value.
-
-    This is deliberately NOT raw substring matching: query "l1" (tokens ["l1"])
-    matches field "Admin - ARC-L1" (tokens ["admin","arc","l1"], run ["l1"]
-    concatenates to "l1") but must NEVER match "Admin - L19 Residences - Metro
-    Center - Lorville" (tokens [...,"l19",...]) -- raw `"l1" in "l19"` is True
-    and would wrongly merge that unrelated station in.
-    """
-    if not query_norm or not field_value:
-        return False
-    toks = _tokens(field_value)
-    for i in range(len(toks)):
-        acc = ""
-        for j in range(i, len(toks)):
-            acc += toks[j]
-            if acc == query_norm:
-                return True
-            if len(acc) > len(query_norm):
-                break
-    return False
+# Token-boundary matching lives in names.py (shared with tools_shops); the
+# "l1" vs "l19" rationale is documented on names.token_match.
+_token_match = token_match
 
 
 def _field_matches(fields: dict, query_norm: str) -> bool:

@@ -78,6 +78,13 @@ class Config:
     # the sidecar gives up before the bot does (see server._DEFAULT_CHAT_TIMEOUT_SECONDS).
     agent_chat_timeout_seconds: float = 540.0
 
+    # ADK's native google_search built-in on the text agent. Only attached
+    # when the model is Gemini-native (LiteLlm models never get it). The
+    # stock `google_search` instance is used deliberately: the
+    # GoogleSearchTool(bypass_multi_tools_limit=True) variant crashes in
+    # google-adk 2.10 (PydanticSerializationError / MockValSer).
+    agent_web_search_enabled: bool = True
+
 
 def load() -> Config:
     return Config(
@@ -88,6 +95,7 @@ def load() -> Config:
         agent_health_failure_threshold=int(os.environ.get("AGENT_HEALTH_FAILURE_THRESHOLD", "3")),
         agent_health_cooldown_seconds=float(os.environ.get("AGENT_HEALTH_COOLDOWN_SECONDS", "60")),
         agent_chat_timeout_seconds=float(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", "540")),
+        agent_web_search_enabled=os.environ.get("AGENT_WEB_SEARCH_ENABLED", "true").strip().lower() in ("true", "1", "yes"),
         mongo_uri=_resolve_mongo_uri(),
         sandbox_inline_output_chars=int(os.environ.get("SANDBOX_INLINE_OUTPUT_CHARS", "750")),
         sandbox_wall_clock_seconds=int(os.environ.get("SANDBOX_WALL_CLOCK_SECONDS", "300")),

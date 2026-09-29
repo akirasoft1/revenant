@@ -5,6 +5,12 @@ the `sc_*` MCP tool the agent must call to answer correctly, or `None` for a
 non-SC control prompt where NO `sc_*` tool may be called (the model should
 answer directly or, if it truly needs execution, use the sandbox — SC data
 must never come from a sandboxed fetch, per the sc_state preamble).
+
+Entries flagged `"uncovered_sc": True` are Star Citizen questions NO sc_*
+tool answers (loadouts, crafting). They have `expect_tool: None` but are not
+controls: an sc_* call on them is not scored as a false call, they don't
+count toward tool_hit_rate, and they DO count toward the sandbox hard gate --
+the model must reach for google_search or an honest caveat, never the sandbox.
 """
 
 SC_EVAL_SET = [
@@ -23,6 +29,14 @@ SC_EVAL_SET = [
     {"prompt": "compare size 3 power plants", "expect_tool": "sc_compare_components"},
     {"prompt": "where can I buy a Scorpius", "expect_tool": "sc_find_item"},
     {"prompt": "cheapest place to buy Quantanium", "expect_tool": "sc_commodity_prices"},
+
+    # --- location inventory (sc_location_shops) ---
+    {"prompt": "are there any ship parts or fps equipment that are unique to Levski (for purchasing that is)?", "expect_tool": "sc_location_shops"},
+    {"prompt": "what's sold at Teach's in Levski", "expect_tool": "sc_location_shops"},
+
+    # --- uncovered SC: no sc_* tool fits; zero sandbox attempts allowed ---
+    {"prompt": "what turret does the Anvil Spartan have", "expect_tool": None, "uncovered_sc": True},
+    {"prompt": "what can I craft with blueprints in Star Citizen right now", "expect_tool": None, "uncovered_sc": True},
 
     # --- 2 org-guide prompts ---
     {"prompt": "how do mining scan signatures work for rock clusters", "expect_tool": "sc_org_guides"},

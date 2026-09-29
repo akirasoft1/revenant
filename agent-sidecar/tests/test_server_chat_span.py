@@ -154,3 +154,26 @@ async def test_chat_span_records_sc_tools_available_on_the_cancelled_path():
         await server.stop(grace=0)
     assert spans, "agent.chat span was never recorded for the cancelled call"
     assert spans[0].attributes["sc.tools.available"] is True
+
+
+# --- web search observability ----------------------------------------------
+
+
+class _FakeAgentWithSearch:
+    def __init__(self, queries):
+        self._q = queries
+
+    async def process_chat(self, **kw):
+        return AgentChatResult(
+            message_text="ok", execution_ids=[], any_failed=False, web_search_queries=self._q,
+        )
+
+
+def test_chat_span_records_web_search_queries():
+    s = _run_chat_direct(_FakeAgentWithSearch(4))
+    assert s.attributes["web_search.queries"] == 4
+
+
+def test_chat_span_records_zero_web_search_queries():
+    s = _run_chat(0)
+    assert s.attributes["web_search.queries"] == 0

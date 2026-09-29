@@ -12,6 +12,38 @@ def normalise(s: str) -> str:
     return _NON_ALNUM.sub("", (s or "").lower())
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def tokens(s: str) -> list[str]:
+    return _TOKEN_RE.findall((s or "").lower())
+
+
+def token_match(field_value: str, query_norm: str) -> bool:
+    """True when `query_norm` (a fully-normalised query, e.g. normalise("MIC-L5")
+    == "micl5") equals the concatenation of some run of CONSECUTIVE lowercase
+    alnum tokens found in field_value.
+
+    This is deliberately NOT raw substring matching: query "l1" (tokens ["l1"])
+    matches field "Admin - ARC-L1" (tokens ["admin","arc","l1"], run ["l1"]
+    concatenates to "l1") but must NEVER match "Admin - L19 Residences - Metro
+    Center - Lorville" (tokens [...,"l19",...]) -- raw `"l1" in "l19"` is True
+    and would wrongly merge that unrelated station in.
+    """
+    if not query_norm or not field_value:
+        return False
+    toks = tokens(field_value)
+    for i in range(len(toks)):
+        acc = ""
+        for j in range(i, len(toks)):
+            acc += toks[j]
+            if acc == query_norm:
+                return True
+            if len(acc) > len(query_norm):
+                break
+    return False
+
+
 @dataclass(frozen=True)
 class Entry:
     kind: str

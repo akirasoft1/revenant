@@ -30,6 +30,7 @@ from .envelope import error
 from .tools_guides import GuideStore, GuideTools
 from .tools_items import ItemTools
 from .tools_missions import MissionTools
+from .tools_shops import ShopTools
 from .tools_trade import TradeTools
 from .uex import build_uex
 from .wiki import build_wiki
@@ -77,6 +78,9 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     mission_tools = MissionTools(wiki, cache)
     trade_tools = TradeTools(uex, cache)
     guide_tools = GuideTools(GuideStore(guides_dir or config.guides_dir))
+    # spawn resolves lazily: _spawn is defined below, and routing the shop
+    # tool's background refreshes through it means the lifespan cancels them.
+    shop_tools = ShopTools(uex, cache, spawn=lambda coro: _spawn(coro))
 
     async def _live_game_version() -> str | None:
         # Broad `except Exception` deliberately, not just UpstreamError: this
@@ -249,6 +253,29 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         return await _guarded("sc_commodity_prices", lambda: trade_tools.commodity_prices(
             commodity, location=location, side=side, limit=limit))
 
+    @mcp.tool(name="sc_location_shops")
+    async def sc_location_shops(location: str, category: str | None = None,
+                                exclusive_only: bool = False, limit: int = 40) -> dict:
+        """What's sold at a Star Citizen place -- a city, station, outpost,
+        planet/moon, system or a specific shop (e.g. "Levski", "Area 18",
+        "Teach's Levski") -- and which of those items are UNIQUE to it
+        (sold at no other live shop). Use for "what's sold at <place>",
+        "anything unique to <place>", "what can I only buy at <place>".
+        Optional category narrows the list: a section or category name
+        ("helmets", "vehicle weapons", "coolers") or the aliases "ship parts"
+        / "ship components" and "fps gear" / "fps equipment" (several may be
+        joined with "or"); an unrecognised category is ignored with a note.
+        exclusive_only=true keeps only the items unique to that place.
+        Each item lists its section, category, the shops there and their
+        buy prices; exclusive items sort first. A long list is trimmed
+        evenly across sections and section_counts gives the full per-section
+        totals, so say what else exists there. Data is player-reported to
+        UEX (crowd-sourced) and may miss shops -- say so, and mention the
+        data age. Prefer this over memory -- locations and shop stock change
+        every patch; do NOT use the sandbox."""
+        return await _guarded("sc_location_shops", lambda: shop_tools.location_shops(
+            location, category=category, exclusive_only=exclusive_only, limit=limit))
+
     @mcp.tool(name="sc_org_guides")
     async def sc_org_guides(query: str, limit: int = 3) -> dict:
         """Search curated org guides for mechanics/strategy know-how -- mining
@@ -291,8 +318,11 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     mcp_lifespan = base_app.router.lifespan_context
 
     async def _warmup() -> None:
+        # Through the cache (terminals, categories, items_prices_all), so the
+        # first sc_location_shops call after startup doesn't pay the ~6 MB
+        # items_prices_all fetch inside the voice path's 6s tool bound.
+        await shop_tools.warm()
         for label, coro in (
-            ("terminals", uex.terminals),
             ("commodities", uex.commodities),
             ("factions", wiki.factions),
         ):

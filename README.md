@@ -374,9 +374,15 @@ Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWa
 | `VOICE_SYSTEM_PROMPT` | `` | Overrides the system prompt passed to the Live session (defaults to the channel-voice personality prompt) |
 | `VOICE_CONTROL_COMMANDS_ENABLED` | `true` | Enable spoken "end conversation"/"go quiet" voice control commands (phrase backstop + `Control` events); the sidecar's own `VOICE_CONTROL_TOOLS_ENABLED` must also be `true` for the model-tool detection layer |
 
+### Agentic Sandbox Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_WEB_SEARCH_ENABLED` | `true` | Attach ADK's native `google_search` tool to the text agent (Gemini-native models only) alongside `run_in_sandbox`, so current/external facts are answered via search instead of sandbox scraping; see `CLAUDE.md`'s "Agentic Sandbox" section for full details |
+
 ### Star Citizen Knowledge Configuration
 
-Backs channel-voice text chat and voice sessions with live Star Citizen data (items, ships/vehicles, factions/missions, trade routes, commodity prices, and the org's own curated guides) via a dedicated `sc-knowledge` MCP service. Set independently on the agent sidecar (text chat) and the voice sidecar (voice sessions) — see `CLAUDE.md`'s "Star Citizen Knowledge (sc-knowledge)" section for full details.
+Backs channel-voice text chat and voice sessions with live Star Citizen data (items, ships/vehicles, factions/missions, trade routes, commodity prices, what a location's shops sell and what's unique to it, and the org's own curated guides) via a dedicated `sc-knowledge` MCP service. Set independently on the agent sidecar (text chat) and the voice sidecar (voice sessions) — see `CLAUDE.md`'s "Star Citizen Knowledge (sc-knowledge)" section for full details.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
