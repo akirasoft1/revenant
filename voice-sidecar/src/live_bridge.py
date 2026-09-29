@@ -188,13 +188,34 @@ def _reconnect_backoff_delay(attempt: int) -> float:
     return max(0.05, jittered)
 
 
+def _note_grounding(sc, stats) -> None:
+    """Record the Google Search queries a server_content message grounded on.
+
+    `LiveServerContent.grounding_metadata` (GroundingMetadata | None) ->
+    `.web_search_queries` (list[str] | None), verified against google-genai
+    2.25.0. Grounding can be spread across several server_content messages of
+    one turn and repeat the same query, so queries are de-duplicated per turn.
+    Anything malformed is ignored: this is observability only and must never
+    break the audio pump."""
+    gm = getattr(sc, "grounding_metadata", None)
+    if gm is None:
+        return
+    queries = getattr(gm, "web_search_queries", None)
+    if not isinstance(queries, (list, tuple)):
+        return
+    for q in queries:
+        if isinstance(q, str) and q.strip():
+            stats.turn_search_queries.setdefault(q, None)
+
+
 class _SessionStats:
     """Per-session counters, shared by the client/server pumps and logged +
     attached to the session span when the session ends."""
     __slots__ = ("audio_in_chunks", "audio_in_bytes", "audio_out_chunks",
                  "audio_out_bytes", "turns", "interruptions",
                  "in_tx_chars", "out_tx_chars", "speaker_markers",
-                 "deferral_acks", "tool_calls", "sc_fallbacks")
+                 "deferral_acks", "tool_calls", "sc_fallbacks",
+                 "search_turns", "search_queries", "turn_search_queries")
 
     def __init__(self):
         self.audio_in_chunks = 0
@@ -209,6 +230,12 @@ class _SessionStats:
         self.deferral_acks = 0
         self.tool_calls = 0
         self.sc_fallbacks = 0
+        # Google Search grounding: session totals, plus the distinct queries
+        # seen in the CURRENT turn (insertion-ordered dict used as an ordered
+        # set; cleared at each turn_complete).
+        self.search_turns = 0
+        self.search_queries = 0
+        self.turn_search_queries = {}
 
 
 class _ResumeState:
@@ -621,18 +648,22 @@ class LiveBridge:
             span.set_attribute("voice.reconnects", resume.reconnects)
             span.set_attribute("voice.tool_calls", stats.tool_calls)
             span.set_attribute("voice.sc_fallbacks", stats.sc_fallbacks)
+            span.set_attribute("voice.search_turns", stats.search_turns)
+            span.set_attribute("voice.search_queries", stats.search_queries)
             span.end()
             logger.info(
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
                 "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d "
-                "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d",
+                "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d "
+                "search_turns=%d search_queries=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
                 resume.reconnects, stats.speaker_markers, stats.deferral_acks,
                 stats.tool_calls, stats.sc_fallbacks,
+                stats.search_turns, stats.search_queries,
             )
 
     async def _pump_client(self, request_iter, session_ref, stats) -> None:
@@ -905,10 +936,22 @@ class LiveBridge:
                     stats.interruptions += 1
                     logger.info("voice: interrupted (barge-in)")
                     await emit(voice_pb2.VoiceServerEvent(interrupted=voice_pb2.Interrupted()))
+                _note_grounding(sc, stats)
                 if getattr(sc, "turn_complete", False):
                     stats.turns += 1
-                    logger.info("voice: turn complete (#%d, audio_out=%d chunks/%dB so far)",
-                                stats.turns, stats.audio_out_chunks, stats.audio_out_bytes)
+                    queries = list(stats.turn_search_queries)
+                    stats.turn_search_queries = {}
+                    if queries:
+                        stats.search_turns += 1
+                        stats.search_queries += len(queries)
+                    logger.info("voice: turn complete (#%d, audio_out=%d chunks/%dB so far, "
+                                "search_queries=%d)",
+                                stats.turns, stats.audio_out_chunks, stats.audio_out_bytes,
+                                len(queries))
+                    if queries:
+                        # Full queries, never truncated (house rule).
+                        logger.info("voice: web search (turn #%d): %s",
+                                    stats.turns, " | ".join(queries))
                     await emit(voice_pb2.VoiceServerEvent(turn_complete=voice_pb2.TurnComplete()))
             if not produced:
                 # Unreachable against google-genai's AsyncSession (see the long
