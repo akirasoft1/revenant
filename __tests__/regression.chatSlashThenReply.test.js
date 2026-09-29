@@ -120,14 +120,16 @@ describe('regression: /chat Q&A then a Discord reply follow-up keeps the context
     await DiscordBot.prototype._handleReplyToBot.call(bot, msg, slashReply);
 
     const second = chatService.agentClient.chat.mock.calls[1][0];
-    expect(second.userMessage).toBe(FOLLOW_UP);
+    // The reply target is named explicitly on the current turn (Discord shows
+    // the /chat reply with its prompt header), even though it is in the window.
+    expect(second.userMessage).toBe(`[Replying to your earlier message: "**Prompt:** ${Q}\n\n${A}"]\n${FOLLOW_UP}`);
     expect(second.history).toEqual([
       { role: 'user', content: Q },
       { role: 'assistant', content: A },
     ]);
   });
 
-  test('even when the Q&A has scrolled out of the window, the replied-to answer is injected', async () => {
+  test('even when the Q&A has scrolled out of the window, the replied-to answer reaches the current turn', async () => {
     await runSlashChat();
     for (let i = 0; i < 12; i++) {
       store.rows.push({ messageId: `noise-${i}`, channelId: 'chan-1', content: `unrelated ${i}`, timestamp: new Date() });
@@ -136,11 +138,14 @@ describe('regression: /chat Q&A then a Discord reply follow-up keeps the context
     const msg = followUpMessage();
     await DiscordBot.prototype._handleReplyToBot.call(bot, msg, slashReply);
 
-    const history = chatService.agentClient.chat.mock.calls[1][0].history;
+    const second = chatService.agentClient.chat.mock.calls[1][0];
+    const history = second.history;
     expect(history.some((t) => t.content === A)).toBe(false); // Q&A rows are out of the 10-row window...
-    // ...but the referenced message (the /chat reply as Discord shows it,
-    // prompt header included) sits right before the current turn.
-    expect(history[history.length - 1]).toEqual({ role: 'assistant', content: `**Prompt:** ${Q}\n\n${A}` });
+    // ...and history is NOT appended to: the referenced message (the /chat
+    // reply as Discord shows it, prompt header included) rides on the current
+    // turn as a `[Replying to …]` prefix instead.
+    expect(history.some((t) => t.content.includes(A))).toBe(false);
+    expect(second.userMessage).toBe(`[Replying to your earlier message: "**Prompt:** ${Q}\n\n${A}"]\n${FOLLOW_UP}`);
     expect(history.filter((t) => t.content === FOLLOW_UP)).toHaveLength(0);
   });
 });

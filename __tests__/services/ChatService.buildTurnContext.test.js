@@ -134,15 +134,61 @@ test('buildTurnContext preserves a trailing user turn that merely ENDS WITH user
 });
 
 // ---------------------------------------------------------------------------
-// Discord replies carry their referenced bot message. A reply's explicit
-// target used to be dropped whenever it had scrolled out of the
-// promptRecentCount history window, so "and where would it be best to refine
-// it?" was answered from unrelated history.
+// Discord replies carry their referenced bot message. The reply target is
+// named EXPLICITLY on the current turn via a `[Replying to your earlier
+// message: "…"]` prefix (`currentTurn`), on every turn with a usable
+// reference — whether or not the target is in the history window. History is
+// never reordered or appended to.
+//
+// 2026-09-29 incident: the reply target WAS in the window, followed by a
+// newer, unrelated question from another user. The old logic was a no-op for
+// in-window targets, so the model resolved "they" to the newest topic (Ruin
+// Station) instead of the replied-to message (Levski).
 // ---------------------------------------------------------------------------
-describe('buildTurnContext referencedMessage injection', () => {
+describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
   const REF = { id: 'bot-msg-9', content: 'Aaron Halo is the best spot for Aluminum.', authorId: 'bot-id' };
+  const prefixed = (refText, msg) => `[Replying to your earlier message: "${refText}"]\n${msg}`;
 
-  test('injects the referenced bot message as an assistant turn when it is outside the window, right before the current turn', async () => {
+  const LEVSKI_Q = 'are there any ship parts or fps equipment that are unique to Levski that you cannot buy anywhere else?';
+  const LEVSKI_A = 'yeah, uex has dozens of exclusives logged there — e.g. the FS-9 LMG variant, a couple of armor sets, and several ship components you won\'t find in Stanton.';
+  const PASTED = 'Levski shops:\n- Teach\'s Ship Shop\n- Conscientious Objects\n- Cousin Crow\'s';
+  const RUIN_Q = 'what are unique items only available for purchase at Ruin Station in Pyro?';
+  const CURRENT = 'Are they unique just due to their look or name or do these item have unique improved stats?';
+
+  test('2026-09-29 regression: in-window target + newer unrelated question -> history chronological, currentTurn names the Levski message in full', async () => {
+    const svc = makeChat();
+    const docs = [
+      { messageId: 'u1', content: LEVSKI_Q, isBot: false, authorId: 'user-a' },
+      { messageId: '1554284024082731139', content: LEVSKI_A, isBot: true },
+      { messageId: 'u2', content: PASTED, isBot: false, authorId: 'user-a' },
+      { messageId: 'u3', content: RUIN_Q, isBot: false, authorId: 'user-b' },
+      { messageId: 'cur', content: CURRENT, isBot: false, authorId: 'user-a' },
+    ];
+    svc.mongoService.getRecentChannelMessages = async () => docs;
+    const ctx = await svc.buildTurnContext({
+      userId: 'user-a', channelId: 'c1', userMessage: CURRENT,
+      referencedMessage: { id: '1554284024082731139', content: LEVSKI_A, authorId: 'bot-id' },
+    });
+    // History: chronological, unchanged except the deduped current turn.
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: LEVSKI_Q },
+      { role: 'assistant', content: LEVSKI_A },
+      { role: 'user', content: PASTED },
+      { role: 'user', content: RUIN_Q },
+    ]);
+    expect(ctx.currentTurn).toBe(prefixed(LEVSKI_A, CURRENT));
+  });
+
+  test('does not truncate a long referenced message', async () => {
+    const svc = makeChat();
+    const long = 'x'.repeat(5000) + ' END';
+    const ctx = await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'why?', referencedMessage: { id: 'r', content: long },
+    });
+    expect(ctx.currentTurn).toBe(prefixed(long, 'why?'));
+  });
+
+  test('out-of-window reference -> prefix, and NO assistant turn appended to history', async () => {
     const svc = makeChat();
     svc.mongoService.getRecentChannelMessages = async () => ([
       { messageId: 'm1', content: 'unrelated chatter', isBot: false },
@@ -153,43 +199,27 @@ describe('buildTurnContext referencedMessage injection', () => {
       userId: 'u1', channelId: 'c1', userMessage: 'and where would it be best to refine it?',
       referencedMessage: REF,
     });
-    // Current turn deduped away, referenced message appended last (i.e.
-    // immediately before the separately-forwarded current user turn).
     expect(ctx.historyTurns).toEqual([
       { role: 'user', content: 'unrelated chatter' },
       { role: 'assistant', content: 'unrelated bot reply' },
-      { role: 'assistant', content: REF.content },
     ]);
+    expect(ctx.currentTurn).toBe(prefixed(REF.content, 'and where would it be best to refine it?'));
   });
 
-  test('does NOT inject when the referenced message is already in the window (matched by messageId)', async () => {
+  test('dedupe still compares against the RAW userMessage (prefix applied after _dropDuplicatedCurrentTurn)', async () => {
     const svc = makeChat();
     svc.mongoService.getRecentChannelMessages = async () => ([
-      { messageId: 'u-q', content: 'best place for Aluminum?', isBot: false },
-      // Stored content is the raw model output; the Discord message differs.
       { messageId: 'bot-msg-9', content: 'Aaron Halo.', isBot: true },
+      { messageId: 'cur', content: '<@123> refine it where?', isBot: false },
     ]);
     const ctx = await svc.buildTurnContext({
       userId: 'u1', channelId: 'c1', userMessage: 'refine it where?', referencedMessage: REF,
     });
-    expect(ctx.historyTurns).toEqual([
-      { role: 'user', content: 'best place for Aluminum?' },
-      { role: 'assistant', content: 'Aaron Halo.' },
-    ]);
+    expect(ctx.historyTurns).toEqual([{ role: 'assistant', content: 'Aaron Halo.' }]);
+    expect(ctx.currentTurn).toBe(prefixed(REF.content, 'refine it where?'));
   });
 
-  test('does NOT inject when an in-window row has the exact same content (rows without messageId)', async () => {
-    const svc = makeChat();
-    svc.mongoService.getRecentChannelMessages = async () => ([
-      { content: REF.content, isBot: true },
-    ]);
-    const ctx = await svc.buildTurnContext({
-      userId: 'u1', channelId: 'c1', userMessage: 'refine it where?', referencedMessage: REF,
-    });
-    expect(ctx.historyTurns).toEqual([{ role: 'assistant', content: REF.content }]);
-  });
-
-  test('strips display-only decoration (fallback banner, <url> wrapping) from the injected content', async () => {
+  test('strips display-only decoration (fallback banner, <url> wrapping) from the prefix', async () => {
     const svc = makeChat();
     svc.mongoService.getRecentChannelMessages = async () => ([]);
     const ctx = await svc.buildTurnContext({
@@ -199,37 +229,58 @@ describe('buildTurnContext referencedMessage injection', () => {
         content: '> *⚠️ Memory and channel personality unavailable — answered without them*\n\nSee <https://example.com/a> and [wiki](<https://w.example/b>).',
       },
     });
+    expect(ctx.historyTurns).toEqual([]);
+    expect(ctx.currentTurn).toBe(prefixed('See https://example.com/a and [wiki](https://w.example/b).', 'more?'));
+  });
+
+  test('no referencedMessage -> currentTurn equals userMessage, history unchanged', async () => {
+    const ctx = await makeChat().buildTurnContext({ userId: 'u1', channelId: 'c1', userMessage: 'hi' });
+    expect(ctx.currentTurn).toBe('hi');
     expect(ctx.historyTurns).toEqual([
-      { role: 'assistant', content: 'See https://example.com/a and [wiki](https://w.example/b).' },
+      { role: 'user', content: 'can you write something for me?' },
+      { role: 'assistant', content: 'what document?' },
     ]);
   });
 
-  test('no referencedMessage (or an empty one) -> history unchanged', async () => {
+  test('empty/whitespace (or decoration-only) referenced content -> no prefix, history unchanged', async () => {
     const base = await makeChat().buildTurnContext({ userId: 'u1', channelId: 'c1', userMessage: 'hi' });
-    const withEmpty = await makeChat().buildTurnContext({
-      userId: 'u1', channelId: 'c1', userMessage: 'hi', referencedMessage: { id: 'z', content: '   ' },
-    });
-    expect(withEmpty.historyTurns).toEqual(base.historyTurns);
+    for (const content of ['   ', '', '> *⚠️ fallback*\n\n', null]) {
+      const ctx = await makeChat().buildTurnContext({
+        userId: 'u1', channelId: 'c1', userMessage: 'hi', referencedMessage: { id: 'z', content },
+      });
+      expect(ctx.currentTurn).toBe('hi');
+      expect(ctx.historyTurns).toEqual(base.historyTurns);
+    }
   });
 
-  test('injects even when the history lookup failed', async () => {
+  test('prefixes even when the history lookup failed', async () => {
     const svc = makeChat();
     svc.mongoService.getRecentChannelMessages = async () => { throw new Error('mongo down'); };
     const ctx = await svc.buildTurnContext({
       userId: 'u1', channelId: 'c1', userMessage: 'refine?', referencedMessage: REF,
     });
-    expect(ctx.historyTurns).toEqual([{ role: 'assistant', content: REF.content }]);
+    expect(ctx.historyTurns).toEqual([]);
+    expect(ctx.currentTurn).toBe(prefixed(REF.content, 'refine?'));
+  });
+
+  test('recall is queried with the RAW user text, not the annotated turn', async () => {
+    const svc = makeChat();
+    const spy = jest.spyOn(svc, '_composeRecallContexts');
+    await svc.buildTurnContext({
+      userId: 'u1', channelId: 'c1', userMessage: 'refine?', referencedMessage: REF,
+    });
+    expect(spy.mock.calls[0][1]).toBe('refine?');
   });
 });
 
 describe('chat() forwards options.referencedMessage to buildTurnContext', () => {
-  function makeAgentChat() {
+  function makeAgentChat(ctx = { systemPrompt: 's', memoryBlock: '', historyTurns: [] }) {
     const svc = makeChat();
     svc.agentClient = {
       isHealthy: () => true,
       chat: jest.fn(async () => ({ messageText: 'ok', summary: null, fallbackOccurred: false })),
     };
-    jest.spyOn(svc, 'buildTurnContext').mockResolvedValue({ systemPrompt: 's', memoryBlock: '', historyTurns: [] });
+    jest.spyOn(svc, 'buildTurnContext').mockResolvedValue(ctx);
     return svc;
   }
 
@@ -238,11 +289,59 @@ describe('chat() forwards options.referencedMessage to buildTurnContext', () => 
     const ref = { id: 'r1', content: 'prior answer', authorId: 'bot' };
     await svc.chat('channel-voice', 'follow up', { id: 'u1', username: 'a' }, 'c1', 'g1', null, { referencedMessage: ref });
     expect(svc.buildTurnContext).toHaveBeenCalledWith(expect.objectContaining({ referencedMessage: ref }));
+    // buildTurnContext itself receives the RAW text (recall + dedupe key).
+    expect(svc.buildTurnContext.mock.calls[0][0].userMessage).toBe('follow up');
   });
 
   test('omitting options passes no referenced message', async () => {
     const svc = makeAgentChat();
     await svc.chat('channel-voice', 'hi', { id: 'u1', username: 'a' }, 'c1', 'g1');
     expect(svc.buildTurnContext.mock.calls[0][0].referencedMessage).toBeNull();
+  });
+
+  test('sends buildTurnContext\'s annotated currentTurn as the agent userMessage', async () => {
+    const svc = makeAgentChat({
+      systemPrompt: 's', memoryBlock: '', historyTurns: [],
+      currentTurn: '[Replying to your earlier message: "prior answer"]\nfollow up',
+    });
+    await svc.chat('channel-voice', 'follow up', { id: 'u1', username: 'a' }, 'c1', 'g1', null,
+      { referencedMessage: { id: 'r1', content: 'prior answer' } });
+    expect(svc.agentClient.chat.mock.calls[0][0].userMessage)
+      .toBe('[Replying to your earlier message: "prior answer"]\nfollow up');
+  });
+
+  test('end-to-end (real buildTurnContext): agentClient.chat gets the annotated turn and chronological history', async () => {
+    const svc = makeChat();
+    svc.agentClient = {
+      isHealthy: () => true,
+      chat: jest.fn(async () => ({ messageText: 'ok', summary: null, fallbackOccurred: false })),
+    };
+    svc.mongoService.getRecentChannelMessages = async () => ([
+      { messageId: 'b1', content: 'Levski has exclusives.', isBot: true },
+      { messageId: 'u3', content: 'what about Ruin Station?', isBot: false },
+      { messageId: 'cur', content: 'are they unique stats?', isBot: false },
+    ]);
+    await svc.chat('channel-voice', 'are they unique stats?', { id: 'u1', username: 'a' }, 'c1', 'g1', null,
+      { referencedMessage: { id: 'b1', content: 'Levski has exclusives.' } });
+    const sent = svc.agentClient.chat.mock.calls[0][0];
+    expect(sent.userMessage).toBe('[Replying to your earlier message: "Levski has exclusives."]\nare they unique stats?');
+    expect(sent.history).toEqual([
+      { role: 'assistant', content: 'Levski has exclusives.' },
+      { role: 'user', content: 'what about Ruin Station?' },
+    ]);
+  });
+
+  test('buildTurnContext throws (degraded path) -> raw userMessage is still sent', async () => {
+    const svc = makeAgentChat();
+    svc.buildTurnContext.mockRejectedValue(new Error('boom'));
+    await svc.chat('channel-voice', 'follow up', { id: 'u1', username: 'a' }, 'c1', 'g1', null,
+      { referencedMessage: { id: 'r1', content: 'prior answer' } });
+    expect(svc.agentClient.chat.mock.calls[0][0].userMessage).toBe('follow up');
+  });
+
+  test('a context without currentTurn (older mocks/shape) falls back to the raw userMessage', async () => {
+    const svc = makeAgentChat();
+    await svc.chat('channel-voice', 'hi', { id: 'u1', username: 'a' }, 'c1', 'g1');
+    expect(svc.agentClient.chat.mock.calls[0][0].userMessage).toBe('hi');
   });
 });
