@@ -147,3 +147,54 @@ async def test_session_span_carries_search_totals(caplog, monkeypatch):
                 _gmsg(None, metadata=None, turn_complete=True)], caplog)
     assert span.attrs["voice.search_turns"] == 1
     assert span.attrs["voice.search_queries"] == 2
+
+
+# --- turns that never reach turn_complete (review fix round) ----------------
+
+def _interrupted_msg():
+    sc = SimpleNamespace(input_transcription=None, output_transcription=None,
+                         turn_complete=False, interrupted=True, grounding_metadata=None)
+    return SimpleNamespace(data=None, server_content=sc)
+
+
+async def test_interrupted_turn_without_turn_complete_is_flushed(caplog):
+    lines = await _run([_gmsg(["q interrupted"]), _interrupted_msg()], caplog)
+    assert _line(lines, "web search (interrupted turn)")[0].endswith(": q interrupted")
+    assert _line(lines, "session END")[0].endswith("search_turns=1 search_queries=1")
+
+
+async def test_pending_queries_flushed_at_session_end(caplog):
+    # /voice leave, the session cap, or a control teardown mid-reply: the turn
+    # never completes, but its searches still happened and must be counted.
+    lines = await _run([_gmsg(["q1", "q2"])], caplog)
+    assert [ln for ln in lines if "web search (" in ln and ln.endswith(": q1 | q2")]
+    end = _line(lines, "session END")[0]
+    assert end.endswith("search_turns=1 search_queries=2"), end
+    # flushed exactly once, even though both the per-session and END paths run
+    assert len([ln for ln in lines if "web search (" in ln]) == 1
+
+
+async def test_drop_mid_turn_then_resume_does_not_bleed_into_next_turn(caplog):
+    from .test_live_bridge import ApiCloseSession, _drive_open_ended, _multi_factory, _resume_msg
+    s1 = ApiCloseSession([_resume_msg("h-1"), _gmsg(["before drop"])])  # drops mid-turn
+    s2 = FakeSession([_gmsg(["after resume"], turn_complete=True)])
+    bridge = LiveBridge(_multi_factory([s1, s2]), model="m", default_voice="Puck")
+    with caplog.at_level(logging.INFO):
+        await _drive_open_ended(bridge, voice_pb2.SessionStart(user_id="u1"))
+    lines = [r.getMessage() for r in caplog.records]
+    assert [ln for ln in lines if "web search (" in ln and ln.endswith(": before drop")]
+    assert "search_queries=1" in _line(lines, "turn complete (#1")[0]
+    assert _line(lines, "web search (turn #1)")[0].endswith(": after resume")
+    assert _line(lines, "session END")[0].endswith("search_turns=2 search_queries=2")
+
+
+async def test_resume_does_not_dedupe_against_the_dropped_turn(caplog):
+    from .test_live_bridge import ApiCloseSession, _drive_open_ended, _multi_factory, _resume_msg
+    s1 = ApiCloseSession([_resume_msg("h-1"), _gmsg(["same q"])])
+    s2 = FakeSession([_gmsg(["same q"], turn_complete=True)])
+    bridge = LiveBridge(_multi_factory([s1, s2]), model="m", default_voice="Puck")
+    with caplog.at_level(logging.INFO):
+        await _drive_open_ended(bridge, voice_pb2.SessionStart(user_id="u1"))
+    lines = [r.getMessage() for r in caplog.records]
+    assert "search_queries=1" in _line(lines, "turn complete (#1")[0]
+    assert _line(lines, "session END")[0].endswith("search_turns=2 search_queries=2")

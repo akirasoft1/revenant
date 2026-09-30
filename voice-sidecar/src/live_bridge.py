@@ -234,6 +234,27 @@ def _note_grounding(sc, stats) -> None:
             stats.turn_search_queries.setdefault(q, None)
 
 
+def _flush_turn_search(stats, label: str) -> int:
+    """Close out the current turn's Google Search queries: add them to the
+    session totals, log them in full (never truncated -- house rule) as
+    `voice: web search (<label>): q1 | q2`, and clear the per-turn set.
+    Returns the number flushed (0 is a silent no-op, so every call site can
+    flush unconditionally and a turn is only ever counted once).
+
+    Called at turn_complete, on a barge-in `interrupted`, when a Live session
+    closes (drop/resume swap, so a dropped turn's queries are neither
+    misattributed to the resumed session's next turn nor used to dedupe it),
+    and in the session-END finally (/voice leave, session cap, control
+    teardown mid-reply -- turns that never reach turn_complete)."""
+    queries = list(stats.turn_search_queries)
+    stats.turn_search_queries = {}
+    if queries:
+        stats.search_turns += 1
+        stats.search_queries += len(queries)
+        logger.info("voice: web search (%s): %s", label, " | ".join(queries))
+    return len(queries)
+
+
 class _SessionStats:
     """Per-session counters, shared by the client/server pumps and logged +
     attached to the session span when the session ends."""
@@ -526,6 +547,12 @@ class LiveBridge:
                                 if not pump_out.done():
                                     pump_out.cancel()
                                 await asyncio.gather(pump_out, return_exceptions=True)
+                                # A turn cut off by this session closing never
+                                # sees turn_complete; stats outlive the swap, so
+                                # close it out here rather than let it bleed
+                                # into (and dedupe against) the resumed
+                                # session's next turn.
+                                _flush_turn_search(stats, "unfinished turn, Live session closed")
                             session_ref.session = None
                             if pump_in in done:
                                 # The client asked to end (or its stream broke) --
@@ -671,6 +698,9 @@ class LiveBridge:
                     error=voice_pb2.ErrorEvent(message=str(e))))
         finally:
             dur = time.monotonic() - started_at
+            # Belt and braces: the per-session close already flushed, but a
+            # path that never reached it must still count its searches.
+            _flush_turn_search(stats, "unfinished turn, session end")
             span.set_attribute("voice.outcome", outcome)
             span.set_attribute("voice.duration_s", round(dur, 3))
             span.set_attribute("voice.audio_in_chunks", stats.audio_in_chunks)
@@ -966,26 +996,22 @@ class LiveBridge:
                     logger.info("voice: model said: %s", sc.output_transcription.text)
                     await emit(voice_pb2.VoiceServerEvent(
                         output_transcript=voice_pb2.Transcript(text=sc.output_transcription.text)))
+                _note_grounding(sc, stats)
                 if getattr(sc, "interrupted", False):
                     stats.interruptions += 1
                     logger.info("voice: interrupted (barge-in)")
+                    _flush_turn_search(stats, "interrupted turn")
                     await emit(voice_pb2.VoiceServerEvent(interrupted=voice_pb2.Interrupted()))
-                _note_grounding(sc, stats)
                 if getattr(sc, "turn_complete", False):
                     stats.turns += 1
-                    queries = list(stats.turn_search_queries)
-                    stats.turn_search_queries = {}
-                    if queries:
-                        stats.search_turns += 1
-                        stats.search_queries += len(queries)
+                    # Counted before the turn-complete line so its figure is
+                    # this turn's; the per-query line follows it.
+                    pending = len(stats.turn_search_queries)
                     logger.info("voice: turn complete (#%d, audio_out=%d chunks/%dB so far, "
                                 "search_queries=%d)",
                                 stats.turns, stats.audio_out_chunks, stats.audio_out_bytes,
-                                len(queries))
-                    if queries:
-                        # Full queries, never truncated (house rule).
-                        logger.info("voice: web search (turn #%d): %s",
-                                    stats.turns, " | ".join(queries))
+                                pending)
+                    _flush_turn_search(stats, f"turn #{stats.turns}")
                     await emit(voice_pb2.VoiceServerEvent(turn_complete=voice_pb2.TurnComplete()))
             if not produced:
                 # Unreachable against google-genai's AsyncSession (see the long
