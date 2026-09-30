@@ -41,6 +41,20 @@ except Exception:  # pragma: no cover
 # without it "10000 ..." matches the "1000" prefix.
 _CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
 
+# The disputed-mechanics rule (2026-09-29 incident: ~10 turns arguing
+# quantum-drive speed from stale memory against a player's live NAV-mode
+# observation) mirrors agent-sidecar `_sc_dispute_rule(web_search=True)`;
+# Google Search is always attached on the Live config, so voice only needs
+# the search variant. Its tail is shared VERBATIM by SC_VOICE_NOTE and the
+# standalone SC_MECHANICS_VOICE_NOTE (tests count it to prove exactly-once);
+# only the re-check differs -- with sc_* tools attached a tool-covered
+# dispute should re-call the tool, without them search is the only source.
+SC_DISPUTE_TAIL = (
+    "before repeating yourself; if you still can't confirm it, go with what they're seeing -- "
+    "never argue a game mechanic from memory."
+)
+_SC_DISPUTE_LEAD = "If a player disputes you or describes what they're seeing in-game right now, "
+
 # Appended to the system instruction ONLY when sc-knowledge function
 # declarations are attached (spec §7 persona note). Voice-only: tables and
 # long number lists are unlistenable, and a silent lookup reads as a hang.
@@ -51,9 +65,23 @@ SC_VOICE_NOTE = (
     "mining, salvage and trading). Use them for any Star Citizen item, price, mission, "
     "reputation, trade or location question instead of memory; never assert from memory that "
     "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
-    "results beat memory. Before a lookup, say a very short natural filler like \"let me check\". "
+    "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
+    "travel, how ship systems behave), use Google Search, not memory. "
+    + _SC_DISPUTE_LEAD + "look it up again (tool or search) " + SC_DISPUTE_TAIL + " "
+    "Before a lookup, say a very short natural filler like \"let me check\". "
     "When answering, speak only the top two or three results in plain sentences and offer the "
     "rest; never read tables or long number lists aloud."
+)
+
+# Standalone carrier for the same rule when the sc_* declarations are NOT
+# attached (sc-knowledge off/unavailable, empty declarations, or the
+# search-only connect fallback). Google Search is always on in Live, so the
+# search variant always applies. Exactly one of SC_VOICE_NOTE /
+# SC_MECHANICS_VOICE_NOTE is appended per session config -- never both. It
+# names no sc_* tool, so it never promises one that isn't attached.
+SC_MECHANICS_VOICE_NOTE = (
+    "For Star Citizen game mechanics (flight modes, quantum travel, how ship systems behave), "
+    "use Google Search, not memory. " + _SC_DISPUTE_LEAD + "search again " + SC_DISPUTE_TAIL
 )
 
 # Local voice control tools (spec 2026-09-27-voice-control-commands). Declared
@@ -188,13 +216,55 @@ def _reconnect_backoff_delay(attempt: int) -> float:
     return max(0.05, jittered)
 
 
+def _note_grounding(sc, stats) -> None:
+    """Record the Google Search queries a server_content message grounded on.
+
+    `LiveServerContent.grounding_metadata` (GroundingMetadata | None) ->
+    `.web_search_queries` (list[str] | None), verified against google-genai
+    2.25.0. Grounding can be spread across several server_content messages of
+    one turn and repeat the same query, so queries are de-duplicated per turn.
+    Anything malformed is ignored: this is observability only and must never
+    break the audio pump."""
+    gm = getattr(sc, "grounding_metadata", None)
+    if gm is None:
+        return
+    queries = getattr(gm, "web_search_queries", None)
+    if not isinstance(queries, (list, tuple)):
+        return
+    for q in queries:
+        if isinstance(q, str) and q.strip():
+            stats.turn_search_queries.setdefault(q, None)
+
+
+def _flush_turn_search(stats, label: str) -> int:
+    """Close out the current turn's Google Search queries: add them to the
+    session totals, log them in full (never truncated -- house rule) as
+    `voice: web search (<label>): q1 | q2`, and clear the per-turn set.
+    Returns the number flushed (0 is a silent no-op, so every call site can
+    flush unconditionally and a turn is only ever counted once).
+
+    Called at turn_complete, on a barge-in `interrupted`, when a Live session
+    closes (drop/resume swap, so a dropped turn's queries are neither
+    misattributed to the resumed session's next turn nor used to dedupe it),
+    and in the session-END finally (/voice leave, session cap, control
+    teardown mid-reply -- turns that never reach turn_complete)."""
+    queries = list(stats.turn_search_queries)
+    stats.turn_search_queries = {}
+    if queries:
+        stats.search_turns += 1
+        stats.search_queries += len(queries)
+        logger.info("voice: web search (%s): %s", label, " | ".join(queries))
+    return len(queries)
+
+
 class _SessionStats:
     """Per-session counters, shared by the client/server pumps and logged +
     attached to the session span when the session ends."""
     __slots__ = ("audio_in_chunks", "audio_in_bytes", "audio_out_chunks",
                  "audio_out_bytes", "turns", "interruptions",
                  "in_tx_chars", "out_tx_chars", "speaker_markers",
-                 "deferral_acks", "tool_calls", "sc_fallbacks")
+                 "deferral_acks", "tool_calls", "sc_fallbacks",
+                 "search_turns", "search_queries", "turn_search_queries")
 
     def __init__(self):
         self.audio_in_chunks = 0
@@ -209,6 +279,12 @@ class _SessionStats:
         self.deferral_acks = 0
         self.tool_calls = 0
         self.sc_fallbacks = 0
+        # Google Search grounding: session totals, plus the distinct queries
+        # seen in the CURRENT turn (insertion-ordered dict used as an ordered
+        # set; cleared at each turn_complete).
+        self.search_turns = 0
+        self.search_queries = 0
+        self.turn_search_queries = {}
 
 
 class _ResumeState:
@@ -263,7 +339,6 @@ class LiveBridge:
         # -- no client-side tool-response plumbing needed (that caveat is only
         # for function_declarations). gemini-live-2.5-flash supports Search.
         tools = [types.Tool(google_search=types.GoogleSearch())]
-        system_instruction = start.system_prompt or None
         # sc-knowledge function calling (spec §7): attached only when the
         # executor exists AND has loaded declarations -- otherwise this config
         # is identical to the search-only one (pinned by
@@ -276,7 +351,12 @@ class LiveBridge:
         # prepended to the SAME function-declarations Tool when SC is
         # attached, or in their own Tool when it isn't. with_control=False is
         # the second (control-only) step of the connect fallback. With the
-        # flag off this whole block is skipped -> today's config exactly.
+        # flag off no control declaration/note is added.
+        #
+        # Notes: exactly one of SC_VOICE_NOTE (SC attached) or the standalone
+        # SC_MECHANICS_VOICE_NOTE (SC absent/fallback) is always appended, so
+        # the disputed-mechanics rule reaches every session once. Re-derived
+        # on every call, so the search-only fallback swaps one for the other.
         declarations = []
         notes = []
         if with_control and self._control_enabled:
@@ -284,11 +364,17 @@ class LiveBridge:
         if with_sc and self._sc_tools_attachable():
             declarations.extend(self._sc.declarations)
             notes.append(SC_VOICE_NOTE)
+        else:
+            # The disputed-mechanics rule must reach every session exactly
+            # once; without SC declarations it rides on this standalone note.
+            notes.append(SC_MECHANICS_VOICE_NOTE)
         if with_control and self._control_enabled:
             notes.append(CONTROL_NOTE)
         if declarations:
             tools.append(types.Tool(function_declarations=declarations))
-            system_instruction = "\n\n".join([start.system_prompt or ""] + notes)
+        # An empty persona is dropped rather than joined as a leading blank.
+        system_instruction = "\n\n".join(
+            [p for p in [start.system_prompt] if p] + notes)
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=system_instruction,
@@ -465,6 +551,12 @@ class LiveBridge:
                                 if not pump_out.done():
                                     pump_out.cancel()
                                 await asyncio.gather(pump_out, return_exceptions=True)
+                                # A turn cut off by this session closing never
+                                # sees turn_complete; stats outlive the swap, so
+                                # close it out here rather than let it bleed
+                                # into (and dedupe against) the resumed
+                                # session's next turn.
+                                _flush_turn_search(stats, "unfinished turn, Live session closed")
                             session_ref.session = None
                             if pump_in in done:
                                 # The client asked to end (or its stream broke) --
@@ -610,6 +702,9 @@ class LiveBridge:
                     error=voice_pb2.ErrorEvent(message=str(e))))
         finally:
             dur = time.monotonic() - started_at
+            # Belt and braces: the per-session close already flushed, but a
+            # path that never reached it must still count its searches.
+            _flush_turn_search(stats, "unfinished turn, session end")
             span.set_attribute("voice.outcome", outcome)
             span.set_attribute("voice.duration_s", round(dur, 3))
             span.set_attribute("voice.audio_in_chunks", stats.audio_in_chunks)
@@ -621,18 +716,22 @@ class LiveBridge:
             span.set_attribute("voice.reconnects", resume.reconnects)
             span.set_attribute("voice.tool_calls", stats.tool_calls)
             span.set_attribute("voice.sc_fallbacks", stats.sc_fallbacks)
+            span.set_attribute("voice.search_turns", stats.search_turns)
+            span.set_attribute("voice.search_queries", stats.search_queries)
             span.end()
             logger.info(
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
                 "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d "
-                "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d",
+                "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d "
+                "search_turns=%d search_queries=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
                 resume.reconnects, stats.speaker_markers, stats.deferral_acks,
                 stats.tool_calls, stats.sc_fallbacks,
+                stats.search_turns, stats.search_queries,
             )
 
     async def _pump_client(self, request_iter, session_ref, stats) -> None:
@@ -901,14 +1000,22 @@ class LiveBridge:
                     logger.info("voice: model said: %s", sc.output_transcription.text)
                     await emit(voice_pb2.VoiceServerEvent(
                         output_transcript=voice_pb2.Transcript(text=sc.output_transcription.text)))
+                _note_grounding(sc, stats)
                 if getattr(sc, "interrupted", False):
                     stats.interruptions += 1
                     logger.info("voice: interrupted (barge-in)")
+                    _flush_turn_search(stats, "interrupted turn")
                     await emit(voice_pb2.VoiceServerEvent(interrupted=voice_pb2.Interrupted()))
                 if getattr(sc, "turn_complete", False):
                     stats.turns += 1
-                    logger.info("voice: turn complete (#%d, audio_out=%d chunks/%dB so far)",
-                                stats.turns, stats.audio_out_chunks, stats.audio_out_bytes)
+                    # Counted before the turn-complete line so its figure is
+                    # this turn's; the per-query line follows it.
+                    pending = len(stats.turn_search_queries)
+                    logger.info("voice: turn complete (#%d, audio_out=%d chunks/%dB so far, "
+                                "search_queries=%d)",
+                                stats.turns, stats.audio_out_chunks, stats.audio_out_bytes,
+                                pending)
+                    _flush_turn_search(stats, f"turn #{stats.turns}")
                     await emit(voice_pb2.VoiceServerEvent(turn_complete=voice_pb2.TurnComplete()))
             if not produced:
                 # Unreachable against google-genai's AsyncSession (see the long

@@ -11,6 +11,14 @@ tool answers (loadouts, crafting). They have `expect_tool: None` but are not
 controls: an sc_* call on them is not scored as a false call, they don't
 count toward tool_hit_rate, and they DO count toward the sandbox hard gate --
 the model must reach for google_search or an honest caveat, never the sandbox.
+
+Entries flagged `"sc_dispute": True` are scored exactly like `uncovered_sc`
+(excluded from tool_hit_rate and control_false_sc_calls; counted in the
+sandbox hard gate and the mid-run outage check; soft "NO WEB SEARCH" flag) but
+replay a prior exchange via an optional `"history"` list of `{role, content}`
+turns (passed to `ChannelVoiceAgent.process_chat(history=...)`): the player
+disputes a game-mechanics claim the bot made from stale memory, and the model
+should re-search rather than repeat it (2026-09-29 voice incident).
 """
 
 SC_EVAL_SET = [
@@ -37,6 +45,21 @@ SC_EVAL_SET = [
     # --- uncovered SC: no sc_* tool fits; zero sandbox attempts allowed ---
     {"prompt": "what turret does the Anvil Spartan have", "expect_tool": None, "uncovered_sc": True},
     {"prompt": "what can I craft with blueprints in Star Citizen right now", "expect_tool": None, "uncovered_sc": True},
+
+    # --- disputed mechanics: player contradicts a stale-memory claim; re-search, don't argue ---
+    {
+        "prompt": "that's not true, my engines max at 205 and when I spool the quantum drive to 100% "
+                  "I can go 1000 m/s. recheck your sources",
+        "expect_tool": None,
+        "sc_dispute": True,
+        "history": [
+            {"role": "user", "content": "what's the difference between enabling the quantum drive and "
+                                        "just flying at 1000 m/s?"},
+            {"role": "assistant", "content": "you don't need the quantum drive to go 1000 m/s — that's just "
+                                             "your normal thrusters or afterburner; the quantum drive is only "
+                                             "for jumping."},
+        ],
+    },
 
     # --- 2 org-guide prompts ---
     {"prompt": "how do mining scan signatures work for rock clusters", "expect_tool": "sc_org_guides"},
