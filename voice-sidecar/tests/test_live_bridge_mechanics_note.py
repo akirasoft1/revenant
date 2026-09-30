@@ -11,7 +11,7 @@ import contextlib
 from google.genai import types
 
 from src import voice_pb2
-from src.live_bridge import (CONTROL_NOTE, SC_MECHANICS_RULE, SC_MECHANICS_VOICE_NOTE,
+from src.live_bridge import (CONTROL_NOTE, SC_DISPUTE_TAIL, SC_MECHANICS_VOICE_NOTE,
                              SC_VOICE_NOTE, LiveBridge)
 
 from .test_live_bridge_tools import FakeExecutor, ToolSession, _converse_briefly
@@ -33,13 +33,18 @@ def _bridge(*, sc=None, control=True, factory=None, **kw):
 
 
 def _rule_count(instruction):
-    return (instruction or "").count(SC_MECHANICS_RULE)
+    return (instruction or "").count(SC_DISPUTE_TAIL)
 
 
-def test_rule_is_shared_verbatim_by_both_notes():
-    assert SC_MECHANICS_RULE in SC_VOICE_NOTE
-    assert SC_MECHANICS_RULE in SC_MECHANICS_VOICE_NOTE
-    assert "sc_*" not in SC_MECHANICS_VOICE_NOTE  # never promises tools that aren't attached
+def test_rule_tail_is_shared_verbatim_by_both_notes():
+    assert SC_DISPUTE_TAIL in SC_VOICE_NOTE
+    assert SC_DISPUTE_TAIL in SC_MECHANICS_VOICE_NOTE
+    # with sc_* tools attached, a disputed claim is re-checked with whichever
+    # source covers it (a tool-covered dispute re-calls the tool)...
+    assert "look it up again (tool or search) " + SC_DISPUTE_TAIL in SC_VOICE_NOTE
+    # ...without them, search is the only source
+    assert "search again " + SC_DISPUTE_TAIL in SC_MECHANICS_VOICE_NOTE
+    assert "sc_*" not in SC_MECHANICS_VOICE_NOTE and "tool" not in SC_MECHANICS_VOICE_NOTE
     assert "Star Citizen" in SC_MECHANICS_VOICE_NOTE
 
 
@@ -63,7 +68,7 @@ def test_sc_absent_carries_standalone_note_once():
 
 def test_sc_absent_without_persona_still_gets_the_note():
     cfg = _bridge(control=False)._live_config(voice_pb2.SessionStart(user_id="u"))
-    assert cfg.system_instruction == "\n\n" + SC_MECHANICS_VOICE_NOTE
+    assert cfg.system_instruction == SC_MECHANICS_VOICE_NOTE  # no leading blank line
     assert cfg.tools == SEARCH_ONLY
 
 
@@ -87,3 +92,9 @@ async def test_search_only_fallback_rederives_notes():
     assert opens[1].system_instruction == ("PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
                                            + "\n\n" + CONTROL_NOTE)
     assert _rule_count(opens[1].system_instruction) == 1
+
+
+def test_empty_persona_is_filtered_before_joining():
+    cfg = _bridge()._live_config(voice_pb2.SessionStart(user_id="u"))
+    assert cfg.system_instruction == SC_MECHANICS_VOICE_NOTE + "\n\n" + CONTROL_NOTE
+    assert not cfg.system_instruction.startswith("\n")

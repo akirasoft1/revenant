@@ -309,6 +309,14 @@ SC_DISPUTE_RULE_SEARCH = (
     "Game mechanics (flight modes, quantum travel, how ship systems behave, anything the sc_* "
     "tools don't cover): look them up with google_search rather than answering from memory. "
     "If a player disputes your claim or describes what they are seeing in-game right now, "
+    "look it up again (sc_* tool or google_search) before repeating it; if you still can't "
+    "confirm it, defer to the player's live observation — never argue a game mechanic from memory."
+)
+# sc-knowledge down: no sc_* tools this turn, so the rule must not name them.
+SC_DISPUTE_RULE_SEARCH_UNAVAILABLE = (
+    "Game mechanics (flight modes, quantum travel, how ship systems behave): look them up with "
+    "google_search rather than answering from memory. "
+    "If a player disputes your claim or describes what they are seeing in-game right now, "
     "search again before repeating it; if you still can't confirm it, defer to the player's "
     "live observation — never argue a game mechanic from memory."
 )
@@ -320,10 +328,18 @@ SC_DISPUTE_RULE_NO_SEARCH = (
 )
 
 
-@pytest.mark.parametrize("builder", [sc_tools_preamble, sc_tools_unavailable_note])
-def test_sc_dispute_rule_search_variant(builder):
-    text = builder(web_search=True)
+def test_sc_dispute_rule_search_variant_tools_attached():
+    text = sc_tools_preamble(web_search=True)
     assert SC_DISPUTE_RULE_SEARCH in text
+    assert SC_DISPUTE_RULE_SEARCH_UNAVAILABLE not in text
+    assert SC_DISPUTE_RULE_NO_SEARCH not in text
+
+
+def test_sc_dispute_rule_search_variant_tools_unavailable():
+    text = sc_tools_unavailable_note(web_search=True)
+    assert SC_DISPUTE_RULE_SEARCH_UNAVAILABLE in text
+    assert SC_DISPUTE_RULE_SEARCH not in text
+    assert "sc_*" not in text  # never promises tools that are down
     assert SC_DISPUTE_RULE_NO_SEARCH not in text
 
 
@@ -331,7 +347,7 @@ def test_sc_dispute_rule_search_variant(builder):
 def test_sc_dispute_rule_no_search_variant(builder):
     text = builder(web_search=False)
     assert SC_DISPUTE_RULE_NO_SEARCH in text
-    assert SC_DISPUTE_RULE_SEARCH not in text
+    assert SC_DISPUTE_RULE_SEARCH not in text and SC_DISPUTE_RULE_SEARCH_UNAVAILABLE not in text
     assert "google_search" not in text and "search again" not in text
 
 

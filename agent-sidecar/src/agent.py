@@ -283,19 +283,31 @@ def _sc_memory_rule(*, web_search: bool) -> str:
         f"removed, not in the game, or located somewhere; when {results}."
     )
 
-def _sc_dispute_rule(*, web_search: bool) -> str:
+def _sc_dispute_rule(*, web_search: bool, tools_attached: bool = True) -> str:
     """Disputed / uncertain game mechanics (2026-09-29 voice incident: the
     model argued ~10 times from stale memory about quantum-drive speed while
     the player described NAV-mode behaviour they were seeing live). Mechanics
     are outside every sc_* tool, so with search attached the rule routes them
     to google_search; without it, the model defers instead of repeating
-    itself. Mirrored for voice in voice-sidecar SC_VOICE_NOTE."""
+    itself. With the sc_* tools attached, a disputed claim is re-checked with
+    whichever source covers it (a tool-covered dispute should re-call the
+    tool); when sc-knowledge is down (`tools_attached=False`) the rule names
+    no sc_* tool. Mirrored for voice in voice-sidecar `SC_VOICE_NOTE` (SC
+    declarations attached) and the standalone `SC_MECHANICS_VOICE_NOTE` (SC
+    absent / search-only fallback), exactly one of which every Live session
+    carries."""
     if web_search:
+        if tools_attached:
+            scope = ("Game mechanics (flight modes, quantum travel, how ship systems behave, anything "
+                     "the sc_* tools don't cover)")
+            recheck = "look it up again (sc_* tool or google_search)"
+        else:
+            scope = "Game mechanics (flight modes, quantum travel, how ship systems behave)"
+            recheck = "search again"
         return (
-            "Game mechanics (flight modes, quantum travel, how ship systems behave, anything the sc_* "
-            "tools don't cover): look them up with google_search rather than answering from memory. "
+            f"{scope}: look them up with google_search rather than answering from memory. "
             "If a player disputes your claim or describes what they are seeing in-game right now, "
-            "search again before repeating it; if you still can't confirm it, defer to the player's "
+            f"{recheck} before repeating it; if you still can't confirm it, defer to the player's "
             "live observation — never argue a game mechanic from memory."
         )
     return (
@@ -355,7 +367,7 @@ def sc_tools_unavailable_note(*, web_search: bool) -> str:
         "Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen, "
         f"say live data is unavailable right now and {fallback} — do not use run_in_sandbox to fetch Star Citizen data. "
         f"{_sc_memory_rule(web_search=web_search)} "
-        f"{_sc_dispute_rule(web_search=web_search)}"
+        f"{_sc_dispute_rule(web_search=web_search, tools_attached=False)}"
     )
 
 

@@ -41,22 +41,23 @@ except Exception:  # pragma: no cover
 # without it "10000 ..." matches the "1000" prefix.
 _CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
 
-# Appended to the system instruction ONLY when sc-knowledge function
-# declarations are attached (spec §7 persona note). Voice-only: tables and
-# long number lists are unlistenable, and a silent lookup reads as a hang.
-# The mechanics/dispute sentence (2026-09-29 incident: ~10 turns arguing
+# The disputed-mechanics rule (2026-09-29 incident: ~10 turns arguing
 # quantum-drive speed from stale memory against a player's live NAV-mode
 # observation) mirrors agent-sidecar `_sc_dispute_rule(web_search=True)`;
 # Google Search is always attached on the Live config, so voice only needs
-# the search variant.
-# The disputed-mechanics sentence shared VERBATIM by SC_VOICE_NOTE and the
-# standalone SC_MECHANICS_VOICE_NOTE (tests count it to prove exactly-once).
-SC_MECHANICS_RULE = (
-    "If a player disputes you or describes what they're seeing in-game right now, search again "
+# the search variant. Its tail is shared VERBATIM by SC_VOICE_NOTE and the
+# standalone SC_MECHANICS_VOICE_NOTE (tests count it to prove exactly-once);
+# only the re-check differs -- with sc_* tools attached a tool-covered
+# dispute should re-call the tool, without them search is the only source.
+SC_DISPUTE_TAIL = (
     "before repeating yourself; if you still can't confirm it, go with what they're seeing -- "
     "never argue a game mechanic from memory."
 )
+_SC_DISPUTE_LEAD = "If a player disputes you or describes what they're seeing in-game right now, "
 
+# Appended to the system instruction ONLY when sc-knowledge function
+# declarations are attached (spec §7 persona note). Voice-only: tables and
+# long number lists are unlistenable, and a silent lookup reads as a hang.
 SC_VOICE_NOTE = (
     "You can look up live Star Citizen data with the sc_* tools (item stats and where to buy, "
     "what a place's shops sell and what's unique to it, component rankings, faction missions by "
@@ -65,7 +66,8 @@ SC_VOICE_NOTE = (
     "reputation, trade or location question instead of memory; never assert from memory that "
     "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
     "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
-    "travel, how ship systems behave), use Google Search, not memory. " + SC_MECHANICS_RULE + " "
+    "travel, how ship systems behave), use Google Search, not memory. "
+    + _SC_DISPUTE_LEAD + "look it up again (tool or search) " + SC_DISPUTE_TAIL + " "
     "Before a lookup, say a very short natural filler like \"let me check\". "
     "When answering, speak only the top two or three results in plain sentences and offer the "
     "rest; never read tables or long number lists aloud."
@@ -79,7 +81,7 @@ SC_VOICE_NOTE = (
 # names no sc_* tool, so it never promises one that isn't attached.
 SC_MECHANICS_VOICE_NOTE = (
     "For Star Citizen game mechanics (flight modes, quantum travel, how ship systems behave), "
-    "use Google Search, not memory. " + SC_MECHANICS_RULE
+    "use Google Search, not memory. " + _SC_DISPUTE_LEAD + "search again " + SC_DISPUTE_TAIL
 )
 
 # Local voice control tools (spec 2026-09-27-voice-control-commands). Declared
@@ -370,7 +372,9 @@ class LiveBridge:
             notes.append(CONTROL_NOTE)
         if declarations:
             tools.append(types.Tool(function_declarations=declarations))
-        system_instruction = "\n\n".join([start.system_prompt or ""] + notes)
+        # An empty persona is dropped rather than joined as a leading blank.
+        system_instruction = "\n\n".join(
+            [p for p in [start.system_prompt] if p] + notes)
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=system_instruction,

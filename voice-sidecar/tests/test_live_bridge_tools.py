@@ -241,7 +241,7 @@ def test_live_config_attaches_sc_tools_and_voice_note():
 def test_live_config_voice_note_without_system_prompt():
     bridge = LiveBridge(_factory(None), model="m", default_voice="Puck", sc_executor=FakeExecutor())
     cfg = bridge._live_config(voice_pb2.SessionStart(user_id="u"))
-    assert cfg.system_instruction == "\n\n" + SC_VOICE_NOTE
+    assert cfg.system_instruction == SC_VOICE_NOTE  # empty persona filtered, no leading blank
 
 
 def test_live_config_unchanged_without_executor_or_declarations():
@@ -265,9 +265,9 @@ def test_sc_voice_note_verbatim():
         "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
         "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
         "travel, how ship systems behave), use Google Search, not memory. If a player disputes you "
-        "or describes what they're seeing in-game right now, search again before repeating yourself; "
-        "if you still can't confirm it, go with what they're seeing -- never argue a game mechanic "
-        "from memory. Before a lookup, say a very short natural filler like \"let me check\". "
+        "or describes what they're seeing in-game right now, look it up again (tool or search) before "
+        "repeating yourself; if you still can't confirm it, go with what they're seeing -- never "
+        "argue a game mechanic from memory. Before a lookup, say a very short natural filler like \"let me check\". "
         "When answering, speak only the top two or three results in plain sentences and offer the "
         "rest; never read tables or long number lists aloud.")
 

@@ -88,7 +88,7 @@ def test_live_config_control_tools_present_when_sc_has_no_declarations():
     assert cfg.system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE + "\n\n" + CONTROL_NOTE
 
 
-def test_live_config_flag_off_and_sc_off_is_identical_to_today():
+def test_live_config_flag_off_and_sc_off_is_search_only_plus_mechanics_note():
     start = voice_pb2.SessionStart(user_id="u", system_prompt="PERSONA")
     off = _bridge(control=False)._live_config(start)
     legacy = LiveBridge(_factory(None), model="m", default_voice="Puck")._live_config(start)
