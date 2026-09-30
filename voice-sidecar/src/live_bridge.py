@@ -49,6 +49,14 @@ _CLOSE_CODE_AT_START = re.compile(r"^\s*(?:1000|1001)\b")
 # observation) mirrors agent-sidecar `_sc_dispute_rule(web_search=True)`;
 # Google Search is always attached on the Live config, so voice only needs
 # the search variant.
+# The disputed-mechanics sentence shared VERBATIM by SC_VOICE_NOTE and the
+# standalone SC_MECHANICS_VOICE_NOTE (tests count it to prove exactly-once).
+SC_MECHANICS_RULE = (
+    "If a player disputes you or describes what they're seeing in-game right now, search again "
+    "before repeating yourself; if you still can't confirm it, go with what they're seeing -- "
+    "never argue a game mechanic from memory."
+)
+
 SC_VOICE_NOTE = (
     "You can look up live Star Citizen data with the sc_* tools (item stats and where to buy, "
     "what a place's shops sell and what's unique to it, component rankings, faction missions by "
@@ -57,12 +65,21 @@ SC_VOICE_NOTE = (
     "reputation, trade or location question instead of memory; never assert from memory that "
     "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
     "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
-    "travel, how ship systems behave), use Google Search, not memory. If a player disputes you "
-    "or describes what they're seeing in-game right now, search again before repeating yourself; "
-    "if you still can't confirm it, go with what they're seeing -- never argue a game mechanic "
-    "from memory. Before a lookup, say a very short natural filler like \"let me check\". "
+    "travel, how ship systems behave), use Google Search, not memory. " + SC_MECHANICS_RULE + " "
+    "Before a lookup, say a very short natural filler like \"let me check\". "
     "When answering, speak only the top two or three results in plain sentences and offer the "
     "rest; never read tables or long number lists aloud."
+)
+
+# Standalone carrier for the same rule when the sc_* declarations are NOT
+# attached (sc-knowledge off/unavailable, empty declarations, or the
+# search-only connect fallback). Google Search is always on in Live, so the
+# search variant always applies. Exactly one of SC_VOICE_NOTE /
+# SC_MECHANICS_VOICE_NOTE is appended per session config -- never both. It
+# names no sc_* tool, so it never promises one that isn't attached.
+SC_MECHANICS_VOICE_NOTE = (
+    "For Star Citizen game mechanics (flight modes, quantum travel, how ship systems behave), "
+    "use Google Search, not memory. " + SC_MECHANICS_RULE
 )
 
 # Local voice control tools (spec 2026-09-27-voice-control-commands). Declared
@@ -299,7 +316,6 @@ class LiveBridge:
         # -- no client-side tool-response plumbing needed (that caveat is only
         # for function_declarations). gemini-live-2.5-flash supports Search.
         tools = [types.Tool(google_search=types.GoogleSearch())]
-        system_instruction = start.system_prompt or None
         # sc-knowledge function calling (spec §7): attached only when the
         # executor exists AND has loaded declarations -- otherwise this config
         # is identical to the search-only one (pinned by
@@ -312,7 +328,12 @@ class LiveBridge:
         # prepended to the SAME function-declarations Tool when SC is
         # attached, or in their own Tool when it isn't. with_control=False is
         # the second (control-only) step of the connect fallback. With the
-        # flag off this whole block is skipped -> today's config exactly.
+        # flag off no control declaration/note is added.
+        #
+        # Notes: exactly one of SC_VOICE_NOTE (SC attached) or the standalone
+        # SC_MECHANICS_VOICE_NOTE (SC absent/fallback) is always appended, so
+        # the disputed-mechanics rule reaches every session once. Re-derived
+        # on every call, so the search-only fallback swaps one for the other.
         declarations = []
         notes = []
         if with_control and self._control_enabled:
@@ -320,11 +341,15 @@ class LiveBridge:
         if with_sc and self._sc_tools_attachable():
             declarations.extend(self._sc.declarations)
             notes.append(SC_VOICE_NOTE)
+        else:
+            # The disputed-mechanics rule must reach every session exactly
+            # once; without SC declarations it rides on this standalone note.
+            notes.append(SC_MECHANICS_VOICE_NOTE)
         if with_control and self._control_enabled:
             notes.append(CONTROL_NOTE)
         if declarations:
             tools.append(types.Tool(function_declarations=declarations))
-            system_instruction = "\n\n".join([start.system_prompt or ""] + notes)
+        system_instruction = "\n\n".join([start.system_prompt or ""] + notes)
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=system_instruction,

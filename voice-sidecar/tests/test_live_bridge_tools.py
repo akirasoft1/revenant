@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from google.genai import types
 
 from src import voice_pb2
-from src.live_bridge import SC_VOICE_NOTE, LiveBridge, _ResumeState, _SessionRef, _SessionStats
+from src.live_bridge import SC_MECHANICS_VOICE_NOTE, SC_VOICE_NOTE, LiveBridge, _ResumeState, _SessionRef, _SessionStats
 
 
 class ToolSession:
@@ -251,7 +251,7 @@ def test_live_config_unchanged_without_executor_or_declarations():
                        sc_executor=FakeExecutor(declarations=[]))._live_config(start)
     for cfg in (base, empty):
         assert cfg.tools == [types.Tool(google_search=types.GoogleSearch())]
-        assert cfg.system_instruction == "PERSONA"
+        assert cfg.system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
     assert base == empty
 
 
@@ -316,7 +316,7 @@ async def test_open_rejected_with_sc_tools_retries_once_search_only(caplog):
     assert len(opens) == 2
     assert any(t.function_declarations for t in opens[0].tools)
     assert opens[1].tools == [types.Tool(google_search=types.GoogleSearch())]
-    assert opens[1].system_instruction == "PERSONA"
+    assert opens[1].system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
     # the fallback does not spend the reconnect budget (max_reconnects=0 here)
     assert not any(e.WhichOneof("event") == "error" for e in out)
     warn = [r for r in caplog.records if r.levelno == logging.WARNING and "search-only" in r.getMessage()]

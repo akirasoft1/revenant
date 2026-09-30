@@ -10,7 +10,8 @@ import logging
 from google.genai import types
 
 from src import voice_pb2
-from src.live_bridge import (CONTROL_NOTE, CONTROL_TOOL_DECLARATIONS, SC_VOICE_NOTE, LiveBridge,
+from src.live_bridge import (CONTROL_NOTE, CONTROL_TOOL_DECLARATIONS, SC_MECHANICS_VOICE_NOTE,
+                              SC_VOICE_NOTE, LiveBridge,
                              _ResumeState, _SessionRef, _SessionStats)
 from tests.test_live_bridge_tools import (FC, FakeExecutor, ToolSession, _converse_briefly,
                                           _factory, _rejecting_factory, _tool_call_msg)
@@ -68,7 +69,7 @@ def test_live_config_declares_control_tools_without_sc():
     fd_tools = [t for t in cfg.tools if t.function_declarations]
     assert len(fd_tools) == 1
     assert _fd_names(cfg) == ["end_conversation", "go_quiet"]
-    assert cfg.system_instruction == "PERSONA\n\n" + CONTROL_NOTE
+    assert cfg.system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE + "\n\n" + CONTROL_NOTE
 
 
 def test_live_config_control_tools_share_the_tool_with_sc_and_come_first():
@@ -84,7 +85,7 @@ def test_live_config_control_tools_present_when_sc_has_no_declarations():
     cfg = _bridge(sc=FakeExecutor(declarations=[]))._live_config(
         voice_pb2.SessionStart(user_id="u", system_prompt="PERSONA"))
     assert _fd_names(cfg) == ["end_conversation", "go_quiet"]
-    assert cfg.system_instruction == "PERSONA\n\n" + CONTROL_NOTE
+    assert cfg.system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE + "\n\n" + CONTROL_NOTE
 
 
 def test_live_config_flag_off_and_sc_off_is_identical_to_today():
@@ -92,7 +93,7 @@ def test_live_config_flag_off_and_sc_off_is_identical_to_today():
     off = _bridge(control=False)._live_config(start)
     legacy = LiveBridge(_factory(None), model="m", default_voice="Puck")._live_config(start)
     assert off.tools == SEARCH_ONLY
-    assert off.system_instruction == "PERSONA"
+    assert off.system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
     assert off == legacy
 
 
@@ -278,7 +279,7 @@ async def test_sc_fallback_keeps_control_tools(caplog):
     assert len(opens) == 2
     assert _fd_names(opens[0]) == ["end_conversation", "go_quiet", "sc_find_item"]
     assert _fd_names(opens[1]) == ["end_conversation", "go_quiet"]
-    assert opens[1].system_instruction == "PERSONA\n\n" + CONTROL_NOTE
+    assert opens[1].system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE + "\n\n" + CONTROL_NOTE
     assert not any(e.WhichOneof("event") == "error" for e in out)
     assert "sc_fallbacks=1" in caplog.text
 
@@ -292,7 +293,7 @@ async def test_open_rejected_with_only_control_tools_falls_back_to_none(caplog):
     assert len(opens) == 2
     assert _fd_names(opens[0]) == ["end_conversation", "go_quiet"]
     assert opens[1].tools == SEARCH_ONLY
-    assert opens[1].system_instruction == "PERSONA"
+    assert opens[1].system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
     assert not any(e.WhichOneof("event") == "error" for e in out)
     warn = [r for r in caplog.records
             if r.levelno == logging.WARNING and "control" in r.getMessage()]
