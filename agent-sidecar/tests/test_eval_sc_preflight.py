@@ -94,3 +94,53 @@ def test_report_flags_uncovered_sc_runs_without_web_search(capsys, monkeypatch):
     E._print_report(recs, 2, 0.9, score, [])
     out = capsys.readouterr().out
     assert "NO WEB SEARCH" in out and "1/2" in out
+
+
+def test_sc_prompts_with_outage_includes_sc_dispute_prompts():
+    recs = [
+        ({"prompt": "d", "expect_tool": None, "sc_dispute": True}, _result(sc_state="unavailable")),
+        ({"prompt": "c", "expect_tool": None}, _result(sc_state="unavailable")),
+    ]
+    assert _sc_prompts_with_outage(recs) == ["d"]
+
+
+def test_report_flags_sc_dispute_runs_without_web_search(capsys, monkeypatch):
+    import eval.eval_sc as E
+    case = {"prompt": "that's not true, recheck your sources", "expect_tool": None, "sc_dispute": True,
+            "history": [{"role": "user", "content": "q"}]}
+    monkeypatch.setattr(E, "SC_EVAL_SET", [case])
+    recs = [(case, AgentChatResult("x", [], False, sc_state="available", web_search_queries=0)),
+            (case, AgentChatResult("x", [], False, sc_state="available", web_search_queries=0)),
+            (case, AgentChatResult("x", [], False, sc_state="available", web_search_queries=1))]
+    E._print_report(recs, 3, 0.9, E.score_sc(recs), [])
+    out = capsys.readouterr().out
+    assert "sc-dispute" in out
+    assert "NO WEB SEARCH in 2/3 runs" in out
+    assert "FALSE SC CALL" not in out
+
+
+class _RecordingAgent:
+    def __init__(self):
+        self.calls = []
+
+    async def process_chat(self, **kwargs):  # noqa: ANN003
+        self.calls.append(kwargs)
+        return _result()
+
+
+async def test_run_forwards_case_history_to_process_chat(monkeypatch):
+    import eval.eval_sc as eval_sc
+
+    agent = _RecordingAgent()
+    provider = _FakeProvider(enabled=True, available=True)
+    history = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    cases = [{"prompt": "plain", "expect_tool": None},
+             {"prompt": "disputed", "expect_tool": None, "sc_dispute": True, "history": history}]
+    monkeypatch.setattr(eval_sc, "SC_EVAL_SET", cases)
+    monkeypatch.setattr(eval_sc, "_build", lambda: (agent, provider, "http://sc.test/mcp"))
+
+    records = await _run(runs=2)
+    assert len(records) == 4
+    assert agent.calls[0] == {"user_id": "eval", "user_message": "plain"}
+    assert agent.calls[2] == {"user_id": "eval", "user_message": "disputed", "history": history}
+    assert agent.calls[3]["history"] is history
