@@ -176,10 +176,10 @@ async def test_401_is_reported_as_unavailable_not_as_a_user_problem():
     assert out["error"] == "unavailable"
 
 
-async def test_5xx_without_envelope_is_unavailable():
+async def test_5xx_without_envelope_is_maybe_applied():
     handler, _ = _recorder(502, text="<html>bad gateway</html>")
     out = await _client(handler).call("hangar_fit", "111", {"ship": "s", "item": "i"})
-    assert out["error"] == "unavailable" and "502" in out["message"]
+    assert out["error"] == "unavailable" and out["maybe_applied"] is True
 
 
 async def test_network_error_is_unavailable():
@@ -319,3 +319,55 @@ async def test_prewarm_mints_the_token_and_never_raises():
     bad = FakeTokens(exc=RuntimeError("no key"))
     await _client(handler, bad).prewarm()       # swallowed
     assert bad.calls == 1
+
+
+# ---- final fix round ---------------------------------------------------------
+
+@pytest.mark.parametrize("exc", [httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError])
+async def test_failure_after_sending_is_maybe_applied(exc):
+    def handler(request):
+        raise exc("dropped", request=request)
+    out = await _client(handler).call("hangar_add_ship", "111", {"vehicle": "Cutlass"})
+    assert out.get("maybe_applied") is True
+
+
+async def test_non_httpx_exception_after_sending_is_maybe_applied():
+    def handler(request):
+        raise RuntimeError("weird")
+    out = await _client(handler).call("hangar_add_ship", "111", {"vehicle": "Cutlass"})
+    assert out.get("maybe_applied") is True
+
+
+async def test_connect_error_is_not_maybe_applied():
+    def handler(request):
+        raise httpx.ConnectError("refused", request=request)
+    out = await _client(handler).call("hangar_add_ship", "111", {"vehicle": "Cutlass"})
+    assert out["error"] == "unavailable" and "maybe_applied" not in out
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+async def test_non_json_5xx_is_maybe_applied(status):
+    handler, _ = _recorder(status, text="<html>gateway</html>")
+    out = await _client(handler).call("hangar_fit", "111", {"ship": "s", "item": "i"})
+    assert out.get("maybe_applied") is True
+
+
+async def test_5xx_with_envelope_passes_through():
+    body = {"error": "unavailable", "message": "Firestore down"}
+    handler, _ = _recorder(503, body)
+    out = await _client(handler).call("hangar_fit", "111", {"ship": "s", "item": "i"})
+    assert out == body
+
+
+@pytest.mark.parametrize("member", ["١٢٣", "１２"])
+async def test_non_ascii_digits_are_not_member_ids(member):
+    handler, seen = _recorder(200, FIT_OK)
+    out = await _client(handler).call("hangar_fit", member, {"ship": "s", "item": "i"})
+    assert out["error"] == "unknown_speaker" and seen == []
+
+
+@pytest.mark.parametrize("ship", [".", ".."])
+async def test_reset_rejects_dot_segments(ship):
+    handler, seen = _recorder(200, {})
+    out = await _client(handler).call("hangar_reset", "111", {"ship": ship, "slot": "all"})
+    assert out["error"] == "invalid_request" and seen == []

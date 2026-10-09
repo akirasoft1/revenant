@@ -449,8 +449,8 @@ def _audio():
 async def test_named_then_lost_clear_then_nameless_id_only_speaker_uses_the_new_id():
     """B (named) holds the floor; the bot's empty SetSpeaker (release) is
     lost; C, whose name never resolved, takes the floor and the bot sends an
-    id-only SetSpeaker. The edit must bind to C, not B -- and no marker is
-    sent for C (there is no name to speak)."""
+    id-only SetSpeaker. The edit must bind to C, not B -- and C gets
+    the neutral marker, never B's name."""
     session = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "a", "item": "b"}))],
                           gaps={0: 0.08})
     ed = FakeEditor()
@@ -460,7 +460,8 @@ async def test_named_then_lost_clear_then_nameless_id_only_speaker_uses_the_new_
     ], wait=0.2)
     assert [c[1] for c in ed.calls] == ["333"]
     markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
-    assert len(markers) == 1 and "Bea" in markers[0]
+    # Bea's name, then the neutral marker for C -- never Bea's name for C
+    assert len(markers) == 2 and "Bea" in markers[0] and "someone else" in markers[1]
 
 
 async def test_id_only_then_named_same_speaker_announces_the_name():
@@ -481,7 +482,7 @@ async def test_previous_named_speaker_is_reannounced_after_an_id_only_one():
         (0.01, _speaker("222", "Bea")), (0, _audio()),
     ], wait=0.12)
     markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
-    assert len(markers) == 2
+    assert len(markers) == 3 and "Bea" in markers[0] and "Bea" in markers[2]
 
 
 async def test_named_speaker_with_empty_id_clears_identity_but_keeps_the_marker():
@@ -589,3 +590,88 @@ def test_unknown_speaker_message():
         "error": "unknown_speaker",
         "message": "I can't tell who's speaking, so I can't edit a hangar right now — use "
                    "text chat or the web editor."}
+
+
+# ---- final fix round: neutral speaker marker, tool descriptions -------------
+
+def _markers(session):
+    return [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
+
+
+async def test_id_only_after_an_emitted_named_marker_sends_a_neutral_marker():
+    from src.live_bridge import NEUTRAL_SPEAKER_MARKER
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+        (0.01, _speaker("333", "")), (0, _audio()),
+    ], wait=0.1)
+    m = _markers(session)
+    assert len(m) == 2 and "Bea" in m[0] and NEUTRAL_SPEAKER_MARKER in m[1]
+    assert "Bea" not in m[1]
+    assert all(c is False for (t, c) in session.seeded if "[SPEAKER:" in str(t))
+
+
+async def test_neutral_marker_is_lazy_sent_only_before_the_next_audio():
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+        (0.01, _speaker("333", "")),
+    ], wait=0.1)
+    assert len(_markers(session)) == 1
+
+
+async def test_no_neutral_marker_when_the_session_started_nameless():
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("333", "")), (0, _audio()),
+        (0.01, _speaker("444", "")), (0, _audio()),
+    ], wait=0.1)
+    assert _markers(session) == []
+
+
+async def test_no_neutral_marker_on_the_empty_id_clear():
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+        (0.01, _speaker("", "")), (0, _audio()),
+    ], wait=0.1)
+    assert len(_markers(session)) == 1
+
+
+async def test_named_marker_must_actually_have_been_emitted():
+    # Bea is announced but never speaks (no audio -> no marker emitted); an
+    # id-only speaker after her owes no neutral marker.
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("222", "Bea")),
+        (0.01, _speaker("333", "")), (0, _audio()),
+    ], wait=0.1)
+    assert _markers(session) == []
+
+
+async def test_neutral_marker_only_once_for_consecutive_nameless_speakers():
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+        (0.01, _speaker("333", "")), (0, _audio()),
+        (0.01, _speaker("444", "")), (0, _audio()),
+    ], wait=0.12)
+    assert len(_markers(session)) == 2
+
+
+async def test_neutral_marker_counted_in_speaker_markers(caplog):
+    session = ToolSession([])
+    with caplog.at_level(logging.INFO):
+        await _converse_with(_bridge(session, editor=FakeEditor()), [
+            (0.01, _speaker("222", "Bea")), (0, _audio()),
+            (0.01, _speaker("333", "")), (0, _audio()),
+        ], wait=0.1)
+    end = [r.getMessage() for r in caplog.records if "session END" in r.getMessage()]
+    assert "speaker_markers=2" in end[0]
+
+
+def test_tool_descriptions_cover_explicit_requests_and_advice():
+    by_name = {d.name: d.description for d in HANGAR_TOOL_DECLARATIONS}
+    for n in ("hangar_fit", "hangar_add_ship"):
+        assert "or explicitly asks you to update their own hangar" in by_name[n]
+    assert "never for advice" in by_name["hangar_reset"]

@@ -131,6 +131,13 @@ CONTROL_NOTE = (
     "When you call either, say only a very short confirmation."
 )
 
+# Neutral out-of-band speaker marker. When an id-only SetSpeaker (a holder
+# whose name didn't resolve) follows a NAMED marker actually emitted in this
+# Live session, the model would otherwise keep addressing the new person by
+# the previous name; `[SPEAKER: someone else]` tells it a different, unnamed
+# person is talking (the bot's persona note explains it).
+NEUTRAL_SPEAKER_MARKER = "someone else"
+
 # Hangar chat edits (spec 2026-10-09-hangar-chat-edits-design.md). Local tools,
 # like the control tools: declared to Live only when a hangar edit client is
 # configured (HANGAR_EDITS_ENABLED), answered IN THE SIDECAR via
@@ -146,7 +153,8 @@ HANGAR_TOOL_DECLARATIONS = (
         name="hangar_fit",
         description=(
             "Record that the speaker fitted an item to one of their own ships (\"I put the "
-            "Hemera in my Connie\"). " + _OWN_ONLY + "Call ONLY when they say they DID it, never "
+            "Hemera in my Connie\"). " + _OWN_ONLY + "Call ONLY when they say they DID it or "
+            "explicitly asks you to update their own hangar, never "
             "for questions or advice. `ship` is how they named the ship (nickname or model, e.g. "
             "\"Connie\"); `item` is the part; `slot` is optional -- a slot hint such as "
             "\"left\", \"nose\", \"2\" or \"all\" when they said which."),
@@ -160,7 +168,8 @@ HANGAR_TOOL_DECLARATIONS = (
         name="hangar_add_ship",
         description=(
             "Record that the speaker bought or now owns a ship (\"I just bought a Cutlass "
-            "Black\"). " + _OWN_ONLY + "Call ONLY when they say they DID it. `vehicle` is the "
+            "Black\"). " + _OWN_ONLY + "Call ONLY when they say they DID it or explicitly asks "
+            "you to update their own hangar -- never for advice or hypotheticals. `vehicle` is the "
             "ship model; `nickname` only if they gave one."),
         parameters_json_schema={
             "type": "object",
@@ -171,7 +180,9 @@ HANGAR_TOOL_DECLARATIONS = (
         name="hangar_reset",
         description=(
             "Put parts of one of the speaker's own ships back to stock (\"I put my Harbinger's "
-            "shields back to stock\"). " + _OWN_ONLY + "`slot` is required: a slot hint such "
+            "shields back to stock\"). " + _OWN_ONLY + "Call ONLY when they say they DID it or "
+            "ask you to, never for advice or hypotheticals (\"should I...\"). `slot` is "
+            "required: a slot hint such "
             "as \"shields\" or \"left\", or \"all\" for the whole ship -- ask if they "
             "didn't say which."),
         parameters_json_schema={
@@ -912,6 +923,14 @@ class LiveBridge:
         current_speaker = None
         pending_speaker = None
         pending_ack = None
+        #   last_marker_named: the newest [SPEAKER:] marker emitted into THIS
+        #     Live session carried a real name (reset on a swap -- the new
+        #     session's own markers decide). pending_neutral: an id-only
+        #     speaker followed such a marker, so a lazy [SPEAKER: someone
+        #     else] is owed before the next audio. Never armed by the empty-id
+        #     clear, nor when no named marker went out in this session.
+        last_marker_named = False
+        pending_neutral = False
         async for ev in request_iter:
             kind = ev.WhichOneof("event")
             if kind == "session_end":
@@ -923,6 +942,8 @@ class LiveBridge:
                 _last_session = session
                 _warned_send_failure = False
                 pending_speaker = current_speaker   # re-arm: re-announce into the new session
+                last_marker_named = False           # the new session has heard no marker yet
+                pending_neutral = False
                 pending_ack = None                  # one-shot: do not replay into a new session
                 if session is not None and _pending_stream_end:
                     try:
@@ -954,12 +975,15 @@ class LiveBridge:
                     # No name to announce: an explicit clear (Phase 4 floor
                     # release) or an id-only speaker. Reset name tracking so
                     # the next named speaker -- even the previous one coming
-                    # back -- is re-announced; no [SPEAKER:] marker is sent.
+                    # back -- is re-announced. An id-only speaker after a
+                    # named marker owes a neutral one; the clear owes none.
                     current_speaker = None
                     pending_speaker = None
+                    pending_neutral = bool(uid) and last_marker_named
                 elif name != current_speaker:
                     current_speaker = name
                     pending_speaker = name
+                    pending_neutral = False
             if pending_ack and session is not None:
                 # Flushed in the SAME iteration it was latched -- unlike the
                 # speaker marker, this does not wait for the next audio chunk.
@@ -1021,6 +1045,18 @@ class LiveBridge:
                         stats.speaker_markers += 1
                         logger.info("voice: speaker is now %s", pending_speaker)
                         pending_speaker = None
+                        last_marker_named = True
+                    elif pending_neutral:
+                        # Same out-of-band shape and timing as a named marker.
+                        await session.send_client_content(
+                            turns=types.Content(role="user", parts=[types.Part(
+                                text=f"[SPEAKER: {NEUTRAL_SPEAKER_MARKER}]")]),
+                            turn_complete=False,
+                        )
+                        stats.speaker_markers += 1
+                        logger.info("voice: speaker is now an unnamed person (neutral marker)")
+                        last_marker_named = False
+                    pending_neutral = False
                     stats.audio_in_chunks += 1
                     stats.audio_in_bytes += len(ev.audio.pcm)
                     await session.send_realtime_input(

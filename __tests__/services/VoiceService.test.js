@@ -1168,6 +1168,14 @@ describe('speaker identity', () => {
     expect(session.sendAudio).toHaveBeenCalledTimes(2); // audio still flows
   });
 
+  test('voice persona explains the neutral "someone else" marker', () => {
+    const { svc } = makeService(makeDeps({}), {}, undefined);
+    const p = svc._appendVoicePersona('BASE');
+    expect(p).toContain('[SPEAKER: someone else]');
+    expect(p).toMatch(/different, unnamed person/);
+    expect(p).toMatch(/previous name/);
+  });
+
   test('voice persona instructs the model never to read the marker aloud', () => {
     const { svc } = makeService(makeDeps({}), {}, undefined);
     const p = svc._appendVoicePersona('BASE');

@@ -29,7 +29,9 @@ Every tool is a WRITE, so a timeout after the request went out cannot say
 whether it landed: that case returns `MAYBE_APPLIED` (`maybe_applied: true`)
 and the prompt tells the model to check before retrying -- a blind retry of
 `hangar_add_ship` would add a second ship. A failure before anything was sent
-(token mint, connect) is a plain `unavailable`. `prewarm()` mints the ID token
+(token mint, connect) is a plain `unavailable`; any other failure after the
+request was handed to httpx (read/write timeouts, RemoteProtocolError,
+ReadError) and a non-JSON 5xx (a gateway 502/504) are `maybe_applied`. `prewarm()` mints the ID token
 at startup so the first edit doesn't pay for it inside the voice bound.
 """
 import asyncio
@@ -46,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_REFRESH_MARGIN_S = 300.0
 _DEFAULT_TIMEOUT_S = 5.0
-_MEMBER_ID = re.compile(r"\d{1,25}")
+_MEMBER_ID = re.compile(r"[0-9]{1,25}")   # ASCII only (\d also matches other scripts' digits)
 
 FIT_TOOL = "hangar_fit"
 ADD_SHIP_TOOL = "hangar_add_ship"
@@ -208,8 +210,10 @@ class HangarEditClient:
         if not slot:
             return _invalid("hangar_reset needs a slot -- ask which part to reset, or pass \"all\" "
                             "for the whole ship")
-        if "/" in ship:
-            return _invalid("a ship name can't contain '/'")
+        if "/" in ship or ship in (".", ".."):
+            # A path segment: "/" can't route, and "."/".." would be
+            # normalised away into a different URL.
+            return _invalid("that isn't a ship name")
         return await self._post(f"/v1/members/{member_id}/ships/{quote(ship, safe='')}/reset",
                                 member_id, {"slot": slot})
 
@@ -241,12 +245,16 @@ class HangarEditClient:
             return _unavailable(str(e))
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
-        except httpx.TimeoutException:
-            return dict(MAYBE_APPLIED)   # read/write/pool timeout after the request started
-        except httpx.HTTPError as e:
-            return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
         except Exception as e:  # noqa: BLE001 - never raise into the tool path
-            return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
+            # Anything but a connect failure once the request was handed to
+            # httpx (read/write/pool timeout, RemoteProtocolError, ReadError,
+            # ...) may have reached the service: report maybe_applied, same
+            # as the agent sidecar, so the model checks before retrying.
+            if not sent:
+                return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
+            logger.warning("hangar-service POST %s failed after sending (%s: %s); reporting "
+                           "maybe_applied", path, type(e).__name__, e)
+            return dict(MAYBE_APPLIED)
         try:
             data = resp.json()
         except ValueError:
@@ -264,6 +272,12 @@ class HangarEditClient:
             return data          # the service's own envelope, untouched
         if isinstance(data, dict) and isinstance(data.get("error"), str):
             return data          # 5xx with an envelope (`unavailable`)
+        if status >= 500:
+            # A non-JSON 5xx is a gateway/front-end answer (502/504 from Cloud
+            # Run or the LB): the app may have committed behind it.
+            logger.warning("hangar-service POST %s -> HTTP %s without an error envelope; "
+                           "reporting maybe_applied", path, status)
+            return dict(MAYBE_APPLIED)
         return _unavailable(f"hangar-service POST {path} returned HTTP {status}")
 
     async def aclose(self) -> None:
