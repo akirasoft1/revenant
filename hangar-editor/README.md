@@ -22,7 +22,7 @@ theme, mobile-friendly). Tests: Vitest + Testing Library (jsdom).
 | `/members` | Directory of members with at least one ship |
 | `/members/:id` | A member's hangar (display names always shown with the Discord ID, since names are user-controlled). Read-only unless it is yours or you are an admin (`/api/me` `isAdmin`) |
 | `/members/:id/ships/:shipId` | Ship detail: slot table grouped by type (slot, size, current item, stock/fitted badge). **Change** opens the compatible-item picker (sorted by the type's key stat, respecting lower-is-better; filter by text/size; cheapest UEX price when known). **Reset to stock** |
-| `/import` (`?member=<id>` for admins) | spviewer import: export snippet + copy button, upload, per-row preview (changes and skipped reasons), new/existing ship choice, apply, summary. "Update existing" is pre-selected only for a matching ship with no fitted changes (the import is authoritative and resets every other slot to stock); otherwise "New ship". Admins reach `?member=<id>` from that member's hangar |
+| `/import` (`?member=<id>` for admins) | spviewer import: export snippet + copy button, upload, per-row preview (changes and skipped reasons), new/existing ship choice, apply, summary. "Update existing" is pre-selected only for a matching ship with no fitted changes (the import is authoritative and resets every other slot to stock); otherwise "New ship" — also when the target hangar can't be fetched (the preview still works, counts are just unknown). A row with a `too_many_lookups` skip is marked "won't be applied — import fewer at once" and any row-level skip "cannot be imported"; both are left out of apply, matching the server, which refuses such rows. Admins reach `?member=<id>` from that member's hangar; the summary names the member with their ID |
 
 ## API
 
@@ -70,7 +70,7 @@ env, `/api/me` answers 503 and the editor shows "Login is unavailable right now"
 ## Test and build
 
 ```bash
-npm test           # vitest run (jsdom)
+npm test           # vitest run (jsdom) -- the bot's root Jest run ignores hangar-editor/
 npm run typecheck
 npm run build      # tsc --noEmit + vite build -> dist/
 ```
@@ -86,8 +86,13 @@ There is no separate host. `hangar-service`'s image builds this app in a Node
 stage and copies `dist/` into the Python image. One image, tagged with the git
 short SHA, ships the API and the editor together. The service serves:
 
-- `/assets/*` with long-cache headers (the names are hashed)
-- `index.html` with `Cache-Control: no-cache` for any non-API GET that isn't a file, so client routes like `/members/123` work on reload
+- `/assets/*` with `Cache-Control: public, max-age=31536000, immutable` (the names are hashed)
+- root files such as `favicon.svg` with a 1-hour cache
+- `index.html` with `Cache-Control: no-cache` for any GET outside `/api`, `/v1`, `/health`, `/healthz` and `/assets` that isn't a file, so client routes like `/members/123` work on reload
+- a Content-Security-Policy on the document: same-origin scripts and styles only (the Vite build has no inline code), images from self, `data:` and `https://cdn.discordapp.com` (avatars), `frame-ancestors 'none'`. **If you add RUM** (`VITE_DT_RUM_SRC`), also set `HANGAR_RUM_ORIGINS` on the service to the script and beacon origins, or the CSP blocks them. Anything new that loads from another origin (fonts, images) needs the CSP in `hangar-service/src/static_site.py` widened.
+- `/version.txt`: the image's git SHA
+
+Build the image from the repo root: `docker build -f hangar-service/Dockerfile --build-arg GIT_SHA=$(git rev-parse --short HEAD) -t <image>:<sha> .`
 
 `https://hangar.aklabs.io` reaches it through a global external HTTPS load
 balancer (managed cert) and a serverless NEG. See the spec, plus

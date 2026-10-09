@@ -98,7 +98,8 @@ For the system-level overview (software architecture + Kubernetes deployment top
 
 ### Member Hangar (Star Citizen)
 
-- Each member's ships and their component loadouts, stored in `hangar-service` (Cloud Run + Firestore) and managed with `/hangar`
+- Each member's ships and their component loadouts, stored in `hangar-service` (Cloud Run + Firestore) and managed with `/hangar` or the web editor
+- **Web editor at https://hangar.aklabs.io**: sign in with Discord (members of the org's Discord server only), add/rename/remove ships, fit components slot by slot from only-compatible items (ranked by key stat, with the cheapest shop price), reset to stock, browse other members' hangars, and import saved loadouts from spviewer.eu. Source in `hangar-editor/`; served by `hangar-service` behind a GCP load balancer
 - Ask in chat or voice: "what's a purchasable upgraded shield for my Harbinger?", "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?", "can Micro use it?", "what's on my Connie?"
 - Ship data is looked up only for questions about a member's own ships — never mentioned unprompted
 
@@ -405,6 +406,7 @@ Set on the **bot** (for `/hangar`) and on **sc-knowledge** (for the `sc_member_h
 |----------|---------|-------------|
 | `HANGAR_API_URL` | `` | hangar-service URL, also the ID-token audience — must equal the service's `HANGAR_AUDIENCE` exactly (`https://hangar-service-hvmf2jpuca-uc.a.run.app`, no trailing slash). Unset on the bot → `/hangar` is not registered; unset on sc-knowledge → the hangar tools answer "unavailable" |
 | `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | `hangar-api@` service-account key (Secret `hangar-api-sa`) used to mint the ID token |
+| `HANGAR_EDITOR_URL` | `` | Bot only: web editor URL (`https://hangar.aklabs.io`). When set, `/hangar list` ends with "Edit in the browser: <url>" |
 
 ## Commands
 
@@ -480,7 +482,7 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 ### Hangar (Star Citizen ships)
 | Command | Description |
 |---------|-------------|
-| `/hangar list [member]` | List your (or another member's) ships, nicknames and what's changed from stock |
+| `/hangar list [member]` | List your (or another member's) ships, nicknames and what's changed from stock (plus a link to the web editor when `HANGAR_EDITOR_URL` is set) |
 | `/hangar add ship:<ship> [nickname] [member]` | Add a ship (autocompletes from the catalog) |
 | `/hangar rename ship:<ship> nickname:<name> [member]` | Set or change a ship's nickname |
 | `/hangar remove ship:<ship> [member]` | Remove a ship |
