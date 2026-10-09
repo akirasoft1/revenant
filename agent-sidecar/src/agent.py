@@ -347,17 +347,32 @@ SC_HANGAR_UNAVAILABLE = (
 # The tools bind the acting member from ChatRequest.user_id in code; this
 # sentence is what keeps the model from writing on hypotheticals/advice.
 # Mirrored (short, spoken) in voice-sidecar's voice notes.
-SC_HANGAR_EDIT_RULE = (
-    "Call hangar_fit / hangar_add_ship / hangar_reset ONLY when the speaker says they already DID "
-    "something to their own ships (bought, fitted, swapped, put back to stock) or explicitly asks you "
-    "to update their own hangar (\"put my Harbinger's shields back to stock\", \"mark my Connie as "
-    "having a Hemera\") — never for hypotheticals or advice (\"should I…\", \"would X be better…\") — "
-    "and on choose_slot or ambiguous ask a short follow-up about which one they meant, after a write "
-    "say exactly what changed using the canonical item name returned, after a maybe_applied result "
-    "never repeat the call (above all hangar_add_ship) but check sc_member_hangar first, and remember "
-    "these tools only ever edit the speaker's own hangar, so refuse requests to change anyone else's "
-    "ships."
-)
+def _sc_hangar_edit_rule(*, tools_attached: bool) -> str:
+    """The edit rule. `tools_attached` = the sc_* tools (sc_member_hangar)
+    are on this turn; when sc-knowledge is down the maybe_applied clause
+    can't send the model to a tool it doesn't have, so it names no sc_* tool
+    and tells the speaker to check their hangar later instead."""
+    after_maybe = (
+        "after a maybe_applied result never repeat the call (above all hangar_add_ship) but check "
+        "sc_member_hangar first"
+        if tools_attached else
+        "after a maybe_applied result tell them it may have saved and to check their hangar later; "
+        "don't repeat it"
+    )
+    return (
+        "Call hangar_fit / hangar_add_ship / hangar_reset ONLY when the speaker says they already DID "
+        "something to their own ships (bought, fitted, swapped, put back to stock) or explicitly asks you "
+        "to update their own hangar (\"put my Harbinger's shields back to stock\", \"mark my Connie as "
+        "having a Hemera\") — never for hypotheticals or advice (\"should I…\", \"would X be better…\") — "
+        "and on choose_slot or ambiguous ask a short follow-up about which one they meant, after a write "
+        f"say exactly what changed using the canonical item name returned, {after_maybe}, and remember "
+        "these tools only ever edit the speaker's own hangar, so refuse requests to change anyone else's "
+        "ships."
+    )
+
+
+SC_HANGAR_EDIT_RULE = _sc_hangar_edit_rule(tools_attached=True)
+SC_HANGAR_EDIT_RULE_UNAVAILABLE = _sc_hangar_edit_rule(tools_attached=False)
 
 # "stock" + the parenthetical: a member's OWN loadout is covered by the hangar
 # tools, so step (2) must not route "what's on my Connie?" to google_search.
@@ -408,7 +423,7 @@ def sc_tools_unavailable_note(*, web_search: bool, hangar_edits: bool = False) -
     call hangar-service directly (not through sc-knowledge), so they stay
     attached; with them on, the note says recording still works and carries
     the same edit rule as the available preamble."""
-    edits = (f"You can still record changes to the speaker's own hangar: {SC_HANGAR_EDIT_RULE} "
+    edits = (f"You can still record changes to the speaker's own hangar: {SC_HANGAR_EDIT_RULE_UNAVAILABLE} "
              if hangar_edits else "")
     fallback = (
         "use google_search and say the answer is web-sourced, or else answer only with clearly-labelled, possibly outdated general knowledge"

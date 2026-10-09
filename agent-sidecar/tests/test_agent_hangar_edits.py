@@ -12,6 +12,7 @@ import pytest
 import src.agent as A
 from src.agent import (
     SC_HANGAR_EDIT_RULE,
+    SC_HANGAR_EDIT_RULE_UNAVAILABLE,
     SC_HANGAR_RULE,
     SC_HANGAR_UNAVAILABLE,
     SC_TOOLS_PREAMBLE,
@@ -144,7 +145,10 @@ def test_sc_preamble_carries_the_edit_rule_once_only_when_edits_attached(web):
 @pytest.mark.parametrize("web", [True, False])
 def test_unavailable_note_keeps_edits_coherent(web):
     with_edits = sc_tools_unavailable_note(web_search=web, hangar_edits=True)
-    assert with_edits.count(SC_HANGAR_EDIT_RULE) == 1
+    assert with_edits.count(SC_HANGAR_EDIT_RULE_UNAVAILABLE) == 1
+    assert SC_HANGAR_EDIT_RULE not in with_edits
+    # never promise a tool that isn't attached: no sc_* tool is named at all
+    assert "sc_member_hangar" not in with_edits and "sc_" not in with_edits
     assert SC_HANGAR_UNAVAILABLE in with_edits
     # lookups are down but recording still works -- the note must not tell the
     # model hangars are wholly unreachable without saying edits still work
@@ -175,7 +179,9 @@ def test_edit_tools_attached_with_sc_notes_when_enabled(monkeypatch, up, web):
     _chat(ag)
     for n in EDIT_TOOL_NAMES:
         assert n in _names(cap["tools"])
-    assert SC_HANGAR_EDIT_RULE in cap["instruction"]
+    assert (SC_HANGAR_EDIT_RULE if up else SC_HANGAR_EDIT_RULE_UNAVAILABLE) in cap["instruction"]
+    if not up:
+        assert "sc_member_hangar" not in cap["instruction"]
 
 
 def test_edit_tools_not_attached_when_disabled(monkeypatch):
@@ -222,3 +228,17 @@ def test_result_defaults_have_no_edits():
     r = AgentChatResult(message_text="x", execution_ids=[], any_failed=False)
     assert r.hangar_edits == 0
     assert r.hangar_edit_calls == []
+
+
+def test_unavailable_edit_rule_variant():
+    r = SC_HANGAR_EDIT_RULE_UNAVAILABLE
+    for name in EDIT_TOOL_NAMES:
+        assert name in r
+    assert "sc_" not in r
+    low = r.lower()
+    assert "maybe_applied" in r and "may have saved" in low and "check their hangar later" in low
+    assert "don't repeat it" in low
+    assert "should i" in low and "own hangar" in low and "canonical item name" in low
+    assert r.count(". ") == 0 and r.endswith(".")
+    # identical to the attached rule except the maybe_applied clause
+    assert r.split("after a maybe_applied")[0] == SC_HANGAR_EDIT_RULE.split("after a maybe_applied")[0]
