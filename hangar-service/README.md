@@ -213,8 +213,11 @@ Two layers:
    and **the app's own authentication is the only gate**. Nothing changed for
    the bot and sc-knowledge: they still call the `run.app` URL with Google ID
    tokens for the exact audience `https://hangar-service-hvmf2jpuca-uc.a.run.app`.
-   Every `/v1` and `/api/v1` route stays authenticated; `/health`,
-   `/version.txt` and the static editor are open (they carry no member data).
+   Every `/v1` and `/api/v1` route stays authenticated. Open without credentials
+   (none return member data): `/health`, `/healthz`, `/version.txt`, the static
+   editor, and the login routes `/api/auth/login|callback|logout` plus `/api/me`
+   (401 without a session). Both `run.app` URLs are just as public as
+   `hangar.aklabs.io` — never rely on the load balancer for access control.
    The `roles/run.invoker` binding for `hangar-api@` stays in place (harmless,
    and needed again if the check is ever turned back on).
 2. **The app**, which verifies Google ID tokens (service callers) and
