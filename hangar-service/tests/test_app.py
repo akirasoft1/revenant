@@ -117,6 +117,18 @@ def test_healthz_unauthenticated_and_no_upstream_calls(client, wiki_calls):
     ("DELETE", f"/v1/members/{SELF}/ships/abc"),
     ("PUT", f"/v1/members/{SELF}/ships/abc/slots/x"),
     ("DELETE", f"/v1/members/{SELF}/ships/abc/slots/x"),
+    ("GET", "/v1/members"),
+    # the browser aliases (same handlers under /api)
+    ("GET", f"/api/v1/members/{SELF}/hangar"),
+    ("GET", "/api/v1/catalog/vehicles?q=harbinger"),
+    ("GET", f"/api/v1/catalog/vehicles/{TAURUS_UUID}/slots"),
+    ("GET", "/api/v1/catalog/items?type=QuantumDrive"),
+    ("POST", f"/api/v1/members/{SELF}/ships"),
+    ("PATCH", f"/api/v1/members/{SELF}/ships/abc"),
+    ("DELETE", f"/api/v1/members/{SELF}/ships/abc"),
+    ("PUT", f"/api/v1/members/{SELF}/ships/abc/slots/x"),
+    ("DELETE", f"/api/v1/members/{SELF}/ships/abc/slots/x"),
+    ("GET", "/api/v1/members"),
 ])
 def test_every_v1_route_requires_auth(client, wiki_calls, headers, method, path):
     r = client.request(method, path, headers={**headers, "X-Acting-Member": SELF}, json={"bogus": 1})

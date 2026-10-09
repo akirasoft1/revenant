@@ -261,3 +261,81 @@ def test_write_without_acting_member_forbidden():
     with pytest.raises(Forbidden) as e:
         authorize_write(Principal("service", CALLER, None), "111", ADMINS)
     assert "X-Acting-Member" in str(e.value)
+
+
+# ---------- Discord session resolver + same-origin check (web editor) ----------
+
+from src.auth import SESSION_COOKIE, DiscordSessionResolver, check_same_origin  # noqa: E402
+from src.session import SessionCodec, SessionUser  # noqa: E402
+
+ORIGIN = "https://hangar.aklabs.io"
+SUSER = SessionUser("123456789012345678", "akira", "Akira", None)
+
+
+def _codec():
+    return SessionCodec("k" * 48)
+
+
+async def test_session_resolver_no_cookie_is_not_applicable():
+    assert await DiscordSessionResolver(_codec()).resolve(_request()) is None
+
+
+async def test_session_resolver_valid_cookie_is_session_principal_ignoring_acting_header():
+    codec = _codec()
+    req = _request({"Cookie": f"{SESSION_COOKIE}={codec.sign_session(SUSER)}",
+                    "X-Acting-Member": "999"})
+    p = await DiscordSessionResolver(codec).resolve(req)
+    assert p.kind == "session"
+    assert p.subject == SUSER.discord_id
+    assert p.acting_member == SUSER.discord_id      # header ignored
+    assert p.user == SUSER
+
+
+async def test_session_resolver_bad_cookie_is_401():
+    req = _request({"Cookie": f"{SESSION_COOKIE}=tampered.value.sig"})
+    with pytest.raises(AuthError):
+        await DiscordSessionResolver(_codec()).resolve(req)
+
+
+async def test_google_bearer_wins_over_a_session_cookie_in_the_chain():
+    codec = _codec()
+    google = GoogleIdTokenResolver(AUD, frozenset({CALLER}),
+                                   fake_verifier({"good": {"aud": AUD, "email": CALLER,
+                                                           "email_verified": True}}))
+    req = _request({"Authorization": "Bearer good", "X-Acting-Member": "222",
+                    "Cookie": f"{SESSION_COOKIE}={codec.sign_session(SUSER)}"})
+    p = await Authenticator([google, DiscordSessionResolver(codec)]).authenticate(req)
+    assert p.kind == "service" and p.acting_member == "222"
+
+
+@pytest.mark.parametrize("headers", [
+    {"Origin": ORIGIN},
+    {"Referer": ORIGIN + "/ships/abc"},
+    {"Referer": ORIGIN},
+    {"Origin": ORIGIN, "Referer": "https://evil.example/x"},   # Origin decides when present
+])
+def test_same_origin_ok(headers):
+    check_same_origin(_request(headers), ORIGIN)
+
+
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Origin": "https://evil.example"},
+    {"Origin": "null"},
+    {"Origin": ORIGIN + ".evil.example"},
+    {"Origin": "http://hangar.aklabs.io"},
+    {"Referer": ORIGIN + ".evil.example/x"},
+    {"Referer": "https://evil.example/?u=" + ORIGIN},
+    {"Origin": "https://evil.example", "Referer": ORIGIN + "/"},
+])
+def test_same_origin_rejected(headers):
+    with pytest.raises(Forbidden):
+        check_same_origin(_request(headers), ORIGIN)
+
+
+def test_session_principal_write_rule_unchanged():
+    p = Principal("session", "111", "111", user=SUSER)
+    authorize_write(p, "111", frozenset())
+    with pytest.raises(Forbidden):
+        authorize_write(p, "222", frozenset())
+    authorize_write(p, "222", frozenset({"111"}))

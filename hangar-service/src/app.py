@@ -13,6 +13,22 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     GET    /v1/catalog/vehicles?q=&limit=
     GET    /v1/catalog/vehicles/{uuid}/slots
     GET    /v1/catalog/items?type=&size=&q=
+    GET    /v1/members                                      member directory (>= 1 ship)
+
+Every ``/v1/...`` route is ALSO served at ``/api/v1/...`` (same handler): service
+callers use ``/v1`` on the run.app URL, the browser editor uses ``/api/v1``
+through the load balancer. Browser-only routes (web editor, Discord login):
+
+    GET    /api/auth/login?next=/path      302 -> Discord authorize (sets hangar_oauth_state)
+    GET    /api/auth/callback?code&state   302 -> next (sets hangar_session) | /?login_error=<code>
+    POST   /api/auth/logout                204, clears hangar_session
+    GET    /api/me                         {discordId, username, globalName, avatarUrl, isAdmin} | 401
+
+Browser login is configured by DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET /
+HANGAR_SESSION_KEY; without them the login routes and /api/me answer 503
+``unavailable`` and session cookies are not a credential (service callers are
+unaffected). Session-principal writes must be same-origin (Origin/Referer ==
+HANGAR_PUBLIC_ORIGIN) and ignore X-Acting-Member.
 
 Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 ``unauthenticated`` 401, ``forbidden`` 403, ``not_found`` 404, ``ambiguous``
@@ -21,19 +37,27 @@ Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 """
 import asyncio
 import contextlib
+import hmac
 import logging
 import re
-from typing import Any
+import secrets
+import time
+from typing import Any, Callable
 
-from fastapi import Depends, FastAPI, Request
+import httpx
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import (
-    AuthError, AuthUnavailable, Authenticator, CredentialResolver, Forbidden,
+    AuthError, AuthUnavailable, Authenticator, CredentialResolver, DiscordSessionResolver, Forbidden,
     GoogleIdTokenResolver, GoogleIdTokenVerifier, Principal, TokenVerifier, authorize_write,
+    check_same_origin,
 )
+from .discord_oauth import DiscordOAuth, DiscordOAuthError
+from .session import (OAUTH_STATE_COOKIE, OAUTH_STATE_MAX_AGE_S, SESSION_COOKIE, SESSION_MAX_AGE_S,
+                      InvalidSession, SessionCodec)
 from .catalog import UnknownItemType, build_catalog
 from .config import Config
 from .http import UpstreamError
@@ -47,6 +71,8 @@ SHIP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 NICKNAME_MAX = 64
 SLOT_MAX = 300
 FREE_TEXT_MAX = 200
+API_PREFIXES = ("/v1", "/api/v1")     # service callers, browser editor
+STATE_COOKIE_PATH = "/api/auth"
 
 
 class ApiError(Exception):
@@ -125,11 +151,29 @@ async def read_member(discordId: str, principal: Principal = Depends(get_princip
     return _check_member(discordId)
 
 
+def authorize_browser_write(request: Request, principal: Principal) -> None:
+    """CSRF: a session principal's write must come from the editor's own origin.
+    Service (Bearer) callers are unaffected. Every write route must call this
+    (``write_member`` does)."""
+    if principal.kind == "session":
+        check_same_origin(request, request.app.state.config.public_origin)
+
+
 async def write_member(request: Request, discordId: str,
                        principal: Principal = Depends(get_principal)) -> Principal:
     _check_member(discordId)
+    authorize_browser_write(request, principal)
     authorize_write(principal, discordId, request.app.state.config.admin_ids)
     return principal
+
+
+def owner_name_for(principal: Principal, member_id: str) -> str | None:
+    """The ``ownerName`` to store on a ship write: the session user's display
+    name when a member edits THEIR OWN hangar in the browser; None otherwise
+    (service writes, and admins editing someone else's hangar, leave it alone)."""
+    if principal.kind == "session" and principal.user is not None and principal.acting_member == member_id:
+        return principal.user.display_name
+    return None
 
 
 # ---------- views ----------
@@ -159,13 +203,24 @@ async def ship_view(catalog, ship: dict) -> dict:
 def create_app(config: Config, *, catalog: Any = None, repository: ShipRepository | None = None,
                verifier: TokenVerifier | None = None,
                resolvers: list[CredentialResolver] | None = None,
-               warm: bool = True) -> FastAPI:
+               warm: bool = True,
+               discord_transport: httpx.AsyncBaseTransport | None = None,
+               clock: Callable[[], float] | None = None) -> FastAPI:
     owns_catalog = catalog is None
     if catalog is None:
         catalog = build_catalog(config.wiki_base, version=config.version)
+    browser_problem = config.browser_auth_problem()
+    codec: SessionCodec | None = None
+    oauth: DiscordOAuth | None = None
+    if browser_problem is None:
+        codec = SessionCodec(config.session_key, clock=clock or time.time)
+        oauth = DiscordOAuth(config.discord_client_id, config.discord_client_secret,
+                             config.redirect_uri, transport=discord_transport)
     if resolvers is None:
         resolvers = [GoogleIdTokenResolver(config.audience, config.allowed_callers,
                                            verifier or GoogleIdTokenVerifier())]
+        if codec is not None:
+            resolvers.append(DiscordSessionResolver(codec))
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -178,6 +233,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         log.info("hangar-service %s ready (storage=%s, wiki=%s, allowed callers=%s, admins=%d)",
                  config.version, config.storage, config.wiki_base,
                  sorted(config.allowed_callers), len(config.admin_ids))
+        if browser_problem is None:
+            log.info("hangar: browser login enabled (origin %s, redirect %s)",
+                     config.public_origin, config.redirect_uri)
+        else:
+            log.warning("hangar: browser login DISABLED (%s) -- /api/auth/* and /api/me answer 503; "
+                        "service callers are unaffected", browser_problem)
         try:
             yield
         finally:
@@ -194,6 +255,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     app.state.catalog = catalog
     app.state.repository = repository
     app.state.authenticator = Authenticator(resolvers)
+    app.state.session_codec = codec
+    router = APIRouter()
 
     # ----- error envelopes -----
 
@@ -259,13 +322,13 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     # ----- members -----
 
-    @app.get("/v1/members/{discordId}/hangar")
+    @router.get("/members/{discordId}/hangar")
     async def get_hangar(member: str = Depends(read_member)):
         ships = await app.state.repository.list_ships(member)
         views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in ships))
         return {"member": member, "ships": list(views)}
 
-    @app.post("/v1/members/{discordId}/ships", status_code=201)
+    @router.post("/members/{discordId}/ships", status_code=201)
     async def add_ship(request: Request, discordId: str, principal: Principal = Depends(write_member)):
         body = await _json_object(request)
         vehicle = _required_text(body, "vehicle")
@@ -281,12 +344,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         ship = await app.state.repository.create_ship(
             discordId, vehicle_uuid=v["uuid"], vehicle_name=v["name"],
             vehicle_class_name=v.get("className"), nickname=nickname,
-            updated_by=principal.acting_member)
+            updated_by=principal.acting_member, owner_name=owner_name_for(principal, discordId))
         log.info("hangar: member %s added %s (%s) as ship %s (by %s)",
                  discordId, v["name"], v["uuid"], ship["shipId"], principal.acting_member)
         return {"ship": await ship_view(app.state.catalog, ship)}
 
-    @app.patch("/v1/members/{discordId}/ships/{shipId}")
+    @router.patch("/members/{discordId}/ships/{shipId}")
     async def rename_ship(request: Request, discordId: str, shipId: str,
                           principal: Principal = Depends(write_member)):
         _check_ship_id(shipId)
@@ -294,12 +357,13 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if "nickname" not in body:
             raise _bad("'nickname' is required (null clears it)")
         ship = await app.state.repository.set_nickname(
-            discordId, shipId, _nickname(body["nickname"]), updated_by=principal.acting_member)
+            discordId, shipId, _nickname(body["nickname"]), updated_by=principal.acting_member,
+            owner_name=owner_name_for(principal, discordId))
         if ship is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         return {"ship": await ship_view(app.state.catalog, ship)}
 
-    @app.delete("/v1/members/{discordId}/ships/{shipId}")
+    @router.delete("/members/{discordId}/ships/{shipId}")
     async def delete_ship(discordId: str, shipId: str, principal: Principal = Depends(write_member)):
         _check_ship_id(shipId)
         if not await app.state.repository.delete_ship(discordId, shipId):
@@ -307,7 +371,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         log.info("hangar: member %s ship %s deleted (by %s)", discordId, shipId, principal.acting_member)
         return {"deleted": True, "shipId": shipId}
 
-    @app.put("/v1/members/{discordId}/ships/{shipId}/slots/{slot:path}")
+    @router.put("/members/{discordId}/ships/{shipId}/slots/{slot:path}")
     async def fit_slot(request: Request, discordId: str, shipId: str, slot: str,
                        principal: Principal = Depends(write_member)):
         _check_ship_id(shipId)
@@ -333,17 +397,19 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         stock = target.stock_item
         if stock and stock.get("uuid") == item.get("uuid"):
             # `fitted` holds only changes from stock: fitting the stock item is a reset.
-            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=principal.acting_member)
+            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=principal.acting_member,
+                                            owner_name=owner_name_for(principal, discordId))
         else:
             updated = await repo.set_slot(discordId, shipId, slot, item_uuid=item["uuid"],
-                                          item_name=item.get("name"), updated_by=principal.acting_member)
+                                          item_name=item.get("name"), updated_by=principal.acting_member,
+                                          owner_name=owner_name_for(principal, discordId))
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         log.info("hangar: member %s ship %s slot %s <- %s (%s) (by %s)", discordId, shipId, slot,
                  item.get("name"), item.get("uuid"), principal.acting_member)
         return {"ship": await ship_view(catalog, updated)}
 
-    @app.delete("/v1/members/{discordId}/ships/{shipId}/slots/{slot:path}")
+    @router.delete("/members/{discordId}/ships/{shipId}/slots/{slot:path}")
     async def reset_slot(discordId: str, shipId: str, slot: str,
                          principal: Principal = Depends(write_member)):
         # No catalog check: a slot renamed by a patch must still be clearable.
@@ -351,14 +417,15 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if len(slot) > SLOT_MAX:
             raise _not_found(f"no slot {slot!r}")
         updated = await app.state.repository.clear_slot(discordId, shipId, slot,
-                                                        updated_by=principal.acting_member)
+                                                        updated_by=principal.acting_member,
+                                                        owner_name=owner_name_for(principal, discordId))
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         return {"ship": await ship_view(app.state.catalog, updated)}
 
     # ----- catalog -----
 
-    @app.get("/v1/catalog/vehicles")
+    @router.get("/catalog/vehicles")
     async def search_vehicles(q: str = "", limit: str = "25", principal: Principal = Depends(get_principal)):
         try:
             n = int(limit)
@@ -366,7 +433,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             raise _bad("limit must be an integer") from None
         return {"vehicles": await app.state.catalog.search_vehicles(q[:FREE_TEXT_MAX], limit=n)}
 
-    @app.get("/v1/catalog/vehicles/{uuid}/slots")
+    @router.get("/catalog/vehicles/{uuid}/slots")
     async def vehicle_slots(uuid: str, principal: Principal = Depends(get_principal)):
         catalog = app.state.catalog
         vehicle = await catalog.vehicle(uuid)
@@ -375,7 +442,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             raise _not_found(f"no vehicle {uuid!r}")
         return {"vehicle": vehicle, "slots": [s.to_dict() for s in slots]}
 
-    @app.get("/v1/catalog/items")
+    @router.get("/catalog/items")
     async def list_items(type: str | None = None, size: str | None = None, q: str | None = None,
                          principal: Principal = Depends(get_principal)):
         if not type:
@@ -390,6 +457,104 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                 raise _bad("size must be a non-negative integer")
         items = await app.state.catalog.items(type, size=size_n, q=(q or "")[:FREE_TEXT_MAX] or None)
         return {"items": items}
+
+    # ----- member directory -----
+
+    @router.get("/members")
+    async def list_members(principal: Principal = Depends(get_principal)):
+        out = []
+        for m in await app.state.repository.list_members():
+            entry = {"discordId": m["discordId"], "shipCount": m["shipCount"]}
+            if m.get("ownerName"):
+                entry["displayName"] = m["ownerName"]
+            out.append(entry)
+        out.sort(key=lambda e: ((e.get("displayName") or e["discordId"]).casefold(), e["discordId"]))
+        return {"members": out}
+
+    # Every API route is served under both prefixes (same handlers).
+    for prefix in API_PREFIXES:
+        app.include_router(router, prefix=prefix)
+
+    # ----- browser login (web editor) -----
+
+    def require_browser_auth() -> tuple[SessionCodec, DiscordOAuth]:
+        if codec is None or oauth is None:
+            raise ApiError(503, "unavailable",
+                           f"browser login is not configured on this server ({browser_problem})")
+        return codec, oauth
+
+    def cookie_kwargs(path: str) -> dict:
+        return {"path": path, "secure": True, "httponly": True, "samesite": "lax"}
+
+    def no_store(resp: Response) -> Response:
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.get("/api/auth/login")
+    async def auth_login(next: str | None = None):
+        c, o = require_browser_auth()
+        state = secrets.token_urlsafe(32)
+        resp = RedirectResponse(o.authorize_url(state), status_code=302)
+        resp.set_cookie(OAUTH_STATE_COOKIE, c.sign_state(state, next or "/"),
+                        max_age=OAUTH_STATE_MAX_AGE_S, **cookie_kwargs(STATE_COOKIE_PATH))
+        return no_store(resp)
+
+    @app.get("/api/auth/callback")
+    async def auth_callback(request: Request, code: str | None = None, state: str | None = None,
+                            error: str | None = None):
+        c, o = require_browser_auth()
+
+        def fail(reason: str, detail: str) -> Response:
+            log.warning("hangar: discord login failed (%s): %s", reason, detail)
+            resp = RedirectResponse(f"/?login_error={reason}", status_code=302)
+            resp.delete_cookie(OAUTH_STATE_COOKIE, **cookie_kwargs(STATE_COOKIE_PATH))
+            return no_store(resp)
+
+        try:
+            expected, next_path = c.verify_state(request.cookies.get(OAUTH_STATE_COOKIE))
+        except InvalidSession as e:
+            return fail("state_mismatch", f"state cookie: {e}")
+        if not state or not hmac.compare_digest(state.encode(), expected.encode()):
+            return fail("state_mismatch", "state parameter does not match the state cookie")
+        if error:
+            return fail("denied", f"Discord returned error={error!r}")
+        if not code:
+            return fail("missing_code", "callback carried no authorization code")
+        try:
+            access_token = await o.exchange_code(code)
+            user = await o.fetch_user(access_token)
+        except DiscordOAuthError as e:
+            return fail(e.code, str(e))
+        except Exception as e:     # never a stack trace to the browser
+            log.error("hangar: discord login crashed: %s", type(e).__name__, exc_info=e)
+            return fail("server_error", f"unexpected {type(e).__name__}")
+        resp = RedirectResponse(next_path, status_code=302)
+        resp.set_cookie(SESSION_COOKIE, c.sign_session(user), max_age=SESSION_MAX_AGE_S,
+                        **cookie_kwargs("/"))
+        resp.delete_cookie(OAUTH_STATE_COOKIE, **cookie_kwargs(STATE_COOKIE_PATH))
+        log.info("hangar: member %s (%s) logged in to the web editor", user.discord_id, user.username)
+        return no_store(resp)
+
+    @app.post("/api/auth/logout", status_code=204)
+    async def auth_logout():
+        # No auth or origin check: clearing one's own cookie is always safe.
+        resp = Response(status_code=204)
+        resp.delete_cookie(SESSION_COOKIE, **cookie_kwargs("/"))
+        return no_store(resp)
+
+    @app.get("/api/me")
+    async def me(request: Request):
+        c, _ = require_browser_auth()
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            raise AuthError("not logged in")
+        try:
+            user = c.verify_session(token)
+        except InvalidSession as e:
+            raise AuthError(f"browser session invalid or expired: {e}") from None
+        return no_store(JSONResponse({
+            "discordId": user.discord_id, "username": user.username, "globalName": user.global_name,
+            "avatarUrl": user.avatar_url, "isAdmin": user.discord_id in config.admin_ids}))
 
     return app
 

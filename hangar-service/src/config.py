@@ -1,12 +1,16 @@
 """Environment-driven configuration for hangar-service."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from .catalog import DEFAULT_WIKI_BASE
 
 DEFAULT_ALLOWED_CALLER = "hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com"
 STORAGE_BACKENDS = ("firestore", "memory")
+DEFAULT_PUBLIC_ORIGIN = "https://hangar.aklabs.io"
+CALLBACK_PATH = "/api/auth/callback"
+SESSION_KEY_MIN_LEN = 32
 
 
 def _csv(raw: str | None, *, lower: bool = False) -> frozenset[str]:
@@ -27,6 +31,35 @@ class Config:
     version: str
     port: int
     storage: str                      # "firestore" (prod) | "memory" (local dev only)
+    # ----- browser auth (web editor). Missing/invalid -> browser auth off
+    # (auth routes 503, no session resolver); service callers are unaffected.
+    public_origin: str = DEFAULT_PUBLIC_ORIGIN   # scheme://host[:port], no trailing slash
+    discord_client_id: str = ""
+    discord_client_secret: str = field(default="", repr=False)
+    session_key: str = field(default="", repr=False)
+
+    @property
+    def redirect_uri(self) -> str:
+        return self.public_origin + CALLBACK_PATH
+
+    def browser_auth_problem(self) -> str | None:
+        """Why browser (Discord) login is disabled, or None when it is enabled."""
+        missing = [name for name, value in (("DISCORD_CLIENT_ID", self.discord_client_id),
+                                            ("DISCORD_CLIENT_SECRET", self.discord_client_secret),
+                                            ("HANGAR_SESSION_KEY", self.session_key)) if not value]
+        if missing:
+            return f"{', '.join(missing)} not set"
+        if len(self.session_key) < SESSION_KEY_MIN_LEN:
+            return f"HANGAR_SESSION_KEY is shorter than {SESSION_KEY_MIN_LEN} characters"
+        parts = urlsplit(self.public_origin)
+        if parts.scheme not in ("http", "https") or not parts.netloc or parts.path or parts.query \
+                or parts.fragment:
+            return f"HANGAR_PUBLIC_ORIGIN {self.public_origin!r} is not a scheme://host[:port] origin"
+        return None
+
+    @property
+    def browser_auth_enabled(self) -> bool:
+        return self.browser_auth_problem() is None
 
 
 def load(env: Mapping[str, str] | None = None) -> Config:
@@ -47,4 +80,8 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         version=env.get("HANGAR_VERSION") or env.get("K_REVISION") or "dev",
         port=int(env.get("PORT") or "8080"),
         storage=storage,
+        public_origin=(env.get("HANGAR_PUBLIC_ORIGIN") or "").strip().rstrip("/") or DEFAULT_PUBLIC_ORIGIN,
+        discord_client_id=(env.get("DISCORD_CLIENT_ID") or "").strip(),
+        discord_client_secret=(env.get("DISCORD_CLIENT_SECRET") or "").strip(),
+        session_key=(env.get("HANGAR_SESSION_KEY") or "").strip(),
     )

@@ -5,9 +5,11 @@ Per-member Star Citizen ship loadouts. A small FastAPI service on **Cloud Run**
 Discord member's ships in **Firestore** (`members/{discordId}/ships/{shipId}`)
 and derives every ship's component slots from the **Star Citizen Wiki API**.
 Callers: the bot's `/hangar` command and sc-knowledge's `sc_member_hangar` /
-`sc_member_fit_check` tools; later the web loadout editor.
+`sc_member_fit_check` tools (Google ID tokens), and the web editor at
+`https://hangar.aklabs.io` (Discord login, signed session cookie).
 
-Spec: `docs/superpowers/specs/2026-10-09-member-hangar-design.md`.
+Specs: `docs/superpowers/specs/2026-10-09-member-hangar-design.md` (service),
+`docs/superpowers/specs/2026-10-09-hangar-editor-design.md` (web editor).
 
 ## API
 
@@ -18,11 +20,11 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 |---|---|---|
 | `invalid_request` | 400 | malformed JSON / missing or bad field / bad member id / unknown item `type` |
 | `unauthenticated` | 401 | no / invalid / wrong-audience / non-allow-listed token (`WWW-Authenticate: Bearer`) |
-| `forbidden` | 403 | write without `X-Acting-Member`, or acting member is neither the path member nor an admin |
+| `forbidden` | 403 | write without `X-Acting-Member`, or acting member is neither the path member nor an admin, or a browser-session write that is not same-origin |
 | `not_found` | 404 | unknown ship / vehicle / slot / item, unknown route |
 | `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
 | `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
-| `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable |
+| `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable; browser login not configured (`/api/auth/*`, `/api/me`) |
 | `unavailable` | 500 | unexpected server error (full stack logged) |
 
 | Method | Path | Body | Success |
@@ -37,9 +39,27 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | GET | `/v1/catalog/vehicles?q=&limit=` | – | `{vehicles: [VehicleSummary]}` (≤25) |
 | GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary, slots: [SlotDef]}` |
 | GET | `/v1/catalog/items?type=&size=&q=` | – | `{items: [ItemSummary]}` |
+| GET | `/v1/members` | – | `{members: [{discordId, shipCount, displayName?}]}` — members with ≥1 ship, sorted by name/ID; `displayName` only when known (see `ownerName`) |
+
+**Every `/v1/...` route is also served at `/api/v1/...`** (same handler, same
+auth). Service callers use `/v1` on the `run.app` URL; the browser editor uses
+`/api/v1` through the load balancer. Browser-only routes:
+
+| Method | Path | Success | Failure |
+|---|---|---|---|
+| GET | `/api/auth/login?next=/path` | 302 → `https://discord.com/oauth2/authorize?...` (scope `identify`); sets `hangar_oauth_state` (signed, 10 min, `Path=/api/auth`) | 503 `unavailable` if browser login unconfigured |
+| GET | `/api/auth/callback?code&state` | 302 → `next` (same-origin path, default `/`); sets `hangar_session`; clears the state cookie | 302 → `/?login_error=<code>`, code ∈ `state_mismatch`, `denied`, `missing_code`, `token_error`, `user_error`, `server_error`; 503 if unconfigured |
+| POST | `/api/auth/logout` | 204, clears `hangar_session` | – |
+| GET | `/api/me` | `{discordId, username, globalName, avatarUrl, isAdmin}` | 401 `unauthenticated` (no / bad / expired session); 503 if unconfigured |
+
+All four send `Cache-Control: no-store`. `next` must be a same-origin path
+(`/…`, not `//host`, no scheme) or it becomes `/`.
 
 `Ship` = `{shipId, vehicleUuid, vehicleName, vehicleClassName, nickname, fitted,
-createdAt, updatedAt, updatedBy, loadout, loadoutError}` where `loadout` is
+createdAt, updatedAt, updatedBy, ownerName, loadout, loadoutError}` where
+`ownerName` is the owner's Discord global name (else username), stored when the
+owner edits that ship through a browser session (null otherwise — service
+writes and admins editing someone else's ship leave it unchanged), and `loadout` is
 `[{slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}], item: {uuid, name} | null, source: "stock"|"fitted"}]`,
 or `null` with `loadoutError` `"unavailable"` / `"not_found"` when the
 catalog can't supply that ship's slots (the rest of the response still works).
@@ -101,9 +121,32 @@ Two layers:
 - **Writes** need `X-Acting-Member: <discordId>`; allowed when it equals the
   path `discordId` or is in `HANGAR_ADMIN_IDS`. **Reads** of any member are
   allowed for any authenticated caller.
-- Credential checks are a chain of pluggable resolvers (`src/auth.py`); the
-  web editor's Discord-OAuth sessions will be a second resolver producing the
-  same `Principal` -- routes and the write rule don't change.
+- Credential checks are a chain of pluggable resolvers (`src/auth.py`): the
+  Google ID-token resolver first, then (when browser login is configured) the
+  Discord session resolver. A valid Bearer token always wins, so service
+  behaviour — including `X-Acting-Member` — is unchanged; a bad Bearer token is
+  401 even if a valid cookie is present.
+- **Browser sessions (web editor).** Discord OAuth2 authorization-code flow
+  (scope `identify`, redirect `HANGAR_PUBLIC_ORIGIN` + `/api/auth/callback`).
+  On success the service sets `hangar_session`: an itsdangerous-signed (HMAC,
+  key `HANGAR_SESSION_KEY`, not encrypted) cookie carrying only public profile
+  fields `{discordId, username, globalName, avatar, iat}`;
+  `HttpOnly; Secure; SameSite=Lax; Path=/`, 30-day max age, no server-side
+  store (logout clears the cookie; a leaked cookie is valid until it expires or
+  the key rotates). A tampered / expired / other-key cookie is 401.
+  A session principal's **acting member is the session's Discord ID**;
+  `X-Acting-Member` is ignored. The write rule is the same (own hangar, or an
+  admin). **CSRF:** session writes additionally need `Origin` (or, without
+  one, `Referer`) on `HANGAR_PUBLIC_ORIGIN`, else 403 `forbidden`. Session
+  cookies work on both `/v1` and `/api/v1`.
+- If `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` or `HANGAR_SESSION_KEY` is
+  missing (or the key is < 32 chars, or the origin is malformed), browser login
+  is off: the login routes and `/api/me` answer 503 and cookies are not a
+  credential. Service callers keep working (fail closed for browsers only).
+- **Log hygiene:** tokens, codes, cookies and secrets are never logged. The
+  callback's `?code=&state=` is redacted from uvicorn's access log
+  (`src/log_redaction.py`); Discord errors are logged by HTTP status / Discord
+  `error` field only.
 - Callers mint tokens with audience = the URL they call (`HANGAR_API_URL`),
   and it must equal `HANGAR_AUDIENCE` byte for byte (no trailing slash).
   Cloud Run serves the service at two URLs:
@@ -125,6 +168,10 @@ Two layers:
 | `PORT` | `8080` | Listen port (Cloud Run sets it) |
 | `HANGAR_VERSION` | `$K_REVISION` or `dev` | Reported by `/health`, sent in the Wiki User-Agent |
 | `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** (refused when `K_SERVICE` is set, i.e. on Cloud Run) |
+| `HANGAR_PUBLIC_ORIGIN` | `https://hangar.aklabs.io` | Web editor origin: CSRF check + OAuth redirect URI (`<origin>/api/auth/callback`). Trailing slash dropped |
+| `DISCORD_CLIENT_ID` | *(empty → browser login off)* | Discord application client ID (`1558216042151419935`) |
+| `DISCORD_CLIENT_SECRET` | *(empty → browser login off)* | From Secret Manager `hangar-discord-client-secret` (`--set-secrets`) |
+| `HANGAR_SESSION_KEY` | *(empty → browser login off)* | Cookie-signing key, ≥ 32 chars; Secret Manager `hangar-session-key`. Rotating it logs everyone out |
 
 ## Runtime behaviour
 
@@ -146,6 +193,9 @@ uv pip install -p .venv/bin/python -r requirements-dev.txt
 
 HANGAR_STORAGE=memory HANGAR_AUDIENCE=http://localhost:8080 \
   .venv/bin/python -m src.main
+# Browser login locally: also set HANGAR_PUBLIC_ORIGIN=http://localhost:<port>,
+# DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET (that redirect URI must be registered
+# in the Discord app) and a >=32-char HANGAR_SESSION_KEY.
 curl localhost:8080/health
 # Firestore emulator instead of memory: export FIRESTORE_EMULATOR_HOST=localhost:8681 and drop HANGAR_STORAGE.
 ```
