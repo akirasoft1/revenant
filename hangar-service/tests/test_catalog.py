@@ -311,3 +311,57 @@ async def test_slots_returned_are_copies():
     assert len(s2) == 17
     assert all(ct["type"] != "Junk" for ct in s2[0].compatible_types)
     assert s2[0].stock_item["name"] != "corrupted"
+
+
+# ---------- task 2: background-refresh bookkeeping is pruned ----------
+
+async def test_finished_background_refresh_is_pruned():
+    clk, spawned = Clock(), []
+    c = _cat_spawn(clock=clk, spawned=spawned)
+    await c.vehicle_index()
+    await c.vehicle(TAURUS_UUID)
+    clk.t += CATALOG_TTL_S + 1
+    await c.vehicle_index()
+    await c.vehicle(TAURUS_UUID)
+    assert c.pending_refreshes() == 2
+    await c.drain_refreshes()
+    assert c.pending_refreshes() == 0
+
+
+async def test_failed_background_refresh_is_pruned_too():
+    clk = Clock()
+    down = {"on": False}
+    c = _cat_spawn(fail=lambda r: down["on"], clock=clk)
+    await c.vehicle(TAURUS_UUID)
+    clk.t += CATALOG_TTL_S + 1
+    down["on"] = True
+    await c.vehicle(TAURUS_UUID)
+    assert c.pending_refreshes() == 1
+    await c.drain_refreshes()
+    assert c.pending_refreshes() == 0
+
+
+async def test_lru_eviction_drops_and_cancels_the_keys_refresh():
+    from tests.conftest import HARBINGER_UUID
+    clk, spawned = Clock(), []
+    c = _cat_spawn(clock=clk, spawned=spawned, max_lookup_keys=1)
+    await c.vehicle(TAURUS_UUID)
+    clk.t += CATALOG_TTL_S + 1
+    await c.vehicle(TAURUS_UUID)          # stale -> refresh spawned, not yet run
+    assert c.pending_refreshes() == 1
+    await c.vehicle(HARBINGER_UUID)       # evicts the Taurus key
+    assert c.pending_refreshes() == 0
+    await asyncio.sleep(0)
+    assert spawned[0].cancelled()
+    assert c.lookup_key_count() == 1
+
+
+def test_index_cached_flag_is_a_pure_peek():
+    c = _cat_spawn()
+    assert c.vehicle_index_cached() is False
+
+
+async def test_index_cached_flag_true_after_warm():
+    c = _cat_spawn()
+    await c.warm()
+    assert c.vehicle_index_cached() is True

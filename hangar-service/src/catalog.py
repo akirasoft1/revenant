@@ -228,9 +228,28 @@ class Catalog:
         if peeked is not None and peeked.status == "stale" and not _is_empty(peeked.value):
             task = self._refreshing.get(key)
             if task is None or task.done():
-                self._refreshing[key] = self._spawn(self._refresh(key, ttl, fetch))
+                task = self._spawn(self._refresh(key, ttl, fetch))
+                self._refreshing[key] = task
+                add_cb = getattr(task, "add_done_callback", None)
+                if add_cb is not None:
+                    add_cb(lambda t, k=key: self._forget_refresh(k, t))
             return peeked.value
         return await self._cached(key, fetch)
+
+    def _forget_refresh(self, key: str, task) -> None:
+        # Only drop the entry if it is still THIS task (a newer refresh for
+        # the same key may have replaced it).
+        if self._refreshing.get(key) is task:
+            del self._refreshing[key]
+
+    def pending_refreshes(self) -> int:
+        """Background refreshes still tracked (finished ones are pruned)."""
+        return len(self._refreshing)
+
+    def vehicle_index_cached(self) -> bool:
+        """Whether the vehicle index is in the cache (fresh or stale). Never
+        touches the upstream -- safe for /healthz."""
+        return self._cache.peek("vehicle_index") is not None
 
     async def drain_refreshes(self) -> None:
         """Await in-flight background refreshes (tests / shutdown)."""
@@ -238,12 +257,26 @@ class Catalog:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def aclose(self) -> None:
+        """Shutdown: cancel background refreshes and close the HTTP client."""
+        for task in list(self._refreshing.values()):
+            if not task.done():
+                task.cancel()
+        await self.drain_refreshes()
+        self._refreshing.clear()
+        await self._u.aclose()
+
     def _touch_lookup(self, key: str) -> None:
         self._lookup_keys[key] = None
         self._lookup_keys.move_to_end(key)
         while len(self._lookup_keys) > self._max_lookup_keys:
             old, _ = self._lookup_keys.popitem(last=False)
             self._cache.discard(old)
+            # An in-flight refresh would write the evicted key back into the
+            # cache behind the LRU's back -- cancel it and stop tracking it.
+            task = self._refreshing.pop(old, None)
+            if task is not None and not task.done():
+                task.cancel()
 
     def lookup_key_count(self) -> int:
         return len(self._lookup_keys)

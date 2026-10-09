@@ -1,0 +1,154 @@
+# hangar-service
+
+Per-member Star Citizen ship loadouts. A small FastAPI service on **Cloud Run**
+(GCP project `revenant-discord-bot-2`, region `us-central1`) that stores each
+Discord member's ships in **Firestore** (`members/{discordId}/ships/{shipId}`)
+and derives every ship's component slots from the **Star Citizen Wiki API**.
+Callers: the bot's `/hangar` command and sc-knowledge's `sc_member_hangar` /
+`sc_member_fit_check` tools; later the web loadout editor.
+
+Spec: `docs/superpowers/specs/2026-10-09-member-hangar-design.md`.
+
+## API
+
+All JSON. Everything except `/healthz` needs a credential (see Auth).
+Errors are always `{"error": <code>, "message": <text>, ...}`:
+
+| Code | HTTP | When |
+|---|---|---|
+| `invalid_request` | 400 | malformed JSON / missing or bad field / bad member id / unknown item `type` |
+| `unauthenticated` | 401 | no / invalid / wrong-audience / non-allow-listed token (`WWW-Authenticate: Bearer`) |
+| `forbidden` | 403 | write without `X-Acting-Member`, or acting member is neither the path member nor an admin |
+| `not_found` | 404 | unknown ship / vehicle / slot / item, unknown route |
+| `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
+| `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
+| `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable |
+
+| Method | Path | Body | Success |
+|---|---|---|---|
+| GET | `/healthz` | – | `{status, version, vehicleIndexCached}` (no upstream calls, no auth) |
+| GET | `/v1/members/{discordId}/hangar` | – | `{member, ships: [Ship]}` |
+| POST | `/v1/members/{discordId}/ships` | `{vehicle, nickname?}` | 201 `{ship: Ship}` |
+| PATCH | `/v1/members/{discordId}/ships/{shipId}` | `{nickname}` (null clears) | `{ship: Ship}` |
+| DELETE | `/v1/members/{discordId}/ships/{shipId}` | – | `{deleted: true, shipId}` |
+| PUT | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | `{item}` (uuid or exact Wiki name) | `{ship: Ship}` |
+| DELETE | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | – | `{ship: Ship}` (reset to stock) |
+| GET | `/v1/catalog/vehicles?q=&limit=` | – | `{vehicles: [VehicleSummary]}` (≤25) |
+| GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary, slots: [SlotDef]}` |
+| GET | `/v1/catalog/items?type=&size=&q=` | – | `{items: [ItemSummary]}` |
+
+`Ship` = `{shipId, vehicleUuid, vehicleName, vehicleClassName, nickname, fitted,
+createdAt, updatedAt, updatedBy, loadout, loadoutError}` where `loadout` is
+`[{slot, type, sizeMin, sizeMax, item: {uuid, name} | null, source: "stock"|"fitted"}]`,
+or `null` with `loadoutError` `"unavailable"` / `"not_found"` when the
+catalog can't supply that ship's slots (the rest of the response still works).
+Slot ids contain `/` for nested slots
+(`hardpoint_gun_laser_top_left/hardpoint_class_2`); put them in the URL raw or
+`%2F`-encoded, both route. Fitting a slot's stock item resets it (`fitted`
+holds only changes from stock). Full shapes: Task 2 report /
+`src/app.py`.
+
+## Auth
+
+- Cloud Run is deployed `--allow-unauthenticated` (the future browser editor
+  must reach it); the app enforces auth itself.
+- **Service callers** send `Authorization: Bearer <Google ID token>`. The token
+  is verified with `google.oauth2.id_token.verify_oauth2_token` (Google
+  signature, expiry, issuer `accounts.google.com`) for audience
+  `HANGAR_AUDIENCE`; additionally `email_verified` must be true and `email`
+  must be in `HANGAR_ALLOWED_CALLERS`. Anything else → 401. If
+  `HANGAR_AUDIENCE` is empty every token is refused (fail closed).
+  Google's certs are cached in-process for 1h; if they can't be fetched the
+  request gets 503 `unavailable`, not 401.
+- **Writes** need `X-Acting-Member: <discordId>`; allowed when it equals the
+  path `discordId` or is in `HANGAR_ADMIN_IDS`. **Reads** of any member are
+  allowed for any authenticated caller.
+- Credential checks are a chain of pluggable resolvers (`src/auth.py`); the
+  web editor's Discord-OAuth sessions will be a second resolver producing the
+  same `Principal` -- routes and the write rule don't change.
+- Callers mint tokens with audience = the URL they call (`HANGAR_API_URL`);
+  it must equal `HANGAR_AUDIENCE` exactly (Cloud Run has two URL forms — pick
+  one and use it on both sides). Tokens from a SA JSON key include `email`;
+  impersonated tokens need `--include-email`.
+
+## Environment
+
+| Var | Default | Meaning |
+|---|---|---|
+| `HANGAR_AUDIENCE` | *(empty → all requests 401)* | Expected token audience: this service's URL |
+| `HANGAR_ALLOWED_CALLERS` | `hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com` | Comma-separated caller SA emails |
+| `HANGAR_ADMIN_IDS` | *(none)* | Comma-separated Discord IDs that may write any member's hangar (same as the bot's `BOT_ADMIN_USER_IDS`) |
+| `WIKI_BASE` | `https://api.star-citizen.wiki/api` | Star Citizen Wiki API base |
+| `GOOGLE_CLOUD_PROJECT` | *(ADC)* | Firestore project |
+| `PORT` | `8080` | Listen port (Cloud Run sets it) |
+| `HANGAR_VERSION` | `$K_REVISION` or `dev` | Reported by `/healthz`, sent in the Wiki User-Agent |
+| `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** |
+
+## Runtime behaviour
+
+- The Wiki vehicle index (~299 vehicles, 6 requests) is warmed by a background
+  task at startup; startup doesn't wait for it and a failure is only logged.
+  Catalog data is cached 12h, stale-while-revalidate (not-found entries 10min).
+- Cloud Run runs with request-only CPU, so a background refresh may stall
+  between requests and finish on the next one. That's accepted: stale catalog
+  data is still served, and min-instances 1 keeps the cache warm.
+- `GET …/hangar` fetches every owned ship's slots concurrently.
+
+## Local run
+
+```bash
+cd hangar-service
+uv venv --seed -p 3.13 .venv            # 3.13 locally; the image is 3.14
+uv pip install -p .venv/bin/python -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+
+HANGAR_STORAGE=memory HANGAR_AUDIENCE=http://localhost:8080 \
+  .venv/bin/python -m src.main
+curl localhost:8080/healthz
+# Firestore emulator instead of memory: export FIRESTORE_EMULATOR_HOST=localhost:8681 and drop HANGAR_STORAGE.
+```
+
+Local Python note: the uv-managed `3.14.0rc2` on the dev box can't import
+pydantic (`_eval_type() got an unexpected keyword argument 'prefer_fwd_module'`),
+so the venv uses 3.13. The container runs the real 3.14 and the suite passes there too.
+
+## Build and deploy (coordinator)
+
+Prereqs (once): APIs `run`, `firestore`, `artifactregistry` enabled; Firestore
+Native DB in `us-central1`; Artifact Registry repo `revenant`; runtime SA
+`hangar-runtime@` with `roles/datastore.user`; caller SA `hangar-api@`.
+Never `:latest` — tag with the git short SHA.
+
+```bash
+SHA=$(git rev-parse --short HEAD)
+IMAGE=us-central1-docker.pkg.dev/revenant-discord-bot-2/revenant/hangar-service:$SHA
+
+gcloud auth configure-docker us-central1-docker.pkg.dev
+docker build -t "$IMAGE" -f hangar-service/Dockerfile hangar-service/
+docker push "$IMAGE"
+
+# ^;^ switches gcloud's env-var delimiter to ';' because HANGAR_ADMIN_IDS contains commas.
+gcloud run deploy hangar-service --project revenant-discord-bot-2 \
+  --image "$IMAGE" --region us-central1 --allow-unauthenticated \
+  --service-account hangar-runtime@revenant-discord-bot-2.iam.gserviceaccount.com \
+  --min-instances 1 --memory 512Mi \
+  --set-env-vars "^;^GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2;HANGAR_ALLOWED_CALLERS=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com;HANGAR_ADMIN_IDS=<id1>,<id2>;HANGAR_VERSION=$SHA"
+
+# First deploy only: the audience is the service URL, known after the deploy.
+URL=$(gcloud run services describe hangar-service --project revenant-discord-bot-2 \
+  --region us-central1 --format='value(status.url)')
+gcloud run services update hangar-service --project revenant-discord-bot-2 \
+  --region us-central1 --update-env-vars "HANGAR_AUDIENCE=$URL"
+# Callers' HANGAR_API_URL must be this same $URL.
+# On later deploys add HANGAR_AUDIENCE=$URL to --set-env-vars (it replaces the whole set).
+```
+
+Smoke test with a real token:
+
+```bash
+TOKEN=$(gcloud auth print-identity-token \
+  --impersonate-service-account=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com \
+  --audiences="$URL" --include-email)
+curl -s "$URL/healthz"
+curl -s -H "Authorization: Bearer $TOKEN" "$URL/v1/catalog/vehicles?q=harbinger"
+```
