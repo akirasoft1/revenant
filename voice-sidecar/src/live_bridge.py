@@ -11,6 +11,7 @@ from opentelemetry import trace
 
 from . import voice_pb2
 from .hangar_edit import TOOL_NAMES as HANGAR_TOOL_NAMES
+from .hangar_edit import MAYBE_APPLIED as _HANGAR_MAYBE_APPLIED
 from .hangar_edit import UNKNOWN_SPEAKER as _HANGAR_UNKNOWN_SPEAKER
 from .hangar_edit import valid_member_id as _valid_member_id
 
@@ -184,12 +185,22 @@ HANGAR_TOOL_DECLARATIONS = (
 # agent-sidecar sc_tools_preamble sentence).
 HANGAR_EDIT_NOTE = (
     "Only when the person speaking says they DID something to their own ships (bought one, "
-    "fitted or swapped a part, put something back to stock) record it with hangar_fit, "
-    "hangar_add_ship or hangar_reset -- never for \"should I...\" or other questions or "
-    "hypotheticals; on choose_slot or ambiguous ask a short follow-up naming at most three "
+    "fitted or swapped a part, put something back to stock) or asks you to update their own "
+    "hangar, record it with hangar_fit, hangar_add_ship or hangar_reset -- never for "
+    "\"should I...\", \"would X be better\" or other advice questions or hypotheticals; on choose_slot or ambiguous ask a short follow-up naming at most three "
     "options; after a write say briefly what changed, using the item name the tool returned; "
     "these edit only the speaker's own hangar -- if asked to change someone else's ships, say "
     "chat edits only apply to your own hangar."
+)
+# Follows HANGAR_EDIT_NOTE (same paragraph). A write that timed out may still
+# have landed; a blind retry of hangar_add_ship would add a second ship.
+HANGAR_MAYBE_APPLIED_NOTE_SC = (
+    "If a result says maybe_applied, don't repeat it (never hangar_add_ship again) -- check "
+    "with sc_member_hangar first."
+)
+HANGAR_MAYBE_APPLIED_NOTE = (
+    "If a result says maybe_applied, don't repeat it (never hangar_add_ship again) -- tell "
+    "them it may have saved and to check their hangar."
 )
 # Whole hangar tool call (token mint + POST), on top of the client's own 5s.
 HANGAR_CALL_TIMEOUT_S = 6.0
@@ -492,7 +503,9 @@ class LiveBridge:
         if with_control and self._control_enabled:
             notes.append(CONTROL_NOTE)
         if with_control and self._hangar is not None:
-            notes.append(HANGAR_EDIT_NOTE)
+            notes.append(HANGAR_EDIT_NOTE + " " + (
+                HANGAR_MAYBE_APPLIED_NOTE_SC if (with_sc and self._sc_tools_attachable())
+                else HANGAR_MAYBE_APPLIED_NOTE))
         if declarations:
             tools.append(types.Tool(function_declarations=declarations))
         # An empty persona is dropped rather than joined as a leading blank.
@@ -927,20 +940,26 @@ class LiveBridge:
                     pending_ack = name.replace("[", "").replace("]", "")
             elif kind == "set_speaker":
                 name = (ev.set_speaker.display_name or "").strip()
+                uid = (ev.set_speaker.user_id or "").strip()
+                # Identity (the hangar-edit acting member) follows user_id
+                # ALONE: the bot sends SetSpeaker on every floor grant, id-only
+                # ({user_id, display_name: ""}) when the name didn't resolve,
+                # so a lost release-clear can't leave edits bound to the
+                # previous holder. Only an empty user_id clears it.
+                if uid:
+                    session_ref.speaker.set(uid)
+                else:
+                    session_ref.speaker.clear()
                 if not name:
-                    # Explicit clear (Phase 4 floor release): without this the
-                    # next speaker would inherit the previous speaker's
-                    # identity instead of being re-announced.
+                    # No name to announce: an explicit clear (Phase 4 floor
+                    # release) or an id-only speaker. Reset name tracking so
+                    # the next named speaker -- even the previous one coming
+                    # back -- is re-announced; no [SPEAKER:] marker is sent.
                     current_speaker = None
                     pending_speaker = None
-                    session_ref.speaker.clear()
-                else:
-                    # The id is tracked on every named SetSpeaker (not only on
-                    # a name change): it is the acting member for hangar edits.
-                    session_ref.speaker.set(ev.set_speaker.user_id)
-                    if name != current_speaker:
-                        current_speaker = name
-                        pending_speaker = name
+                elif name != current_speaker:
+                    current_speaker = name
+                    pending_speaker = name
             if pending_ack and session is not None:
                 # Flushed in the SAME iteration it was latched -- unlike the
                 # speaker marker, this does not wait for the next audio chunk.
@@ -1248,12 +1267,15 @@ class LiveBridge:
                 async with asyncio.timeout(HANGAR_CALL_TIMEOUT_S):
                     result = await self._hangar.call(name, member_id, args)
         except asyncio.CancelledError:
-            logger.info("voice: hangar edit %s id=%s member=%s -> cancelled (%dms)", name, call_id,
-                        member_id or "?", int((time.monotonic() - started) * 1000))
+            # The model cancelled the call id (or the pump ended), so no
+            # response can be sent -- but the write may already have landed.
+            logger.info("voice: hangar edit %s id=%s member=%s ship=%r item=%r vehicle=%r slot=%r "
+                        "-> cancelled, maybe_applied (%dms)", name, call_id, member_id or "?",
+                        args.get("ship"), args.get("item"), args.get("vehicle"), args.get("slot"),
+                        int((time.monotonic() - started) * 1000))
             raise
         except TimeoutError:
-            result = {"error": "unavailable",
-                      "message": f"the hangar service took longer than {HANGAR_CALL_TIMEOUT_S:g}s"}
+            result = dict(_HANGAR_MAYBE_APPLIED)
         except Exception as e:  # noqa: BLE001 - the client never raises; belt and braces
             result = {"error": "unavailable", "message": f"{type(e).__name__}: {e}"}
         if not isinstance(result, dict):
@@ -1276,7 +1298,8 @@ class LiveBridge:
             args.get("vehicle"), args.get("slot"), code or "ok", ms,
             f" ship_label={ship_label!r}" if ship_label else "",
             f" changes=[{detail}]" if detail else "",
-            f" message={result.get('message')!r}" if code else "")
+            (" maybe_applied=True" if result.get("maybe_applied") else "")
+            + (f" message={result.get('message')!r}" if code else ""))
         if session_ref is not None and session_ref.session is not session:
             logger.info(
                 "voice: hangar edit %s id=%s -> %s but its Live session is gone; dropping the "

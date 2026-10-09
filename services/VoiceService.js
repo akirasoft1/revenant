@@ -286,7 +286,7 @@ class VoiceService {
       sessionOpenedAtMs: null, receiving: new Set(), playback: null,
       pending: null, pendingOverflowed: false,
       lastSpeechAt: null, audioEndSent: false, turnActive: false,
-      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null,
+      perUser: new Map(), floor: new FloorControl(), lastSpeakerSent: null, lastSpeakerNameSent: null,
       ackedThisTurn: false, ackFailures: 0, ackNextAttemptAt: 0,
       // True only while _startSession is between its health gate and its
       // finally. _tick's wedge recovery keys off this so it can't tear down a
@@ -686,19 +686,19 @@ class VoiceService {
       // cadence. The sidecar turns this into an out-of-band [SPEAKER: name]
       // marker ahead of this speaker's next chunk.
       //
-      // NOTE (Phase 4 dependency): there is currently NO way to CLEAR the
-      // speaker once set -- `u.name` null just means "don't send a marker",
-      // it never un-sends the last one that WAS sent. A speaker with no
-      // resolvable name therefore silently inherits whatever identity the
-      // previous speaker last announced. That's unreachable today because
-      // there is exactly one floor holder per session (FloorControl), so
-      // "the speaker" never legitimately changes to "unknown" mid-session.
-      // Phase 4's deferral work and `/voice listen` (continuous listening,
-      // no re-wake, no single floor holder) both break that invariant --
-      // revisit this when either lands.
-      if (u.name && g.lastSpeakerSent !== userId && typeof g.session.sendSpeaker === 'function') {
-        g.session.sendSpeaker({ userId, displayName: u.name });
+      // Sent on EVERY holder change, id-only (`displayName: ''`) when the
+      // name has not resolved: the sidecar tracks `userId` as the acting
+      // member for hangar chat edits and only emits a [SPEAKER:] marker when
+      // there is a name. Without the id-only send, a lost release-clear (a
+      // grpc-js write failure surfaces asynchronously) plus a nameless next
+      // holder left edits bound to the PREVIOUS holder's hangar. A name that
+      // resolves later re-sends once with the name (lastSpeakerNameSent).
+      const spokenName = u.name || '';
+      if ((g.lastSpeakerSent !== userId || g.lastSpeakerNameSent !== spokenName)
+          && typeof g.session.sendSpeaker === 'function') {
+        g.session.sendSpeaker({ userId, displayName: spokenName });
         g.lastSpeakerSent = userId;
+        g.lastSpeakerNameSent = spokenName;
       }
       g.session.sendAudio(pcm16);
     } else {
@@ -1029,9 +1029,11 @@ class VoiceService {
     // record it so _handleUserPcm doesn't re-send the same marker for the
     // next live frame from this speaker.
     const starter = this._perUser(g, userId);
-    if (starter.name && typeof session.sendSpeaker === 'function') {
-      session.sendSpeaker({ userId, displayName: starter.name });
+    if (typeof session.sendSpeaker === 'function') {
+      // id-only when the name hasn't resolved (see _handleUserPcm).
+      session.sendSpeaker({ userId, displayName: starter.name || '' });
       g.lastSpeakerSent = userId;
+      g.lastSpeakerNameSent = starter.name || '';
     }
 
     // Flush the pre-roll (wake-phrase audio) plus anything buffered while the
@@ -1331,6 +1333,7 @@ class VoiceService {
             // above is one of its readers.
             this._clearTurnQualification(g);
             g.lastSpeakerSent = null;
+            g.lastSpeakerNameSent = null;
             // Clear the model's idea of who is talking, or the next speaker
             // inherits this identity (the hazard Phase 3's review deferred here).
             try { if (typeof g.session.sendSpeaker === 'function') g.session.sendSpeaker({ userId: '', displayName: '' }); }
@@ -1387,6 +1390,7 @@ class VoiceService {
     g.lastSpeechAt = null;
     g.audioEndSent = false;
     g.lastSpeakerSent = null; // a new session re-announces the speaker
+    g.lastSpeakerNameSent = null;
     g.ackedThisTurn = false;
     // The acknowledgment-retry backoff is per-session state: a fresh session is
     // a fresh gRPC stream, so it must not inherit the old one's failure count.

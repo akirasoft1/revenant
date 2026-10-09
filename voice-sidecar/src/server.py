@@ -134,6 +134,14 @@ def _build_hangar_editor(config):
     return client
 
 
+def prewarm_hangar_token(hangar_editor):
+    """Start minting the hangar ID token in the background (None-safe).
+    Returns the task (the caller keeps a reference so it isn't collected)."""
+    if hangar_editor is None:
+        return None
+    return asyncio.create_task(hangar_editor.prewarm())
+
+
 def _build_bridge(config, sc_executor=None, hangar_editor=None):
     from google import genai  # lazy: keep google-genai out of unit-test imports
     from .live_bridge import LiveBridge
@@ -161,9 +169,13 @@ def serve() -> None:
     config = load_config()
     setup_tracing(config)
     sc_executor = _build_sc_executor(config)
-    bridge = _build_bridge(config, sc_executor, _build_hangar_editor(config))
+    hangar_editor = _build_hangar_editor(config)
+    bridge = _build_bridge(config, sc_executor, hangar_editor)
 
     async def _run() -> None:
+        # Non-blocking, never raises: the first edit then doesn't pay for the
+        # ID-token mint inside voice's 6s tool bound.
+        hangar_prewarm = prewarm_hangar_token(hangar_editor)
         sc_retry = await _prime_sc_tools(sc_executor)
         server = grpc.aio.server()
         voice_pb2_grpc.add_VoiceServicer_to_server(VoiceServicer(bridge=bridge), server)

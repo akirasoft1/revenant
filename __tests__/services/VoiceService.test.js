@@ -1152,15 +1152,20 @@ describe('speaker identity', () => {
     expect(session.sendAudio).toHaveBeenCalledTimes(2);
   });
 
-  test('sends no SetSpeaker when the name cannot be resolved', async () => {
+  // Hangar chat edits bind to the sidecar's tracked speaker id, so identity
+  // must travel on EVERY holder change -- id-only when the name didn't
+  // resolve (the sidecar sets the id but sends no [SPEAKER:] marker).
+  test('sends an id-only SetSpeaker when the name cannot be resolved', async () => {
     const gate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
     const { svc, guildId, session, holderId } = await buildActiveVoiceService({
       makeVadGate: () => gate,
       speakerNames: { resolve: () => null, sanitize: (s) => s },
     });
     await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
-    expect(session.sendSpeaker).not.toHaveBeenCalled();
-    expect(session.sendAudio).toHaveBeenCalledTimes(1); // audio still flows
+    await svc._handleUserPcm(guildId, holderId, to48kStereo(Buffer.alloc(320 * 2)));
+    expect(session.sendSpeaker).toHaveBeenCalledTimes(1);   // once, not per frame
+    expect(session.sendSpeaker).toHaveBeenCalledWith({ userId: holderId, displayName: '' });
+    expect(session.sendAudio).toHaveBeenCalledTimes(2); // audio still flows
   });
 
   test('voice persona instructs the model never to read the marker aloud', () => {
@@ -1412,7 +1417,7 @@ describe('deferral: announce and release', () => {
     expect(session.sendAcknowledgeWaiting).toHaveBeenCalledWith({ displayName: 'Sarah' });
     expect(g.floor.holder()).toBeNull();                       // released, not handed over
     expect(session.sendSpeaker).toHaveBeenCalledWith(          // identity cleared
-      expect.objectContaining({ displayName: '' }));
+      { userId: '', displayName: '' });
   });
 
   test('does not announce an unqualified (too-short) waiter', async () => {
@@ -1529,7 +1534,8 @@ describe('deferral: announce and release', () => {
     svc._tick(guildId);
     expect(g.floor.holder()).toBe('u1');          // floor untouched
     expect(g.ackedThisTurn).toBe(false);          // not latched
-    expect(session.sendSpeaker).not.toHaveBeenCalledWith(expect.objectContaining({ displayName: '' }));
+    // the release's clear (empty userId) -- not the holder's own id-only announce
+    expect(session.sendSpeaker).not.toHaveBeenCalledWith({ userId: '', displayName: '' });
 
     // ...and a later tick retries, because nothing was latched. (FIX D: "later"
     // is now once the backoff has elapsed, not on the very next 250ms tick.)
@@ -1610,6 +1616,48 @@ describe('deferral: announce and release', () => {
     expect(g.turnActive).toBe(true);                 // ...his turn opened
     expect(session.sendAudio).toHaveBeenCalledTimes(1);   // ...and the model heard him
     expect(session.sendSpeaker).toHaveBeenCalledWith({ userId: 'bob', displayName: 'Sarah' });
+  });
+
+  // Hangar chat edits (fix round 1): if the release's empty SetSpeaker is
+  // lost (grpc-js reports a failed write asynchronously), a nameless next
+  // holder must still be announced by id -- otherwise the sidecar keeps the
+  // PREVIOUS holder as the acting member and edits land in their hangar.
+  test('a nameless speaker who takes the released floor is announced id-only', async () => {
+    const carolGate = fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]);
+    const { svc, guildId, session, player } = await buildActiveVoiceService({
+      holder: 'alice', deferralEnabled: true, allowBargeIn: true,
+    });
+    const g = qualifiedWaiter(svc, guildId, 'bob');
+    const carol = svc._perUser(g, 'carol');
+    carol.vadGate = carolGate;
+    carol.name = null;
+    carol.nameResolvedAt = Infinity;   // no re-resolve inside this test
+    g.machine._state = 'hot';
+    player.state = { status: 'idle' };
+
+    svc._tick(guildId);
+    expect(g.floor.holder()).toBeNull();
+    session.sendSpeaker.mockClear();   // pretend the release's clear was lost
+
+    await svc._handleUserPcm(guildId, 'carol', to48kStereo(speech()));
+    expect(g.floor.holder()).toBe('carol');
+    expect(session.sendSpeaker).toHaveBeenCalledWith({ userId: 'carol', displayName: '' });
+  });
+
+  test('an id-only speaker is re-announced with the name once it resolves', async () => {
+    let cached = false;
+    let currentTime = 0;
+    const { svc, guildId, session } = await buildActiveVoiceService({
+      now: () => currentTime,
+      makeVadGate: () => fakeVadGate([{ speaking: true, justStarted: true, justEnded: false }]),
+      speakerNames: { resolve: () => (cached ? 'Mike' : null) },
+    });
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+    cached = true;
+    currentTime = 60001;
+    await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
+    expect(session.sendSpeaker.mock.calls.map((c) => c[0])).toEqual([
+      { userId: 'u1', displayName: '' }, { userId: 'u1', displayName: 'Mike' }]);
   });
 
   test('an open floor is claimed on VAD-reported SPEECH, not on mere packet delivery', async () => {
@@ -2503,7 +2551,9 @@ describe('2.7 — a speaker name that missed the cache is retried', () => {
     });
 
     await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
-    expect(session.sendSpeaker).not.toHaveBeenCalled();  // nothing to assert yet
+    // identity travels even without a name (id-only, no marker sidecar-side)
+    expect(session.sendSpeaker).toHaveBeenCalledTimes(1);
+    expect(session.sendSpeaker).toHaveBeenLastCalledWith({ userId: 'u1', displayName: '' });
 
     // Discord's user cache fills in (a member the bot had not seen before).
     cached = true;
@@ -2511,7 +2561,7 @@ describe('2.7 — a speaker name that missed the cache is retried', () => {
     const callsBefore = speakerNames.resolve.mock.calls.length;
     await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));
     expect(speakerNames.resolve).toHaveBeenCalledTimes(callsBefore);
-    expect(session.sendSpeaker).not.toHaveBeenCalled();
+    expect(session.sendSpeaker).toHaveBeenCalledTimes(1);   // no repeat of the id-only one
 
     currentTime = 60001; // past SPEAKER_NAME_RETRY_MS
     await svc._handleUserPcm(guildId, 'u1', to48kStereo(speech()));

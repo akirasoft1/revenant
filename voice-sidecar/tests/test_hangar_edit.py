@@ -275,3 +275,47 @@ def test_build_client_none_when_disabled():
     c = hangar_edit.build_hangar_edit_client(SimpleNamespace(
         hangar_edits_enabled=True, hangar_api_url=URL, hangar_sa_key_path="/k"))
     assert isinstance(c, HangarEditClient)
+
+
+# ---- fix round 1 -----------------------------------------------------------
+
+async def test_read_timeout_after_sending_is_maybe_applied():
+    def handler(request):
+        raise httpx.ReadTimeout("slow", request=request)
+    out = await _client(handler).call("hangar_fit", "111", {"ship": "s", "item": "i"})
+    assert out["error"] == "unavailable" and out["maybe_applied"] is True
+    assert "may have been saved" in out["message"]
+
+
+async def test_overall_timeout_after_sending_is_maybe_applied():
+    async def slow(request):
+        await asyncio.sleep(1.0)
+        return httpx.Response(200, json=FIT_OK)
+
+    class SlowTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            return await slow(request)
+    c = HangarEditClient(URL, FakeTokens(), transport=SlowTransport(), timeout_s=0.05)
+    out = await c.call("hangar_add_ship", "111", {"vehicle": "Cutlass"})
+    assert out.get("maybe_applied") is True
+
+
+async def test_connect_failure_or_token_timeout_is_not_maybe_applied():
+    def handler(request):
+        raise httpx.ConnectTimeout("no route", request=request)
+    out = await _client(handler).call("hangar_fit", "111", {"ship": "s", "item": "i"})
+    assert out["error"] == "unavailable" and "maybe_applied" not in out
+    handler2, _ = _recorder(200, FIT_OK)
+    out = await _client(handler2, FakeTokens(delay=0.5), timeout_s=0.05).call(
+        "hangar_fit", "111", {"ship": "s", "item": "i"})
+    assert "maybe_applied" not in out
+
+
+async def test_prewarm_mints_the_token_and_never_raises():
+    ok = FakeTokens()
+    handler, _ = _recorder(200, FIT_OK)
+    await _client(handler, ok).prewarm()
+    assert ok.calls == 1
+    bad = FakeTokens(exc=RuntimeError("no key"))
+    await _client(handler, bad).prewarm()       # swallowed
+    assert bad.calls == 1

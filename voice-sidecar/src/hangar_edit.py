@@ -10,18 +10,27 @@ model's `args` are only ever read for ship/item/slot/vehicle/nickname -- a
 and `X-Acting-Member`, so hangar-service's write rule (acting member == path
 member) makes these calls unable to touch anyone else's hangar.
 
-Auth: Cloud Run invoker IAM is on, so every call carries a Google-signed ID
-token minted from the mounted `hangar-api-sa` key with `target_audience` =
-HANGAR_API_URL exactly. Minting is blocking (google-auth + requests), so it
+Auth: hangar-service runs with Cloud Run's invoker IAM check OFF
+(`--no-invoker-iam-check`, since the web editor) -- the APP authenticates every
+`/v1` call itself, so every call still carries a Google-signed ID token minted
+from the mounted `hangar-api-sa` key with `target_audience` = HANGAR_API_URL
+exactly (the app checks audience + allow-listed caller email). Minting is blocking (google-auth + requests), so it
 runs in a thread, single-flight, cached until 5 minutes before expiry. (Same
 shape as sc-knowledge/src/hangar.py, which is the read-only side.)
 
 Never raises (except cancellation): every failure is a `{error, message}`
 dict for the model, mirroring hangar-service's own envelope, which is passed
 through unchanged for any 4xx (so `ambiguous`/`choose_slot`/`not_found`/
-`incompatible`/a future `ambiguous_item` all reach the model with their
-`candidates`/`slots`/`owned`). Bound: token + request share one `timeout_s`
-(5s); the bridge additionally caps the whole tool call at 6s.
+`incompatible` reach the model with their `field`/`candidates`/`slots`/
+`owned`/`suggestions`). Bound: token + request share one `timeout_s` (5s); the
+bridge additionally caps the whole tool call at 6s.
+
+Every tool is a WRITE, so a timeout after the request went out cannot say
+whether it landed: that case returns `MAYBE_APPLIED` (`maybe_applied: true`)
+and the prompt tells the model to check before retrying -- a blind retry of
+`hangar_add_ship` would add a second ship. A failure before anything was sent
+(token mint, connect) is a plain `unavailable`. `prewarm()` mints the ID token
+at startup so the first edit doesn't pay for it inside the voice bound.
 """
 import asyncio
 import logging
@@ -46,7 +55,14 @@ TOOL_NAMES = frozenset({FIT_TOOL, ADD_SHIP_TOOL, RESET_TOOL})
 
 UNKNOWN_SPEAKER = {
     "error": "unknown_speaker",
-    "message": "I can't tell whose hangar to edit — try again after speaking",
+    "message": ("I can't tell who's speaking, so I can't edit a hangar right now \u2014 use "
+                "text chat or the web editor."),
+}
+MAYBE_APPLIED = {
+    "error": "unavailable",
+    "maybe_applied": True,
+    "message": ("The hangar service didn't answer in time \u2014 the change may have been "
+                "saved; check before retrying"),
 }
 
 
@@ -197,17 +213,36 @@ class HangarEditClient:
         return await self._post(f"/v1/members/{member_id}/ships/{quote(ship, safe='')}/reset",
                                 member_id, {"slot": slot})
 
+    async def prewarm(self) -> None:
+        """Mint (and cache) the ID token now. Never raises: a failure is
+        logged and the first edit simply retries."""
+        try:
+            async with asyncio.timeout(self._timeout):
+                await self._tokens.token()
+            logger.info("hangar edit: ID token prewarmed")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("hangar edit: ID token prewarm failed (%s: %s); the first edit will "
+                           "retry", type(e).__name__, e)
+
     async def _post(self, path: str, member_id: str, body: dict) -> dict:
+        sent = False
         try:
             async with asyncio.timeout(self._timeout):
                 token = await self._tokens.token()
+                sent = True   # from here on the write may reach the service
                 resp = await self._http.request(
                     "POST", path, json=body,
                     headers={"Authorization": f"Bearer {token}", "X-Acting-Member": member_id})
         except TimeoutError:
+            if sent:
+                return dict(MAYBE_APPLIED)
             return _unavailable(f"hangar-service POST {path} timed out after {self._timeout}s")
         except HangarUnavailable as e:
             return _unavailable(str(e))
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
+        except httpx.TimeoutException:
+            return dict(MAYBE_APPLIED)   # read/write/pool timeout after the request started
         except httpx.HTTPError as e:
             return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
         except Exception as e:  # noqa: BLE001 - never raise into the tool path

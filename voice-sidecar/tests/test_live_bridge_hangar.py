@@ -12,7 +12,8 @@ import logging
 from google.genai import types
 
 from src import voice_pb2
-from src.live_bridge import (CONTROL_NOTE, HANGAR_EDIT_NOTE, HANGAR_TOOL_DECLARATIONS,
+from src.live_bridge import (CONTROL_NOTE, HANGAR_EDIT_NOTE, HANGAR_MAYBE_APPLIED_NOTE,
+                             HANGAR_TOOL_DECLARATIONS,
                              SC_DISPUTE_TAIL, SC_MECHANICS_VOICE_NOTE, SC_VOICE_NOTE, LiveBridge,
                              _ResumeState, _SessionRef, _SessionStats)
 from tests.test_live_bridge_tools import (FC, FakeExecutor, ToolSession, _factory,
@@ -106,7 +107,8 @@ def test_declarations_present_with_editor_and_sc_off():
                               "hangar_fit", "hangar_add_ship", "hangar_reset"]
     assert len([t for t in cfg.tools if t.function_declarations]) == 1
     assert cfg.system_instruction == ("PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE + "\n\n"
-                                      + CONTROL_NOTE + "\n\n" + HANGAR_EDIT_NOTE)
+                                      + CONTROL_NOTE + "\n\n" + HANGAR_EDIT_NOTE + " "
+                                      + HANGAR_MAYBE_APPLIED_NOTE)
 
 
 def test_declarations_share_the_tool_with_sc_and_control():
@@ -122,7 +124,7 @@ def test_declarations_present_with_control_off():
     cfg = _bridge(editor=FakeEditor(), control=False)._live_config(START)
     assert _fd_names(cfg) == ["hangar_fit", "hangar_add_ship", "hangar_reset"]
     assert cfg.system_instruction == ("PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE + "\n\n"
-                                      + HANGAR_EDIT_NOTE)
+                                      + HANGAR_EDIT_NOTE + " " + HANGAR_MAYBE_APPLIED_NOTE)
 
 
 def test_note_appears_exactly_once_in_every_combination():
@@ -172,8 +174,7 @@ async def test_cleared_speaker_is_refused_without_calling_the_service():
                             _ref(session, opener="111", speaker="222", cleared=True))
     assert ed.calls == []
     r = session.responses()[0].response
-    assert r == {"error": "unknown_speaker",
-                 "message": "I can't tell whose hangar to edit — try again after speaking"}
+    assert r["error"] == "unknown_speaker" and "web editor" in r["message"]
     assert stats.hangar_edits == 0
 
 
@@ -409,3 +410,182 @@ async def test_local_fallback_drops_hangar_with_control_even_when_control_is_off
     assert opens[1].tools == SEARCH_ONLY
     assert HANGAR_EDIT_NOTE not in opens[1].system_instruction
     assert not any(e.WhichOneof("event") == "error" for e in out)
+
+
+# ---- fix round 1: id-only SetSpeaker, reconnects, maybe_applied -----------
+
+from types import SimpleNamespace  # noqa: E402
+
+from google.genai import errors as genai_errors  # noqa: E402
+
+
+async def _converse_with(bridge, events, wait):
+    """Drive converse with a scripted client stream: `events` is a list of
+    (delay_before, VoiceClientEvent)."""
+    async def req_iter():
+        yield voice_pb2.VoiceClientEvent(session_start=START)
+        for delay, ev in events:
+            await asyncio.sleep(delay)
+            yield ev
+        await asyncio.Event().wait()
+
+    async def emit(ev): pass
+    task = asyncio.create_task(bridge.converse(req_iter(), emit))
+    await asyncio.sleep(wait)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+def _speaker(uid, name):
+    return voice_pb2.VoiceClientEvent(set_speaker=voice_pb2.SetSpeaker(user_id=uid,
+                                                                      display_name=name))
+
+
+def _audio():
+    return voice_pb2.VoiceClientEvent(audio=voice_pb2.AudioChunk(pcm=b"\x01"))
+
+
+async def test_named_then_lost_clear_then_nameless_id_only_speaker_uses_the_new_id():
+    """B (named) holds the floor; the bot's empty SetSpeaker (release) is
+    lost; C, whose name never resolved, takes the floor and the bot sends an
+    id-only SetSpeaker. The edit must bind to C, not B -- and no marker is
+    sent for C (there is no name to speak)."""
+    session = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "a", "item": "b"}))],
+                          gaps={0: 0.08})
+    ed = FakeEditor()
+    await _converse_with(_bridge(session, editor=ed), [
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+        (0.02, _speaker("333", "")), (0, _audio()),
+    ], wait=0.2)
+    assert [c[1] for c in ed.calls] == ["333"]
+    markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
+    assert len(markers) == 1 and "Bea" in markers[0]
+
+
+async def test_id_only_then_named_same_speaker_announces_the_name():
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("333", "")), (0, _audio()),
+        (0.01, _speaker("333", "Cal")), (0, _audio()),
+    ], wait=0.1)
+    markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
+    assert len(markers) == 1 and "Cal" in markers[0]
+
+
+async def test_previous_named_speaker_is_reannounced_after_an_id_only_one():
+    session = ToolSession([])
+    await _converse_with(_bridge(session, editor=FakeEditor()), [
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+        (0.01, _speaker("333", "")), (0, _audio()),
+        (0.01, _speaker("222", "Bea")), (0, _audio()),
+    ], wait=0.12)
+    markers = [str(t) for (t, _c) in session.seeded if "[SPEAKER:" in str(t)]
+    assert len(markers) == 2
+
+
+async def test_named_speaker_with_empty_id_clears_identity_but_keeps_the_marker():
+    session = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "a", "item": "b"}))],
+                          gaps={0: 0.06})
+    ed = FakeEditor()
+    await _converse_with(_bridge(session, editor=ed), [
+        (0.01, _speaker("", "Dee")), (0, _audio()),
+    ], wait=0.15)
+    assert ed.calls == []
+    assert session.responses()[0].response["error"] == "unknown_speaker"
+    assert any("Dee" in str(t) for (t, _c) in session.seeded)
+
+
+class _DropAfter(ToolSession):
+    """Gives a resumption handle after `after` seconds, then drops (1011)."""
+
+    def __init__(self, after):
+        super().__init__([])
+        self.after = after
+
+    async def receive(self):
+        await asyncio.sleep(self.after)
+        yield SimpleNamespace(data=None, server_content=None, go_away=None, tool_call=None,
+                              tool_call_cancellation=None,
+                              session_resumption_update=SimpleNamespace(new_handle="h1",
+                                                                        resumable=True))
+        raise genai_errors.APIError(1011, {"message": "internal"})
+
+
+def _two_sessions(s1, s2, second_open_delay=0.0):
+    opened = []
+
+    @contextlib.asynccontextmanager
+    async def make(model, config):
+        opened.append(config)
+        if len(opened) == 1:
+            yield s1
+        else:
+            await asyncio.sleep(second_open_delay)
+            yield s2
+    return make
+
+
+async def test_speaker_id_survives_a_live_reconnect():
+    s1 = _DropAfter(0.05)
+    s2 = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "a", "item": "b"}))],
+                     gaps={0: 0.03})
+    ed = FakeEditor()
+    bridge = _bridge(editor=ed, factory=_two_sessions(s1, s2), max_reconnects=2)
+    await _converse_with(bridge, [(0.01, _speaker("222", "Bea")), (0, _audio())], wait=0.2)
+    assert [c[1] for c in ed.calls] == ["222"]
+    assert [r.id for r in s2.responses()] == ["h1"]
+
+
+async def test_set_speaker_during_the_reconnect_gap_is_kept():
+    s1 = _DropAfter(0.05)
+    s2 = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "a", "item": "b"}))],
+                     gaps={0: 0.03})
+    ed = FakeEditor()
+    bridge = _bridge(editor=ed, factory=_two_sessions(s1, s2, second_open_delay=0.1),
+                     max_reconnects=2)
+    # 222 before the drop (t~0.01); 333 lands at t~0.1, inside the 0.05-0.15 gap.
+    await _converse_with(bridge, [(0.01, _speaker("222", "Bea")),
+                                  (0.09, _speaker("333", "Cal"))], wait=0.3)
+    assert [c[1] for c in ed.calls] == ["333"]
+
+
+MAYBE = {"error": "unavailable", "maybe_applied": True,
+         "message": "The hangar service didn't answer in time — the change may have been "
+                    "saved; check before retrying"}
+
+
+async def test_timeout_of_a_write_reports_maybe_applied(monkeypatch):
+    import src.live_bridge as lb
+    monkeypatch.setattr(lb, "HANGAR_CALL_TIMEOUT_S", 0.05)
+    session = ToolSession([_tool_call_msg(FC("h1", "hangar_add_ship", {"vehicle": "Cutlass"}))])
+    await _run_pump(_bridge(session, editor=FakeEditor(delay=1.0)), session,
+                    _ref(session, opener="111"), wait=0.2)
+    assert session.responses()[0].response == MAYBE
+
+
+async def test_cancelled_write_is_logged_as_maybe_applied(caplog):
+    from tests.test_live_bridge_tools import _cancel_msg
+    session = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "a", "item": "b"})),
+                           _cancel_msg("h1")], gaps={1: 0.03})
+    with caplog.at_level(logging.INFO):
+        await _run_pump(_bridge(session, editor=FakeEditor(delay=1.0)), session,
+                        _ref(session, opener="111"), wait=0.1)
+    assert session.responses() == []     # the model cancelled the call id
+    assert "maybe_applied" in caplog.text
+
+
+def test_note_maybe_applied_and_own_hangar_requests():
+    with_sc = _bridge(editor=FakeEditor(), sc=FakeExecutor())._live_config(START).system_instruction
+    no_sc = _bridge(editor=FakeEditor())._live_config(START).system_instruction
+    assert "maybe_applied" in with_sc and "sc_member_hangar" in with_sc
+    assert "maybe_applied" in no_sc and "sc_member_hangar" not in no_sc
+    assert "asks you to update their own hangar" in HANGAR_EDIT_NOTE
+
+
+def test_unknown_speaker_message():
+    from src.hangar_edit import UNKNOWN_SPEAKER
+    assert UNKNOWN_SPEAKER == {
+        "error": "unknown_speaker",
+        "message": "I can't tell who's speaking, so I can't edit a hangar right now — use "
+                   "text chat or the web editor."}
