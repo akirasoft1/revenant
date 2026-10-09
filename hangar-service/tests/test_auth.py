@@ -339,3 +339,28 @@ def test_session_principal_write_rule_unchanged():
     with pytest.raises(Forbidden):
         authorize_write(p, "222", frozenset())
     authorize_write(p, "222", frozenset({"111"}))
+
+
+# ---------- fix round 1: google-auth error text is not echoed, token never logged ----------
+
+@pytest.mark.parametrize("token", ["not-a-jwt-SECRETTOKENXYZ", "a.b.SECRETTOKENXYZ"])
+def test_invalid_token_error_is_generic_and_token_not_logged(token, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(AuthError) as ei:
+        real_verifier()(token, AUD)
+    assert str(ei.value) == "invalid ID token"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "SECRETTOKENXYZ" not in text
+    assert "invalid ID token" in text            # but the reason IS logged server-side
+
+
+def test_expired_token_reason_logged_without_token(caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    tok = make_token(iat=int(time.time()) - 7200, exp=int(time.time()) - 3600)
+    with pytest.raises(AuthError) as ei:
+        real_verifier()(tok, AUD)
+    assert str(ei.value) == "invalid ID token"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert tok not in text and "xpired" in text

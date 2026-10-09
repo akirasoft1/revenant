@@ -42,7 +42,7 @@ import logging
 import re
 import secrets
 import time
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -57,7 +57,7 @@ from .auth import (
 )
 from .discord_oauth import DiscordOAuth, DiscordOAuthError
 from .session import (OAUTH_STATE_COOKIE, OAUTH_STATE_MAX_AGE_S, SESSION_COOKIE, SESSION_MAX_AGE_S,
-                      InvalidSession, SessionCodec)
+                      InvalidSession, SessionCodec, SessionUser)
 from .catalog import UnknownItemType, build_catalog
 from .config import Config
 from .http import UpstreamError
@@ -72,7 +72,25 @@ NICKNAME_MAX = 64
 SLOT_MAX = 300
 FREE_TEXT_MAX = 200
 API_PREFIXES = ("/v1", "/api/v1")     # service callers, browser editor
-STATE_COOKIE_PATH = "/api/auth"
+MEMBER_DIRECTORY_TTL_S = 60.0
+
+# On EVERY response (incl. errors and 500s). Task 4's static SPA serving adds
+# its own Cache-Control for assets; these stay.
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+# API responses (authenticated / per-user data): never cached by a browser or
+# shared cache, and keyed on the cookie if anything does cache them.
+API_PATH_PREFIXES = ("/v1/", "/api/")
+
+# A login gate decides, after Discord has identified the user, whether they may
+# sign in: returns None (allowed) or a login_error code. Receives the user's
+# Discord access token for membership lookups (never log it).
+LoginGate = Callable[[SessionUser, str], Awaitable[str | None]]
 
 
 class ApiError(Exception):
@@ -167,6 +185,82 @@ async def write_member(request: Request, discordId: str,
     return principal
 
 
+async def ensure_ship_capacity(repository: ShipRepository, member_id: str, *, adding: int,
+                               limit: int) -> None:
+    """409 ``limit`` unless ``member_id`` can take ``adding`` more ships under
+    ``HANGAR_MAX_SHIPS_PER_MEMBER``. Every ship-creating route (add, import
+    apply) must call this before writing."""
+    have = len(await repository.list_ships(member_id))
+    if have + adding > limit:
+        raise ApiError(409, "limit", f"member {member_id} has {have} ships; adding {adding} would exceed "
+                                     f"the limit of {limit} ships per member", limit=limit, shipCount=have)
+
+
+class MemberDirectoryCache:
+    """In-process 60s cache of the member directory. Ship create/delete
+    invalidate it (``invalidate_member_directory``); renames and fits can be up
+    to 60s stale in display names, which is fine."""
+
+    def __init__(self, ttl_s: float, monotonic: Callable[[], float]) -> None:
+        self._ttl = ttl_s
+        self._now = monotonic
+        self._value: list | None = None
+        self._at = 0.0
+
+    def get(self) -> list | None:
+        if self._value is not None and self._now() - self._at < self._ttl:
+            return self._value
+        return None
+
+    def put(self, value: list) -> None:
+        self._value, self._at = value, self._now()
+
+    def invalidate(self) -> None:
+        self._value = None
+
+
+def invalidate_member_directory(app: FastAPI) -> None:
+    app.state.member_directory.invalidate()
+
+
+class SecurityHeadersMiddleware:
+    """Pure ASGI: adds ``SECURITY_HEADERS`` to every response, plus
+    ``Cache-Control: no-store`` (unless set) and ``Vary: Cookie`` on API paths."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        is_api = scope.get("path", "").startswith(API_PATH_PREFIXES)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                apply_security_headers(message.setdefault("headers", []), is_api)
+            await send(message)
+        await self.app(scope, receive, send_wrapper)
+
+
+def apply_security_headers(raw: list, is_api: bool) -> None:
+    """Mutates an ASGI raw header list in place."""
+    present = {k.lower() for k, _ in raw}
+    for k, v in SECURITY_HEADERS.items():
+        if k.lower().encode() not in present:
+            raw.append((k.lower().encode(), v.encode()))
+    if is_api:
+        if b"cache-control" not in present:
+            raw.append((b"cache-control", b"no-store"))
+        vary = [i for i, (k, _) in enumerate(raw) if k.lower() == b"vary"]
+        if vary:
+            i = vary[0]
+            values = [x.strip().lower() for x in raw[i][1].decode().split(",")]
+            if "cookie" not in values:
+                raw[i] = (b"vary", raw[i][1] + b", Cookie")
+        else:
+            raw.append((b"vary", b"Cookie"))
+
+
 def owner_name_for(principal: Principal, member_id: str) -> str | None:
     """The ``ownerName`` to store on a ship write: the session user's display
     name when a member edits THEIR OWN hangar in the browser; None otherwise
@@ -205,7 +299,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                resolvers: list[CredentialResolver] | None = None,
                warm: bool = True,
                discord_transport: httpx.AsyncBaseTransport | None = None,
-               clock: Callable[[], float] | None = None) -> FastAPI:
+               clock: Callable[[], float] | None = None,
+               monotonic: Callable[[], float] = time.monotonic,
+               login_gate: LoginGate | None = None) -> FastAPI:
     owns_catalog = catalog is None
     if catalog is None:
         catalog = build_catalog(config.wiki_base, version=config.version)
@@ -213,7 +309,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     codec: SessionCodec | None = None
     oauth: DiscordOAuth | None = None
     if browser_problem is None:
-        codec = SessionCodec(config.session_key, clock=clock or time.time)
+        codec = SessionCodec(config.session_key, clock=clock or time.time,
+                             previous_keys=[config.session_key_previous] if config.session_key_previous else [],
+                             not_before=config.session_not_before)
         oauth = DiscordOAuth(config.discord_client_id, config.discord_client_secret,
                              config.redirect_uri, transport=discord_transport)
     if resolvers is None:
@@ -256,6 +354,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     app.state.repository = repository
     app.state.authenticator = Authenticator(resolvers)
     app.state.session_codec = codec
+    app.state.member_directory = MemberDirectoryCache(MEMBER_DIRECTORY_TTL_S, monotonic)
+    app.add_middleware(SecurityHeadersMiddleware)
     router = APIRouter()
 
     # ----- error envelopes -----
@@ -302,7 +402,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     async def _unexpected(request: Request, e: Exception):
         log.error("hangar: 500 %s %s: unexpected %s: %s", request.method, request.url.path,
                   type(e).__name__, e, exc_info=e)
-        return _err(500, "unavailable", f"internal error: {type(e).__name__}: {e}")
+        # Detail stays in the log. This handler runs in ServerErrorMiddleware,
+        # OUTSIDE SecurityHeadersMiddleware, so it applies the headers itself.
+        resp = _err(500, "unavailable", "internal error (details are in the server log)")
+        apply_security_headers(resp.raw_headers, request.url.path.startswith(API_PATH_PREFIXES))
+        return resp
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, e: StarletteHTTPException):
@@ -341,10 +445,13 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if res.status != "match":
             raise _not_found(f"no vehicle matches {vehicle!r}")
         v = res.match
+        await ensure_ship_capacity(app.state.repository, discordId, adding=1,
+                                   limit=config.max_ships_per_member)
         ship = await app.state.repository.create_ship(
             discordId, vehicle_uuid=v["uuid"], vehicle_name=v["name"],
             vehicle_class_name=v.get("className"), nickname=nickname,
             updated_by=principal.acting_member, owner_name=owner_name_for(principal, discordId))
+        invalidate_member_directory(app)
         log.info("hangar: member %s added %s (%s) as ship %s (by %s)",
                  discordId, v["name"], v["uuid"], ship["shipId"], principal.acting_member)
         return {"ship": await ship_view(app.state.catalog, ship)}
@@ -368,6 +475,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         _check_ship_id(shipId)
         if not await app.state.repository.delete_ship(discordId, shipId):
             raise _not_found(f"member {discordId} has no ship {shipId}")
+        invalidate_member_directory(app)
         log.info("hangar: member %s ship %s deleted (by %s)", discordId, shipId, principal.acting_member)
         return {"deleted": True, "shipId": shipId}
 
@@ -462,6 +570,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     @router.get("/members")
     async def list_members(principal: Principal = Depends(get_principal)):
+        cached = app.state.member_directory.get()
+        if cached is not None:
+            return {"members": cached}
         out = []
         for m in await app.state.repository.list_members():
             entry = {"discordId": m["discordId"], "shipCount": m["shipCount"]}
@@ -469,6 +580,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                 entry["displayName"] = m["ownerName"]
             out.append(entry)
         out.sort(key=lambda e: ((e.get("displayName") or e["discordId"]).casefold(), e["discordId"]))
+        app.state.member_directory.put(out)
         return {"members": out}
 
     # Every API route is served under both prefixes (same handlers).
@@ -483,8 +595,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                            f"browser login is not configured on this server ({browser_problem})")
         return codec, oauth
 
-    def cookie_kwargs(path: str) -> dict:
-        return {"path": path, "secure": True, "httponly": True, "samesite": "lax"}
+    # __Host- cookies: Secure, Path=/, no Domain (the browser enforces all three).
+    COOKIE_KWARGS = {"path": "/", "secure": True, "httponly": True, "samesite": "lax"}
 
     def no_store(resp: Response) -> Response:
         resp.headers["Cache-Control"] = "no-store"
@@ -496,7 +608,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         state = secrets.token_urlsafe(32)
         resp = RedirectResponse(o.authorize_url(state), status_code=302)
         resp.set_cookie(OAUTH_STATE_COOKIE, c.sign_state(state, next or "/"),
-                        max_age=OAUTH_STATE_MAX_AGE_S, **cookie_kwargs(STATE_COOKIE_PATH))
+                        max_age=OAUTH_STATE_MAX_AGE_S, **COOKIE_KWARGS)
         return no_store(resp)
 
     @app.get("/api/auth/callback")
@@ -507,7 +619,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         def fail(reason: str, detail: str) -> Response:
             log.warning("hangar: discord login failed (%s): %s", reason, detail)
             resp = RedirectResponse(f"/?login_error={reason}", status_code=302)
-            resp.delete_cookie(OAUTH_STATE_COOKIE, **cookie_kwargs(STATE_COOKIE_PATH))
+            resp.delete_cookie(OAUTH_STATE_COOKIE, **COOKIE_KWARGS)
             return no_store(resp)
 
         try:
@@ -523,6 +635,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         try:
             access_token = await o.exchange_code(code)
             user = await o.fetch_user(access_token)
+            # Who may sign in at all (e.g. guild membership) is decided here,
+            # after Discord identified the user and before any session exists.
+            if login_gate is not None:
+                refusal = await login_gate(user, access_token)
+                if refusal is not None:
+                    return fail(refusal, f"member {user.discord_id} ({user.username}) refused by login gate")
         except DiscordOAuthError as e:
             return fail(e.code, str(e))
         except Exception as e:     # never a stack trace to the browser
@@ -530,16 +648,17 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             return fail("server_error", f"unexpected {type(e).__name__}")
         resp = RedirectResponse(next_path, status_code=302)
         resp.set_cookie(SESSION_COOKIE, c.sign_session(user), max_age=SESSION_MAX_AGE_S,
-                        **cookie_kwargs("/"))
-        resp.delete_cookie(OAUTH_STATE_COOKIE, **cookie_kwargs(STATE_COOKIE_PATH))
+                        **COOKIE_KWARGS)
+        resp.delete_cookie(OAUTH_STATE_COOKIE, **COOKIE_KWARGS)
         log.info("hangar: member %s (%s) logged in to the web editor", user.discord_id, user.username)
         return no_store(resp)
 
     @app.post("/api/auth/logout", status_code=204)
-    async def auth_logout():
-        # No auth or origin check: clearing one's own cookie is always safe.
+    async def auth_logout(request: Request):
+        # Same-origin only (no forced cross-site logouts); no session needed.
+        check_same_origin(request, config.public_origin)
         resp = Response(status_code=204)
-        resp.delete_cookie(SESSION_COOKIE, **cookie_kwargs("/"))
+        resp.delete_cookie(SESSION_COOKIE, **COOKIE_KWARGS)
         return no_store(resp)
 
     @app.get("/api/me")

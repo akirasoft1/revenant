@@ -23,6 +23,7 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | `forbidden` | 403 | write without `X-Acting-Member`, or acting member is neither the path member nor an admin, or a browser-session write that is not same-origin |
 | `not_found` | 404 | unknown ship / vehicle / slot / item, unknown route |
 | `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
+| `limit` | 409 | adding the ship would exceed `HANGAR_MAX_SHIPS_PER_MEMBER` (body carries `limit`, `shipCount`) |
 | `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
 | `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable; browser login not configured (`/api/auth/*`, `/api/me`) |
 | `unavailable` | 500 | unexpected server error (full stack logged) |
@@ -47,9 +48,9 @@ auth). Service callers use `/v1` on the `run.app` URL; the browser editor uses
 
 | Method | Path | Success | Failure |
 |---|---|---|---|
-| GET | `/api/auth/login?next=/path` | 302 → `https://discord.com/oauth2/authorize?...` (scope `identify`); sets `hangar_oauth_state` (signed, 10 min, `Path=/api/auth`) | 503 `unavailable` if browser login unconfigured |
-| GET | `/api/auth/callback?code&state` | 302 → `next` (same-origin path, default `/`); sets `hangar_session`; clears the state cookie | 302 → `/?login_error=<code>`, code ∈ `state_mismatch`, `denied`, `missing_code`, `token_error`, `user_error`, `server_error`; 503 if unconfigured |
-| POST | `/api/auth/logout` | 204, clears `hangar_session` | – |
+| GET | `/api/auth/login?next=/path` | 302 → `https://discord.com/oauth2/authorize?...` (scope `identify`); sets `__Host-hangar_oauth_state` (signed, 10 min) | 503 `unavailable` if browser login unconfigured |
+| GET | `/api/auth/callback?code&state` | 302 → `next` (same-origin path, default `/`); sets `__Host-hangar_session`; clears the state cookie | 302 → `/?login_error=<code>`, code ∈ `state_mismatch`, `denied`, `missing_code`, `token_error`, `user_error`, `server_error`; 503 if unconfigured |
+| POST | `/api/auth/logout` | 204, clears `__Host-hangar_session` | 403 `forbidden` unless same-origin (`Origin`/`Referer`) |
 | GET | `/api/me` | `{discordId, username, globalName, avatarUrl, isAdmin}` | 401 `unauthenticated` (no / bad / expired session); 503 if unconfigured |
 
 All four send `Cache-Control: no-store`. `next` must be a same-origin path
@@ -128,12 +129,14 @@ Two layers:
   401 even if a valid cookie is present.
 - **Browser sessions (web editor).** Discord OAuth2 authorization-code flow
   (scope `identify`, redirect `HANGAR_PUBLIC_ORIGIN` + `/api/auth/callback`).
-  On success the service sets `hangar_session`: an itsdangerous-signed (HMAC,
+  On success the service sets `__Host-hangar_session`: an itsdangerous-signed (HMAC,
   key `HANGAR_SESSION_KEY`, not encrypted) cookie carrying only public profile
   fields `{discordId, username, globalName, avatar, iat}`;
   `HttpOnly; Secure; SameSite=Lax; Path=/`, 30-day max age, no server-side
-  store (logout clears the cookie; a leaked cookie is valid until it expires or
-  the key rotates). A tampered / expired / other-key cookie is 401.
+  store (logout clears the cookie; a leaked cookie is valid until it expires,
+  the key rotates, or `HANGAR_SESSION_NOT_BEFORE` passes its `iat` — see
+  "Session key rotation / revocation"). Both cookies use the `__Host-` prefix
+  (`Secure; Path=/`, no `Domain`), so no other subdomain can set or shadow them. A tampered / expired / other-key cookie is 401.
   A session principal's **acting member is the session's Discord ID**;
   `X-Acting-Member` is ignored. The write rule is the same (own hangar, or an
   admin). **CSRF:** session writes additionally need `Origin` (or, without
@@ -143,6 +146,15 @@ Two layers:
   missing (or the key is < 32 chars, or the origin is malformed), browser login
   is off: the login routes and `/api/me` answer 503 and cookies are not a
   credential. Service callers keep working (fail closed for browsers only).
+- **Response headers:** every response carries
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains`,
+  `X-Content-Type-Options: nosniff`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`
+  (500s included). `/v1/...` and `/api/...` responses also get
+  `Cache-Control: no-store` and `Vary: Cookie`. 500 bodies are generic — the
+  detail and full stack are only in the log. An invalid Google token gets a
+  bare `invalid ID token`; the google-auth reason is logged with the token
+  scrubbed.
 - **Log hygiene:** tokens, codes, cookies and secrets are never logged. The
   callback's `?code=&state=` is redacted from uvicorn's access log
   (`src/log_redaction.py`); Discord errors are logged by HTTP status / Discord
@@ -171,7 +183,34 @@ Two layers:
 | `HANGAR_PUBLIC_ORIGIN` | `https://hangar.aklabs.io` | Web editor origin: CSRF check + OAuth redirect URI (`<origin>/api/auth/callback`). Trailing slash dropped |
 | `DISCORD_CLIENT_ID` | *(empty → browser login off)* | Discord application client ID (`1558216042151419935`) |
 | `DISCORD_CLIENT_SECRET` | *(empty → browser login off)* | From Secret Manager `hangar-discord-client-secret` (`--set-secrets`) |
-| `HANGAR_SESSION_KEY` | *(empty → browser login off)* | Cookie-signing key, ≥ 32 chars; Secret Manager `hangar-session-key`. Rotating it logs everyone out |
+| `HANGAR_SESSION_KEY` | *(empty → browser login off)* | Cookie-signing key, ≥ 32 chars; Secret Manager `hangar-session-key`. Signs every new session |
+| `HANGAR_SESSION_KEY_PREVIOUS` | *(none)* | Previous signing key (≥ 32 chars), still accepted for verification during a rotation; never signs |
+| `HANGAR_SESSION_NOT_BEFORE` | *(none)* | Unix seconds: sessions issued (`iat`) before this are rejected — global logout. Malformed → browser login off |
+| `HANGAR_MAX_SHIPS_PER_MEMBER` | `200` | Ship cap per member (`409 limit` beyond it). Must be a positive integer (startup fails otherwise) |
+
+`HANGAR_PUBLIC_ORIGIN` is normalized at load (scheme/host lower-cased, default
+port and a lone trailing `/` dropped); a path, query, fragment, userinfo or bad
+port turns browser login off.
+
+## Session key rotation / revocation
+
+Sessions are stateless signed cookies, so there is no per-session revoke; use:
+
+- **Routine key rotation (nobody logged out):** add a new version of Secret
+  Manager `hangar-session-key`; deploy with `HANGAR_SESSION_KEY` = the new
+  version and `HANGAR_SESSION_KEY_PREVIOUS` = the old one. New sessions are
+  signed with the new key, existing ones keep working. After 30 days (the
+  session max age) every old-key session has expired: drop
+  `HANGAR_SESSION_KEY_PREVIOUS` and disable the old secret version.
+- **Log everyone out now (suspected leak):** rotate WITHOUT
+  `HANGAR_SESSION_KEY_PREVIOUS`, or keep the key and set
+  `HANGAR_SESSION_NOT_BEFORE=$(date +%s)` — every session issued before that
+  moment is rejected (401); members just log in again. Leave it set (it is
+  harmless) or remove it once 30 days have passed.
+- **A single member:** there is no per-member revoke; use the global cutoff
+  above (everyone re-logs in).
+- The OAuth state cookie uses the same keys, so a rotation mid-login at worst
+  costs a `state_mismatch` retry.
 
 ## Runtime behaviour
 
@@ -182,6 +221,9 @@ Two layers:
   between requests and finish on the next one. That's accepted: stale catalog
   data is still served, and min-instances 1 keeps the cache warm.
 - `GET …/hangar` fetches every owned ship's slots concurrently.
+- The member directory (`GET …/members`) is cached in-process for 60s; ship
+  create/delete invalidate it (renames/fits may show a stale display name for
+  up to 60s). Per-instance: another Cloud Run instance may lag up to 60s.
 
 ## Local run
 

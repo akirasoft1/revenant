@@ -91,7 +91,7 @@ ADMIN_USER = SessionUser(ADMIN, "boss", None, None)
 
 
 def as_user(client, user=ME, clock=None):
-    client.cookies.set("hangar_session", session_cookie(user, clock), domain="hangar.aklabs.io")
+    client.cookies.set("__Host-hangar_session", session_cookie(user, clock), domain="hangar.aklabs.io")
     return client
 
 
@@ -121,9 +121,9 @@ def test_login_redirects_to_discord_with_state_cookie(client):
     assert q["redirect_uri"] == "https://hangar.aklabs.io/api/auth/callback"
     assert q["scope"] == "identify" and q["response_type"] == "code"
     assert len(state) >= 32
-    h = cookie_header(r, "hangar_oauth_state").lower()
+    h = cookie_header(r, "__Host-hangar_oauth_state").lower()
     assert "httponly" in h and "secure" in h and "samesite=lax" in h and "max-age=600" in h
-    assert "path=/api/auth" in h
+    assert "path=/;" in h + ";" and "domain" not in h
     assert r.headers["cache-control"] == "no-store"
 
 
@@ -132,11 +132,11 @@ def test_full_login_sets_session_cookie_and_redirects_to_next(client, discord):
     r = client.get("/api/auth/callback", params={"code": CODE, "state": state})
     assert r.status_code == 302, r.text
     assert r.headers["location"] == "/members"
-    h = cookie_header(r, "hangar_session").lower()
+    h = cookie_header(r, "__Host-hangar_session").lower()
     assert "httponly" in h and "secure" in h and "samesite=lax" in h and "path=/" in h
     assert f"max-age={SESSION_MAX_AGE_S}" in h
     # state cookie is consumed
-    assert any(c.startswith("hangar_oauth_state=") and "max-age=0" in c.lower()
+    assert any(c.startswith("__Host-hangar_oauth_state=") and "max-age=0" in c.lower()
                for c in set_cookie_headers(r))
     me = client.get("/api/me")
     assert me.status_code == 200
@@ -160,7 +160,7 @@ def test_login_unsafe_next_falls_back_to_root(client):
 def _assert_login_error(r, code):
     assert r.status_code == 302
     assert r.headers["location"] == f"/?login_error={code}"
-    assert not any(c.startswith("hangar_session=") and "max-age=0" not in c.lower()
+    assert not any(c.startswith("__Host-hangar_session=") and "max-age=0" not in c.lower()
                    for c in set_cookie_headers(r))
 
 
@@ -186,8 +186,8 @@ def test_callback_expired_state(client, clock):
 
 def test_callback_tampered_state_cookie(client):
     _, state = login(client)
-    client.cookies.set("hangar_oauth_state", "forged.value.sig", domain="hangar.aklabs.io",
-                       path="/api/auth")
+    client.cookies.set("__Host-hangar_oauth_state", "forged.value.sig", domain="hangar.aklabs.io",
+                       path="/")
     r = client.get("/api/auth/callback", params={"code": CODE, "state": state})
     _assert_login_error(r, "state_mismatch")
 
@@ -231,7 +231,7 @@ def test_secrets_codes_tokens_never_logged(client, discord, caplog):
     text = "\n".join(r.getMessage() for r in caplog.records if not r.name.startswith("httpx2"))
     for secret in (CODE, ACCESS, SECRET, KEY, state, state2):
         assert secret not in text
-    assert client.cookies.get("hangar_session") not in text
+    assert client.cookies.get("__Host-hangar_session") not in text
 
 
 # ---------- logout / me ----------
@@ -241,7 +241,7 @@ def test_logout_clears_session(client):
     assert client.get("/api/me").status_code == 200
     r = client.post("/api/auth/logout", headers={"Origin": ORIGIN})
     assert r.status_code == 204
-    h = cookie_header(r, "hangar_session").lower()
+    h = cookie_header(r, "__Host-hangar_session").lower()
     assert "max-age=0" in h and "path=/" in h
     assert client.get("/api/me").status_code == 401
 
@@ -262,7 +262,7 @@ def test_me_admin_flag_and_default_avatar(client):
 
 
 def test_tampered_session_cookie_is_401(client):
-    client.cookies.set("hangar_session", session_cookie(ME)[:-3] + "xyz", domain="hangar.aklabs.io")
+    client.cookies.set("__Host-hangar_session", session_cookie(ME)[:-3] + "xyz", domain="hangar.aklabs.io")
     assert client.get("/api/me").status_code == 401
     r = client.get(f"/api/v1/members/{SELF}/hangar")
     assert r.status_code == 401 and r.json()["error"] == "unauthenticated"
@@ -436,3 +436,173 @@ def test_browser_auth_unconfigured_is_503_but_service_callers_work(repo, discord
         assert c.post(f"/v1/members/{SELF}/ships", json={"vehicle": "harbinger"},
                       headers=H()).status_code == 201
         assert c.get("/health").status_code == 200
+
+
+# ---------- fix round 1 ----------
+
+def test_cookie_names_use_host_prefix():
+    from src.session import OAUTH_STATE_COOKIE, SESSION_COOKIE
+    assert SESSION_COOKIE == "__Host-hangar_session"
+    assert OAUTH_STATE_COOKIE == "__Host-hangar_oauth_state"
+
+
+def test_logout_requires_same_origin(client):
+    as_user(client)
+    for headers in ({}, {"Origin": "https://evil.example"}):
+        r = client.post("/api/auth/logout", headers=headers)
+        assert r.status_code == 403 and r.json()["error"] == "forbidden"
+    assert client.get("/api/me").status_code == 200       # still logged in
+
+
+def test_ship_cap_per_member(repo, discord, clock):
+    app = _app(repo, discord, clock, HANGAR_MAX_SHIPS_PER_MEMBER="2")
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        for _ in range(2):
+            assert c.post(f"/v1/members/{SELF}/ships", json={"vehicle": "harbinger"},
+                          headers=H()).status_code == 201
+        r = c.post(f"/v1/members/{SELF}/ships", json={"vehicle": "harbinger"}, headers=H())
+        assert r.status_code == 409 and r.json()["error"] == "limit"
+        assert "2" in r.json()["message"]
+        # another member is unaffected
+        assert c.post(f"/v1/members/{OTHER}/ships", json={"vehicle": "harbinger"},
+                      headers=H(OTHER)).status_code == 201
+
+
+async def test_ensure_ship_capacity_helper():
+    from src.app import ApiError, ensure_ship_capacity
+    repo = InMemoryShipRepository()
+    await ensure_ship_capacity(repo, SELF, adding=3, limit=3)
+    await repo.create_ship(SELF, vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                           nickname=None, updated_by=SELF)
+    with pytest.raises(ApiError) as ei:
+        await ensure_ship_capacity(repo, SELF, adding=3, limit=3)
+    assert ei.value.status == 409 and ei.value.code == "limit"
+
+
+class CountingRepo(InMemoryShipRepository):
+    def __init__(self):
+        super().__init__()
+        self.member_calls = 0
+
+    async def list_members(self):
+        self.member_calls += 1
+        return await super().list_members()
+
+
+class Mono:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_members_directory_cached_60s_and_invalidated_on_create_delete(discord, clock):
+    repo, mono = CountingRepo(), Mono()
+    app = create_app(cfg(**BROWSER_ENV), catalog=make_catalog(), repository=repo, verifier=fake_verifier,
+                     warm=False, discord_transport=httpx.MockTransport(discord), clock=clock,
+                     monotonic=mono)
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        assert c.get("/api/v1/members", headers=H()).json() == {"members": []}
+        c.get("/v1/members", headers=H())
+        assert repo.member_calls == 1                       # served from cache
+        ship = c.post(f"/v1/members/{SELF}/ships", json={"vehicle": "harbinger"}, headers=H()).json()["ship"]
+        assert c.get("/api/v1/members", headers=H()).json()["members"][0]["shipCount"] == 1
+        assert repo.member_calls == 2                       # create invalidated
+        c.delete(f"/v1/members/{SELF}/ships/{ship['shipId']}", headers=H())
+        assert c.get("/api/v1/members", headers=H()).json() == {"members": []}
+        assert repo.member_calls == 3                       # delete invalidated
+        mono.t += 59
+        c.get("/api/v1/members", headers=H())
+        assert repo.member_calls == 3
+        mono.t += 2
+        c.get("/api/v1/members", headers=H())
+        assert repo.member_calls == 4                       # TTL expired
+
+
+def test_session_signed_with_previous_key_still_valid(repo, discord, clock):
+    old = "old-session-key-" + "o" * 40
+    app = _app(repo, discord, clock, HANGAR_SESSION_KEY_PREVIOUS=old)
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        c.cookies.set("__Host-hangar_session", SessionCodec(old, clock=Clock()).sign_session(ME),
+                      domain="hangar.aklabs.io")
+        assert c.get("/api/me").status_code == 200
+
+
+def test_session_not_before_revokes_older_sessions(repo, discord, clock):
+    app = _app(repo, discord, clock, HANGAR_SESSION_NOT_BEFORE=str(int(clock.t) + 10))
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        as_user(c, ME, clock=Clock(clock.t))               # iat before the cutoff
+        assert c.get("/api/me").status_code == 401
+        as_user(c, ME, clock=Clock(clock.t + 20))          # issued after it
+        clock.t += 20
+        assert c.get("/api/me").status_code == 200
+
+
+SECURITY_HEADERS = {
+    "strict-transport-security": "max-age=31536000; includeSubDomains",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "frame-ancestors 'none'",
+    "x-frame-options": "DENY",
+    "referrer-policy": "strict-origin-when-cross-origin",
+}
+
+
+@pytest.mark.parametrize("method,path,kw", [
+    ("GET", "/health", {}),
+    ("GET", "/api/me", {}),
+    ("GET", f"/v1/members/{SELF}/hangar", {"headers": {"Authorization": "Bearer good"}}),
+    ("GET", f"/api/v1/members/{SELF}/hangar", {}),                 # 401
+    ("GET", "/nope", {}),                                          # 404
+    ("GET", "/api/auth/login", {}),                                # 302
+])
+def test_security_headers_on_all_responses(client, method, path, kw):
+    r = client.request(method, path, **kw)
+    for k, v in SECURITY_HEADERS.items():
+        assert r.headers.get(k) == v, (path, k, r.headers.get(k))
+
+
+@pytest.mark.parametrize("path", [f"/v1/members/{SELF}/hangar", f"/api/v1/members/{SELF}/hangar",
+                                  "/api/v1/catalog/vehicles?q=harbinger", "/api/v1/members", "/api/me"])
+def test_api_responses_not_cached_and_vary_on_cookie(client, path):
+    as_user(client)
+    r = client.get(path, headers=H() if path.startswith("/v1") else None)
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-store"
+    assert "cookie" in [v.strip().lower() for v in r.headers["vary"].split(",")]
+
+
+def test_security_headers_on_500(repo):
+    class BrokenCatalog:
+        async def search_vehicles(self, q, limit=25):
+            raise RuntimeError("secret internals")
+
+        def vehicle_index_cached(self):
+            return False
+
+    app = create_app(cfg(), catalog=BrokenCatalog(), repository=repo, verifier=fake_verifier, warm=False)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/v1/catalog/vehicles?q=x", headers=H())
+    assert r.status_code == 500
+    assert "secret internals" not in r.text and "RuntimeError" not in r.text
+    for k, v in SECURITY_HEADERS.items():
+        assert r.headers.get(k) == v
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_login_gate_hook_runs_after_user_fetch(repo, discord, clock):
+    seen = []
+
+    async def gate(user, access_token):
+        seen.append((user.discord_id, access_token))
+        return "not_member"
+
+    app = create_app(cfg(**BROWSER_ENV), catalog=make_catalog(), repository=repo, verifier=fake_verifier,
+                     warm=False, discord_transport=httpx.MockTransport(discord), clock=clock,
+                     login_gate=gate)
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        _, state = login(c)
+        r = c.get("/api/auth/callback", params={"code": CODE, "state": state})
+        _assert_login_error(r, "not_member")
+        assert seen == [(SELF, ACCESS)]
+        assert c.get("/api/me").status_code == 401

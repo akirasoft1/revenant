@@ -14,7 +14,7 @@ Resolvers, in chain order:
    holding a Google-signed ID token for SA ``hangar-api@``) ->
    ``Principal(kind="service", acting_member=<X-Acting-Member header>)``.
 2. ``DiscordSessionResolver`` (only when browser auth is configured) -- the web
-   editor's signed ``hangar_session`` cookie ->
+   editor's signed ``__Host-hangar_session`` cookie ->
    ``Principal(kind="session", subject=<discordId>, acting_member=<discordId>, user=...)``.
    ``X-Acting-Member`` is IGNORED for sessions: a browser acts only as itself.
 
@@ -118,6 +118,14 @@ class CachingRequest:
         return resp
 
 
+def _scrub_token(text: str, token: str) -> str:
+    """Remove the raw token, and each of its dot-separated segments, from ``text``."""
+    for piece in sorted({token, *token.split(".")}, key=len, reverse=True):
+        if len(piece) >= 4:
+            text = text.replace(piece, "<token>")
+    return text
+
+
 class GoogleIdTokenVerifier:
     """The production ``TokenVerifier``: ``google.oauth2.id_token.verify_oauth2_token``
     (signature against Google's certs, expiry, issuer ``accounts.google.com``,
@@ -137,7 +145,11 @@ class GoogleIdTokenVerifier:
         except gexc.TransportError as e:
             raise AuthUnavailable(f"could not fetch Google signing certs: {e}") from e
         except (ValueError, gexc.GoogleAuthError) as e:
-            raise AuthError(f"invalid ID token: {e}") from e
+            # google-auth messages can quote the token (e.g. "Wrong number of
+            # segments in token: b'...'"): log the reason with the token
+            # scrubbed, and never echo it to the caller.
+            log.warning("hangar: invalid ID token (%s): %s", type(e).__name__, _scrub_token(str(e), token))
+            raise AuthError("invalid ID token") from None
 
 
 class GoogleIdTokenResolver:
@@ -175,7 +187,7 @@ class GoogleIdTokenResolver:
 
 
 class DiscordSessionResolver:
-    """``hangar_session`` cookie -> session Principal. No cookie -> not
+    """``__Host-hangar_session`` cookie -> session Principal. No cookie -> not
     applicable; a cookie that fails verification (tampered / expired /
     signed with another key) -> 401."""
 
@@ -224,7 +236,7 @@ class Authenticator:
             if principal is not None:
                 return principal
         raise AuthError("no credentials (expected Authorization: Bearer <Google ID token> "
-                        "or a hangar_session login cookie)")
+                        "or a __Host-hangar_session login cookie)")
 
 
 def authorize_write(principal: Principal, member_id: str, admin_ids: frozenset[str]) -> None:

@@ -8,6 +8,11 @@ while its signature verifies and it is younger than its max age.
 
 The session carries only public Discord profile fields
 (``{discordId, username, globalName, avatar, iat}``).
+
+Rotation / revocation: ``previous_keys`` (``HANGAR_SESSION_KEY_PREVIOUS``) are
+accepted for verification while the current key signs everything new;
+``not_before`` (``HANGAR_SESSION_NOT_BEFORE``, unix seconds) rejects every
+session issued before it -- a global "log everyone out" without a key change.
 """
 import re
 import time
@@ -17,8 +22,10 @@ from typing import Callable
 from itsdangerous import BadData, URLSafeTimedSerializer
 from itsdangerous.timed import TimestampSigner
 
-SESSION_COOKIE = "hangar_session"
-OAUTH_STATE_COOKIE = "hangar_oauth_state"
+# ``__Host-`` prefix: the browser only accepts these cookies with Secure,
+# Path=/ and no Domain, so a sibling subdomain can never set or shadow them.
+SESSION_COOKIE = "__Host-hangar_session"
+OAUTH_STATE_COOKIE = "__Host-hangar_oauth_state"
 SESSION_MAX_AGE_S = 30 * 24 * 3600
 OAUTH_STATE_MAX_AGE_S = 600
 NEXT_PATH_MAX = 512
@@ -75,13 +82,17 @@ def safe_next_path(raw: str | None) -> str:
 
 
 class SessionCodec:
-    def __init__(self, key: str, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, key: str, clock: Callable[[], float] = time.time, *,
+                 previous_keys: list[str] | tuple[str, ...] = (), not_before: int | None = None) -> None:
         if not key:
             raise ValueError("session key is required")
         signer = _signer_with_clock(clock)
         self._clock = clock
-        self._session = URLSafeTimedSerializer(key, salt=_SESSION_SALT, signer=signer)
-        self._state = URLSafeTimedSerializer(key, salt=_STATE_SALT, signer=signer)
+        self._not_before = not_before
+        # itsdangerous: with a key list, the LAST key signs and all keys verify.
+        keys = [k for k in previous_keys if k] + [key]
+        self._session = URLSafeTimedSerializer(keys, salt=_SESSION_SALT, signer=signer)
+        self._state = URLSafeTimedSerializer(keys, salt=_STATE_SALT, signer=signer)
 
     # ----- session -----
 
@@ -106,6 +117,8 @@ class SessionCodec:
         if not isinstance(username, str):
             raise InvalidSession("session has no username")
         gname, avatar, iat = data.get("globalName"), data.get("avatar"), data.get("iat")
+        if self._not_before is not None and (not isinstance(iat, int) or iat < self._not_before):
+            raise InvalidSession("session issued before HANGAR_SESSION_NOT_BEFORE")
         return SessionUser(did, username, gname if isinstance(gname, str) else None,
                            avatar if isinstance(avatar, str) else None,
                            iat if isinstance(iat, int) else None)

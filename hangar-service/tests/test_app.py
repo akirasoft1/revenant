@@ -9,7 +9,6 @@ from src.app import create_app
 from src.auth import AuthError, AuthUnavailable
 from src.catalog import Slot, build_catalog
 from src.config import load
-from src.http import UpstreamError
 from src.repository import InMemoryShipRepository
 from tests.conftest import HARBINGER_UUID, HEMERA_UUID, TAURUS_UUID, wiki_handler
 

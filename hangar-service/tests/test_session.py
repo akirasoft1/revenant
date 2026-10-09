@@ -119,3 +119,26 @@ def test_avatar_url():
 ])
 def test_safe_next_path(raw, expected):
     assert safe_next_path(raw) == expected
+
+
+def test_previous_key_verifies_newest_signs():
+    old, new = "o" * 48, "n" * 48
+    tok_old = SessionCodec(old, clock=Clock()).sign_session(USER)
+    rotated = SessionCodec(new, previous_keys=[old], clock=Clock())
+    assert rotated.verify_session(tok_old) == USER
+    tok_new = rotated.sign_session(USER)
+    assert SessionCodec(new, clock=Clock()).verify_session(tok_new) == USER   # signed with newest
+    with pytest.raises(InvalidSession):
+        SessionCodec(old, clock=Clock()).verify_session(tok_new)
+
+
+def test_not_before_rejects_older_iat():
+    clock = Clock()
+    tok = SessionCodec(KEY, clock=clock).sign_session(USER)
+    assert SessionCodec(KEY, clock=clock, not_before=int(clock.t)).verify_session(tok) == USER
+    with pytest.raises(InvalidSession):
+        SessionCodec(KEY, clock=clock, not_before=int(clock.t) + 1).verify_session(tok)
+    # a session with no iat cannot prove it is newer than the cutoff
+    no_iat = SessionCodec(KEY, clock=clock)._session.dumps({"discordId": "1", "username": "u"})
+    with pytest.raises(InvalidSession):
+        SessionCodec(KEY, clock=clock, not_before=1).verify_session(no_iat)

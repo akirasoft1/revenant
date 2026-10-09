@@ -114,3 +114,60 @@ def test_secrets_not_in_repr():
     c = load({"DISCORD_CLIENT_SECRET": "very-secret-value", "HANGAR_SESSION_KEY": KEY})
     assert "very-secret-value" not in repr(c)
     assert KEY not in repr(c)
+
+
+# ---------- fix round 1 ----------
+
+@pytest.mark.parametrize("raw,expected", [
+    ("HTTPS://Hangar.AKLabs.io", "https://hangar.aklabs.io"),
+    ("https://hangar.aklabs.io:443", "https://hangar.aklabs.io"),
+    ("https://hangar.aklabs.io:443/", "https://hangar.aklabs.io"),
+    ("http://localhost:80", "http://localhost"),
+    ("http://localhost:5173", "http://localhost:5173"),
+    ("https://hangar.aklabs.io:8443", "https://hangar.aklabs.io:8443"),
+])
+def test_public_origin_normalized(raw, expected):
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_PUBLIC_ORIGIN": raw})
+    assert c.public_origin == expected
+    assert c.browser_auth_enabled
+
+
+@pytest.mark.parametrize("raw", ["https://hangar.aklabs.io/x", "https://hangar.aklabs.io?x=1",
+                                 "https://hangar.aklabs.io#f", "https://u@hangar.aklabs.io",
+                                 "https://hangar.aklabs.io:notaport", "https://", "hangar.aklabs.io"])
+def test_public_origin_junk_rejected(raw):
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_PUBLIC_ORIGIN": raw})
+    assert not c.browser_auth_enabled
+    assert "HANGAR_PUBLIC_ORIGIN" in c.browser_auth_problem()
+
+
+def test_max_ships_per_member():
+    assert load({}).max_ships_per_member == 200
+    assert load({"HANGAR_MAX_SHIPS_PER_MEMBER": "5"}).max_ships_per_member == 5
+    for bad in ("0", "-1", "x"):
+        with pytest.raises(ValueError):
+            load({"HANGAR_MAX_SHIPS_PER_MEMBER": bad})
+
+
+def test_session_rotation_settings():
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_SESSION_KEY_PREVIOUS": "p" * 40, "HANGAR_SESSION_NOT_BEFORE": "1800000000"})
+    assert c.session_key_previous == "p" * 40 and "p" * 40 not in repr(c)
+    assert c.session_not_before == 1800000000
+    assert c.browser_auth_enabled
+    assert load({}).session_not_before is None
+
+
+@pytest.mark.parametrize("bad", ["soon", "-5", "1.5"])
+def test_bad_session_not_before_disables_browser_auth(bad):
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_SESSION_NOT_BEFORE": bad})
+    assert not c.browser_auth_enabled and "HANGAR_SESSION_NOT_BEFORE" in c.browser_auth_problem()
+
+
+def test_short_previous_key_disables_browser_auth():
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_SESSION_KEY_PREVIOUS": "short"})
+    assert not c.browser_auth_enabled and "HANGAR_SESSION_KEY_PREVIOUS" in c.browser_auth_problem()

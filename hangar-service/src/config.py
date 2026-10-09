@@ -11,6 +11,29 @@ STORAGE_BACKENDS = ("firestore", "memory")
 DEFAULT_PUBLIC_ORIGIN = "https://hangar.aklabs.io"
 CALLBACK_PATH = "/api/auth/callback"
 SESSION_KEY_MIN_LEN = 32
+DEFAULT_MAX_SHIPS_PER_MEMBER = 200
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def normalize_origin(raw: str) -> str | None:
+    """``scheme://host[:port]`` with lower-cased scheme/host and the default
+    port dropped, or None if ``raw`` is not a bare http(s) origin (a path other
+    than a single ``/``, a query, fragment, userinfo or bad port is rejected)."""
+    try:
+        parts = urlsplit((raw or "").strip())
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    if scheme not in _DEFAULT_PORTS or not host or parts.path not in ("", "/") or parts.query \
+            or parts.fragment or "@" in parts.netloc:
+        return None
+    if ":" in host:                      # IPv6 literal
+        host = f"[{host}]"
+    if port is None or port == _DEFAULT_PORTS[scheme]:
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{port}"
 
 
 def _csv(raw: str | None, *, lower: bool = False) -> frozenset[str]:
@@ -37,6 +60,14 @@ class Config:
     discord_client_id: str = ""
     discord_client_secret: str = field(default="", repr=False)
     session_key: str = field(default="", repr=False)
+    session_key_previous: str = field(default="", repr=False)   # still verifies, never signs
+    session_not_before_raw: str = ""     # unix seconds; sessions with an older iat are rejected
+    max_ships_per_member: int = DEFAULT_MAX_SHIPS_PER_MEMBER
+
+    @property
+    def session_not_before(self) -> int | None:
+        raw = self.session_not_before_raw
+        return int(raw) if raw.isdigit() else None
 
     @property
     def redirect_uri(self) -> str:
@@ -51,9 +82,12 @@ class Config:
             return f"{', '.join(missing)} not set"
         if len(self.session_key) < SESSION_KEY_MIN_LEN:
             return f"HANGAR_SESSION_KEY is shorter than {SESSION_KEY_MIN_LEN} characters"
-        parts = urlsplit(self.public_origin)
-        if parts.scheme not in ("http", "https") or not parts.netloc or parts.path or parts.query \
-                or parts.fragment:
+        if self.session_key_previous and len(self.session_key_previous) < SESSION_KEY_MIN_LEN:
+            return f"HANGAR_SESSION_KEY_PREVIOUS is shorter than {SESSION_KEY_MIN_LEN} characters"
+        if self.session_not_before_raw and self.session_not_before is None:
+            return (f"HANGAR_SESSION_NOT_BEFORE {self.session_not_before_raw!r} is not a "
+                    f"non-negative integer (unix seconds)")
+        if normalize_origin(self.public_origin) != self.public_origin:
             return f"HANGAR_PUBLIC_ORIGIN {self.public_origin!r} is not a scheme://host[:port] origin"
         return None
 
@@ -80,8 +114,29 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         version=env.get("HANGAR_VERSION") or env.get("K_REVISION") or "dev",
         port=int(env.get("PORT") or "8080"),
         storage=storage,
-        public_origin=(env.get("HANGAR_PUBLIC_ORIGIN") or "").strip().rstrip("/") or DEFAULT_PUBLIC_ORIGIN,
+        public_origin=_origin(env.get("HANGAR_PUBLIC_ORIGIN")),
         discord_client_id=(env.get("DISCORD_CLIENT_ID") or "").strip(),
         discord_client_secret=(env.get("DISCORD_CLIENT_SECRET") or "").strip(),
         session_key=(env.get("HANGAR_SESSION_KEY") or "").strip(),
+        session_key_previous=(env.get("HANGAR_SESSION_KEY_PREVIOUS") or "").strip(),
+        session_not_before_raw=(env.get("HANGAR_SESSION_NOT_BEFORE") or "").strip(),
+        max_ships_per_member=_positive_int(env, "HANGAR_MAX_SHIPS_PER_MEMBER", DEFAULT_MAX_SHIPS_PER_MEMBER),
     )
+
+
+def _origin(raw: str | None) -> str:
+    """Normalized origin; an invalid value is kept as given (stripped) so
+    ``browser_auth_problem`` reports it -- browser login off, service unaffected."""
+    raw = (raw or "").strip()
+    if not raw:
+        return DEFAULT_PUBLIC_ORIGIN
+    return normalize_origin(raw) or raw
+
+
+def _positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw = (env.get(name) or "").strip()
+    if not raw:
+        return default
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
+    return int(raw)
