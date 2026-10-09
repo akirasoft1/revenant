@@ -598,3 +598,32 @@ def test_startup_does_not_wait_for_a_slow_warm(repo):
     app = create_app(cfg(), catalog=SlowWarm(), repository=repo, verifier=fake_verifier, warm=True)
     with TestClient(app) as c:     # startup must not block; shutdown must cancel the warm task
         assert c.get("/healthz").status_code == 200
+
+
+# ---------- fix round 1 ----------
+
+@pytest.mark.parametrize("path", ["/health", "/healthz"])
+def test_health_paths_unauthenticated_no_upstream(client, wiki_calls, path):
+    # Cloud Run's front end reserves paths ending in "z": /healthz 404s in prod.
+    r = client.get(path)
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+    assert wiki_calls == []
+
+
+def test_unexpected_exception_is_500_unavailable_with_full_stack_logged(repo, caplog):
+    class BrokenCatalog:
+        async def search_vehicles(self, q, limit=25):
+            raise RuntimeError("boom " + "x" * 5000)
+
+        def vehicle_index_cached(self):
+            return False
+
+    app = create_app(cfg(), catalog=BrokenCatalog(), repository=repo, verifier=fake_verifier, warm=False)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/v1/catalog/vehicles?q=x", headers=H())
+    assert r.status_code == 500
+    assert r.json()["error"] == "unavailable"
+    rec = next(r for r in caplog.records if r.levelname == "ERROR" and "500" in r.getMessage())
+    assert rec.exc_info is not None
+    assert "x" * 5000 in rec.getMessage() or "x" * 5000 in str(rec.exc_info[1])

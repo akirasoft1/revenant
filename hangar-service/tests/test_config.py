@@ -48,3 +48,11 @@ def test_unknown_storage_rejected():
     import pytest
     with pytest.raises(ValueError):
         load({"HANGAR_STORAGE": "postgres"})
+
+
+def test_memory_storage_refused_on_cloud_run():
+    import pytest
+    with pytest.raises(ValueError):
+        load({"HANGAR_STORAGE": "memory", "K_SERVICE": "hangar-service"})
+    assert load({"K_SERVICE": "hangar-service"}).storage == "firestore"
+    assert load({"HANGAR_STORAGE": "memory"}).storage == "memory"

@@ -2,7 +2,8 @@
 
 Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
 
-    GET    /healthz                                         (unauthenticated, no upstream calls)
+    GET    /health, /healthz                                (unauthenticated, no upstream calls;
+                                                             Cloud Run 404s /healthz -- use /health)
     GET    /v1/members/{discordId}/hangar
     POST   /v1/members/{discordId}/ships                    {vehicle, nickname?}
     PATCH  /v1/members/{discordId}/ships/{shipId}           {nickname}
@@ -234,6 +235,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     async def _validation(request: Request, e: RequestValidationError):
         return _err(400, "invalid_request", str(e.errors()))
 
+    @app.exception_handler(Exception)
+    async def _unexpected(request: Request, e: Exception):
+        log.error("hangar: 500 %s %s: unexpected %s: %s", request.method, request.url.path,
+                  type(e).__name__, e, exc_info=e)
+        return _err(500, "unavailable", f"internal error: {type(e).__name__}: {e}")
+
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, e: StarletteHTTPException):
         code = {404: "not_found", 401: "unauthenticated", 403: "forbidden"}.get(e.status_code, "invalid_request")
@@ -241,6 +248,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     # ----- health -----
 
+    # Cloud Run's front end reserves paths ending in "z" (/healthz returns
+    # Google's own 404 in production), so /health is the real probe path;
+    # /healthz stays for local / in-cluster parity. Same handler, no upstream calls.
+    @app.get("/health")
     @app.get("/healthz")
     async def healthz():
         cached = getattr(app.state.catalog, "vehicle_index_cached", lambda: False)()

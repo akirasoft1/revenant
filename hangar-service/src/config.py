@@ -34,6 +34,9 @@ def load(env: Mapping[str, str] | None = None) -> Config:
     storage = (env.get("HANGAR_STORAGE") or "firestore").strip().lower()
     if storage not in STORAGE_BACKENDS:
         raise ValueError(f"HANGAR_STORAGE must be one of {STORAGE_BACKENDS}, got {storage!r}")
+    if storage == "memory" and env.get("K_SERVICE"):
+        # K_SERVICE is set by Cloud Run: never run the non-persistent store there.
+        raise ValueError("HANGAR_STORAGE=memory is for local dev only and is refused on Cloud Run (K_SERVICE set)")
     return Config(
         audience=(env.get("HANGAR_AUDIENCE") or "").strip(),
         allowed_callers=_csv(env.get("HANGAR_ALLOWED_CALLERS"), lower=True)

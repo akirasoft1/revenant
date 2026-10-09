@@ -11,7 +11,7 @@ Spec: `docs/superpowers/specs/2026-10-09-member-hangar-design.md`.
 
 ## API
 
-All JSON. Everything except `/healthz` needs a credential (see Auth).
+All JSON. Everything except `/health` (and its local alias `/healthz`) needs a credential (see Auth).
 Errors are always `{"error": <code>, "message": <text>, ...}`:
 
 | Code | HTTP | When |
@@ -23,10 +23,11 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
 | `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
 | `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable |
+| `unavailable` | 500 | unexpected server error (full stack logged) |
 
 | Method | Path | Body | Success |
 |---|---|---|---|
-| GET | `/healthz` | – | `{status, version, vehicleIndexCached}` (no upstream calls, no auth) |
+| GET | `/health` (alias `/healthz`) | – | `{status, version, vehicleIndexCached}` (no upstream calls, no auth) |
 | GET | `/v1/members/{discordId}/hangar` | – | `{member, ships: [Ship]}` |
 | POST | `/v1/members/{discordId}/ships` | `{vehicle, nickname?}` | 201 `{ship: Ship}` |
 | PATCH | `/v1/members/{discordId}/ships/{shipId}` | `{nickname}` (null clears) | `{ship: Ship}` |
@@ -48,10 +49,25 @@ Slot ids contain `/` for nested slots
 holds only changes from stock). Full shapes: Task 2 report /
 `src/app.py`.
 
+**Use `/health`, not `/healthz`, against Cloud Run.** Cloud Run's front end
+reserves URL paths ending in `z`, so `/healthz` gets Google's own 404 before it
+ever reaches the container. `/healthz` is kept for local and in-cluster parity.
+
 ## Auth
 
-- Cloud Run is deployed `--allow-unauthenticated` (the future browser editor
-  must reach it); the app enforces auth itself.
+Two layers:
+
+1. **Cloud Run edge (invoker IAM ON).** The org enforces domain-restricted
+   sharing (`iam.allowedPolicyMemberDomains`), so `--allow-unauthenticated`
+   (an `allUsers` invoker binding) FAILS. The service is deployed
+   `--no-allow-unauthenticated` with `roles/run.invoker` granted to
+   `hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com`. Google's front
+   end rejects anything without a valid invoker token before the app runs.
+   The project-2 browser editor can't present such a token, so it will need a
+   different approach (e.g. `--no-invoker-iam-check`, leaving auth to the app
+   alone). That decision is deferred to project 2.
+2. **The app**, which re-verifies the same ID token and enforces the
+   member write rule:
 - **Service callers** send `Authorization: Bearer <Google ID token>`. The token
   is verified with `google.oauth2.id_token.verify_oauth2_token` (Google
   signature, expiry, issuer `accounts.google.com`) for audience
@@ -66,10 +82,14 @@ holds only changes from stock). Full shapes: Task 2 report /
 - Credential checks are a chain of pluggable resolvers (`src/auth.py`); the
   web editor's Discord-OAuth sessions will be a second resolver producing the
   same `Principal` -- routes and the write rule don't change.
-- Callers mint tokens with audience = the URL they call (`HANGAR_API_URL`);
-  it must equal `HANGAR_AUDIENCE` exactly (Cloud Run has two URL forms — pick
-  one and use it on both sides). Tokens from a SA JSON key include `email`;
-  impersonated tokens need `--include-email`.
+- Callers mint tokens with audience = the URL they call (`HANGAR_API_URL`),
+  and it must equal `HANGAR_AUDIENCE` byte for byte (no trailing slash).
+  Cloud Run serves the service at two URLs:
+  `https://hangar-service-hvmf2jpuca-uc.a.run.app` and
+  `https://hangar-service-278098364045.us-central1.run.app`. `HANGAR_AUDIENCE`
+  is currently the **`-uc.a.run.app` form**, so callers must use exactly that
+  URL. Tokens minted from the SA JSON key include `email`; impersonated tokens
+  need `--include-email`.
 
 ## Environment
 
@@ -81,8 +101,8 @@ holds only changes from stock). Full shapes: Task 2 report /
 | `WIKI_BASE` | `https://api.star-citizen.wiki/api` | Star Citizen Wiki API base |
 | `GOOGLE_CLOUD_PROJECT` | *(ADC)* | Firestore project |
 | `PORT` | `8080` | Listen port (Cloud Run sets it) |
-| `HANGAR_VERSION` | `$K_REVISION` or `dev` | Reported by `/healthz`, sent in the Wiki User-Agent |
-| `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** |
+| `HANGAR_VERSION` | `$K_REVISION` or `dev` | Reported by `/health`, sent in the Wiki User-Agent |
+| `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** (refused when `K_SERVICE` is set, i.e. on Cloud Run) |
 
 ## Runtime behaviour
 
@@ -104,7 +124,7 @@ uv pip install -p .venv/bin/python -r requirements-dev.txt
 
 HANGAR_STORAGE=memory HANGAR_AUDIENCE=http://localhost:8080 \
   .venv/bin/python -m src.main
-curl localhost:8080/healthz
+curl localhost:8080/health
 # Firestore emulator instead of memory: export FIRESTORE_EMULATOR_HOST=localhost:8681 and drop HANGAR_STORAGE.
 ```
 
@@ -128,13 +148,21 @@ docker build -t "$IMAGE" -f hangar-service/Dockerfile hangar-service/
 docker push "$IMAGE"
 
 # ^;^ switches gcloud's env-var delimiter to ';' because HANGAR_ADMIN_IDS contains commas.
+# --no-allow-unauthenticated: domain-restricted sharing forbids an allUsers invoker.
 gcloud run deploy hangar-service --project revenant-discord-bot-2 \
-  --image "$IMAGE" --region us-central1 --allow-unauthenticated \
+  --image "$IMAGE" --region us-central1 --no-allow-unauthenticated \
   --service-account hangar-runtime@revenant-discord-bot-2.iam.gserviceaccount.com \
   --min-instances 1 --memory 512Mi \
   --set-env-vars "^;^GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2;HANGAR_ALLOWED_CALLERS=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com;HANGAR_ADMIN_IDS=<id1>,<id2>;HANGAR_VERSION=$SHA"
 
+# Let the caller SA through Cloud Run's invoker check (once).
+gcloud run services add-iam-policy-binding hangar-service --project revenant-discord-bot-2 \
+  --region us-central1 \
+  --member serviceAccount:hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com \
+  --role roles/run.invoker
+
 # First deploy only: the audience is the service URL, known after the deploy.
+# status.url is the -uc.a.run.app form -- the one HANGAR_AUDIENCE uses today.
 URL=$(gcloud run services describe hangar-service --project revenant-discord-bot-2 \
   --region us-central1 --format='value(status.url)')
 gcloud run services update hangar-service --project revenant-discord-bot-2 \
@@ -143,12 +171,19 @@ gcloud run services update hangar-service --project revenant-discord-bot-2 \
 # On later deploys add HANGAR_AUDIENCE=$URL to --set-env-vars (it replaces the whole set).
 ```
 
-Smoke test with a real token:
+Smoke test with a real token, minted from the `hangar-api@` key file
+(never commit the key):
 
 ```bash
-TOKEN=$(gcloud auth print-identity-token \
-  --impersonate-service-account=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com \
-  --audiences="$URL" --include-email)
-curl -s "$URL/healthz"
+URL=https://hangar-service-hvmf2jpuca-uc.a.run.app   # must equal HANGAR_AUDIENCE
+TOKEN=$(python3 -c 'import sys, google.auth.transport.requests as r; from google.oauth2 import service_account as s
+c = s.IDTokenCredentials.from_service_account_file(sys.argv[1], target_audience=sys.argv[2]); c.refresh(r.Request()); print(c.token)' \
+  /path/to/hangar-api-key.json "$URL")
+# Alternative: gcloud auth print-identity-token --impersonate-service-account=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com \
+#   --audiences="$URL" --include-email   (requires roles/iam.serviceAccountTokenCreator on hangar-api@ for your account)
+
+# /health, not /healthz (Cloud Run 404s paths ending in z). With invoker IAM on,
+# even /health needs the token at the Cloud Run edge.
+curl -s -H "Authorization: Bearer $TOKEN" "$URL/health"
 curl -s -H "Authorization: Bearer $TOKEN" "$URL/v1/catalog/vehicles?q=harbinger"
 ```
