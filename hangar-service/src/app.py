@@ -28,6 +28,11 @@ through the load balancer. Browser-only routes (web editor, Discord login):
     POST   /api/auth/logout                204, clears hangar_session
     GET    /api/me                         {discordId, username, globalName, avatarUrl, isAdmin} | 401
 
+The built web editor (HANGAR_STATIC_DIR, see src/static_site.py) is served
+for every other GET: ``/assets/*`` long-cached, root files short-cached, and
+any non-reserved path (not /api, /v1, /health, /healthz, /assets) ->
+index.html (no-cache, with the SPA CSP). ``GET /version.txt`` = HANGAR_VERSION.
+
 Browser login is configured by DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET /
 HANGAR_SESSION_KEY; without them the login routes and /api/me answer 503
 ``unavailable`` and session cookies are not a credential (service callers are
@@ -71,6 +76,7 @@ from .http import UpstreamError
 from .loadout import check_compatible, effective_loadout
 from .options import slot_options
 from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
+from .static_site import NO_CACHE, StaticSite, build_csp
 from .spviewer import MAX_ROWS, MAX_UPLOAD_BYTES, DecodeBudget, RowResult, analyze_row
 
 log = logging.getLogger(__name__)
@@ -452,6 +458,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     app.state.session_codec = codec
     app.state.member_directory = MemberDirectoryCache(MEMBER_DIRECTORY_TTL_S, monotonic)
     app.add_middleware(SecurityHeadersMiddleware)
+    for bad in config.rum_origin_problems:
+        log.warning("hangar: HANGAR_RUM_ORIGINS entry %r is not an https origin -- ignored", bad)
+    site = StaticSite(config.static_dir, build_csp(config.rum_origins))
+    app.state.static_site = site
     router = APIRouter()
 
     # ----- error envelopes -----
@@ -506,6 +516,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, e: StarletteHTTPException):
+        # The web editor: a GET/HEAD no API route matched is a static file or
+        # a client route (-> index.html). Reserved prefixes keep the JSON 404.
+        if e.status_code == 404 and request.method in ("GET", "HEAD"):
+            resp = site.response(request.url.path)
+            if resp is not None:
+                return resp
         code = {404: "not_found", 401: "unauthenticated", 403: "forbidden"}.get(e.status_code, "invalid_request")
         return _err(e.status_code, code, str(e.detail), headers=getattr(e, "headers", None))
 
@@ -519,6 +535,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     async def healthz():
         cached = getattr(app.state.catalog, "vehicle_index_cached", lambda: False)()
         return {"status": "ok", "version": config.version, "vehicleIndexCached": bool(cached)}
+
+    # Build identity (the git short SHA in the image; HANGAR_VERSION).
+    @app.get("/version.txt")
+    async def version_txt():
+        return Response(config.version + "\n", media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": NO_CACHE})
 
     # ----- members -----
 

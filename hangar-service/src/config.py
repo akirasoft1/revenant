@@ -1,6 +1,7 @@
 """Environment-driven configuration for hangar-service."""
 import os
 import re
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -15,6 +16,9 @@ SESSION_KEY_MIN_LEN = 32
 DEFAULT_MAX_SHIPS_PER_MEMBER = 200
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _ASCII_DIGITS = re.compile(r"[0-9]+")
+# The built web editor. The image copies hangar-editor/dist to /app/static and
+# sets HANGAR_STATIC_DIR; locally the repo checkout's build is the default.
+DEFAULT_STATIC_DIR = str(Path(__file__).resolve().parents[2] / "hangar-editor" / "dist")
 
 
 def _is_ascii_digits(raw: str) -> bool:
@@ -74,6 +78,29 @@ class Config:
     # Only members of these Discord servers may sign in. Empty = browser login
     # OFF (fail closed) -- never "allow everyone".
     allowed_guild_ids: frozenset[str] = frozenset()
+    # ----- web editor (static SPA) -----
+    static_dir: str = DEFAULT_STATIC_DIR
+    # Dynatrace RUM origins (script CDN, beacon endpoint) allowed by the SPA's
+    # CSP for scripts and connections; empty = RUM not allowed (not configured).
+    rum_origins_raw: str = ""
+
+    def _rum_entries(self) -> list[str]:
+        return [x for x in re.split(r"[\s,]+", self.rum_origins_raw) if x]
+
+    @property
+    def rum_origins(self) -> tuple[str, ...]:
+        out: list[str] = []
+        for raw in self._rum_entries():
+            o = normalize_origin(raw)
+            if o and o.startswith("https://") and o not in out:
+                out.append(o)
+        return tuple(out)
+
+    @property
+    def rum_origin_problems(self) -> tuple[str, ...]:
+        """HANGAR_RUM_ORIGINS entries that are not https origins (ignored)."""
+        return tuple(x for x in self._rum_entries()
+                     if not (normalize_origin(x) or "").startswith("https://"))
 
     @property
     def session_not_before(self) -> int | None:
@@ -140,6 +167,8 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         session_key_previous=(env.get("HANGAR_SESSION_KEY_PREVIOUS") or "").strip(),
         session_not_before_raw=(env.get("HANGAR_SESSION_NOT_BEFORE") or "").strip(),
         allowed_guild_ids=_csv(env.get("HANGAR_ALLOWED_GUILD_IDS")),
+        static_dir=(env.get("HANGAR_STATIC_DIR") or "").strip() or DEFAULT_STATIC_DIR,
+        rum_origins_raw=(env.get("HANGAR_RUM_ORIGINS") or "").strip(),
         max_ships_per_member=_positive_int(env, "HANGAR_MAX_SHIPS_PER_MEMBER", DEFAULT_MAX_SHIPS_PER_MEMBER),
     )
 

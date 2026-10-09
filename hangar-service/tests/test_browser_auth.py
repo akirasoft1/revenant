@@ -564,7 +564,7 @@ SECURITY_HEADERS = {
     ("GET", "/api/me", {}),
     ("GET", f"/v1/members/{SELF}/hangar", {"headers": {"Authorization": "Bearer good"}}),
     ("GET", f"/api/v1/members/{SELF}/hangar", {}),                 # 401
-    ("GET", "/nope", {}),                                          # 404
+    ("GET", "/api/nope", {}),                                      # 404 (non-API paths are the SPA)
     ("GET", "/api/auth/login", {}),                                # 302
 ])
 def test_security_headers_on_all_responses(client, method, path, kw):
