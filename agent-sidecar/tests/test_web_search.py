@@ -297,3 +297,61 @@ def test_web_search_queries_zero_and_no_log_when_none(monkeypatch, caplog):
 
 def test_agent_chat_result_defaults_web_search_queries_to_zero():
     assert AgentChatResult("x", [], False).web_search_queries == 0
+
+
+# --- disputed / uncertain game mechanics (2026-09-29 voice incident) --------
+# The model argued ~10 times from stale memory about quantum-drive speed while
+# the player described NAV-mode behaviour they were seeing live. Mechanics are
+# outside every sc_* tool, so the rule has to name search (when attached) and
+# otherwise tell the model to defer rather than repeat itself.
+
+SC_DISPUTE_RULE_SEARCH = (
+    "Game mechanics (flight modes, quantum travel, how ship systems behave, anything the sc_* "
+    "tools don't cover): look them up with google_search rather than answering from memory. "
+    "If a player disputes your claim or describes what they are seeing in-game right now, "
+    "look it up again (sc_* tool or google_search) before repeating it; if you still can't "
+    "confirm it, defer to the player's live observation — never argue a game mechanic from memory."
+)
+# sc-knowledge down: no sc_* tools this turn, so the rule must not name them.
+SC_DISPUTE_RULE_SEARCH_UNAVAILABLE = (
+    "Game mechanics (flight modes, quantum travel, how ship systems behave): look them up with "
+    "google_search rather than answering from memory. "
+    "If a player disputes your claim or describes what they are seeing in-game right now, "
+    "search again before repeating it; if you still can't confirm it, defer to the player's "
+    "live observation — never argue a game mechanic from memory."
+)
+SC_DISPUTE_RULE_NO_SEARCH = (
+    "Game mechanics (flight modes, quantum travel, how ship systems behave) change between "
+    "patches: if a player disputes a mechanics claim or describes what they are seeing in-game "
+    "right now, don't repeat the claim from memory — say you can't verify it live and defer to "
+    "their observation."
+)
+
+
+def test_sc_dispute_rule_search_variant_tools_attached():
+    text = sc_tools_preamble(web_search=True)
+    assert SC_DISPUTE_RULE_SEARCH in text
+    assert SC_DISPUTE_RULE_SEARCH_UNAVAILABLE not in text
+    assert SC_DISPUTE_RULE_NO_SEARCH not in text
+
+
+def test_sc_dispute_rule_search_variant_tools_unavailable():
+    text = sc_tools_unavailable_note(web_search=True)
+    assert SC_DISPUTE_RULE_SEARCH_UNAVAILABLE in text
+    assert SC_DISPUTE_RULE_SEARCH not in text
+    assert "sc_*" not in text  # never promises tools that are down
+    assert SC_DISPUTE_RULE_NO_SEARCH not in text
+
+
+@pytest.mark.parametrize("builder", [sc_tools_preamble, sc_tools_unavailable_note])
+def test_sc_dispute_rule_no_search_variant(builder):
+    text = builder(web_search=False)
+    assert SC_DISPUTE_RULE_NO_SEARCH in text
+    assert SC_DISPUTE_RULE_SEARCH not in text and SC_DISPUTE_RULE_SEARCH_UNAVAILABLE not in text
+    assert "google_search" not in text and "search again" not in text
+
+
+def test_legacy_constants_carry_the_no_search_dispute_rule():
+    for text in (SC_TOOLS_PREAMBLE, SC_TOOLS_UNAVAILABLE_NOTE):
+        assert SC_DISPUTE_RULE_NO_SEARCH in text
+        assert "google_search" not in text

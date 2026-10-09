@@ -37,6 +37,9 @@ const CLIPS = [
   { voice: 'Puck', file: 'sc-foxwell-rep.wav', text: 'What is an optimal way to grind Foxwell Enforcement reputation?' },
   { voice: 'Puck', file: 'sc-mic-l5-routes.wav', text: 'What are some currently profitable trade routes from MIC-L5?' },
   { voice: 'Puck', file: 'sc-scorpius-buy.wav', text: 'Where can I buy a Scorpius?' },
+  // Game-mechanics question no sc_* tool covers -- must be answered via Google
+  // Search (2026-09-29 quantum-drive dispute; the sidecar logs search_queries).
+  { voice: 'Puck', file: 'sc-nav-quantum.wav', text: 'In Star Citizen, why do I have to spool my quantum drive in NAV mode to go faster than my normal engines?' },
   // Voice control commands smoke test (scripts/smoke-voice-control.js) --
   // single speaker. Two positive fixtures (go quiet / end conversation) and
   // one NEGATIVE fixture asserting the model does NOT fire a control tool

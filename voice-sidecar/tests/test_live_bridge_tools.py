@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from google.genai import types
 
 from src import voice_pb2
-from src.live_bridge import SC_VOICE_NOTE, LiveBridge, _ResumeState, _SessionRef, _SessionStats
+from src.live_bridge import SC_MECHANICS_VOICE_NOTE, SC_VOICE_NOTE, LiveBridge, _ResumeState, _SessionRef, _SessionStats
 
 
 class ToolSession:
@@ -241,7 +241,7 @@ def test_live_config_attaches_sc_tools_and_voice_note():
 def test_live_config_voice_note_without_system_prompt():
     bridge = LiveBridge(_factory(None), model="m", default_voice="Puck", sc_executor=FakeExecutor())
     cfg = bridge._live_config(voice_pb2.SessionStart(user_id="u"))
-    assert cfg.system_instruction == "\n\n" + SC_VOICE_NOTE
+    assert cfg.system_instruction == SC_VOICE_NOTE  # empty persona filtered, no leading blank
 
 
 def test_live_config_unchanged_without_executor_or_declarations():
@@ -251,7 +251,7 @@ def test_live_config_unchanged_without_executor_or_declarations():
                        sc_executor=FakeExecutor(declarations=[]))._live_config(start)
     for cfg in (base, empty):
         assert cfg.tools == [types.Tool(google_search=types.GoogleSearch())]
-        assert cfg.system_instruction == "PERSONA"
+        assert cfg.system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
     assert base == empty
 
 
@@ -263,7 +263,11 @@ def test_sc_voice_note_verbatim():
         "mining, salvage and trading). Use them for any Star Citizen item, price, mission, "
         "reputation, trade or location question instead of memory; never assert from memory that "
         "something is vaulted, removed, not in the game, or located somewhere -- tool and search "
-        "results beat memory. Before a lookup, say a very short natural filler like \"let me check\". "
+        "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
+        "travel, how ship systems behave), use Google Search, not memory. If a player disputes you "
+        "or describes what they're seeing in-game right now, look it up again (tool or search) before "
+        "repeating yourself; if you still can't confirm it, go with what they're seeing -- never "
+        "argue a game mechanic from memory. Before a lookup, say a very short natural filler like \"let me check\". "
         "When answering, speak only the top two or three results in plain sentences and offer the "
         "rest; never read tables or long number lists aloud.")
 
@@ -312,7 +316,7 @@ async def test_open_rejected_with_sc_tools_retries_once_search_only(caplog):
     assert len(opens) == 2
     assert any(t.function_declarations for t in opens[0].tools)
     assert opens[1].tools == [types.Tool(google_search=types.GoogleSearch())]
-    assert opens[1].system_instruction == "PERSONA"
+    assert opens[1].system_instruction == "PERSONA\n\n" + SC_MECHANICS_VOICE_NOTE
     # the fallback does not spend the reconnect budget (max_reconnects=0 here)
     assert not any(e.WhichOneof("event") == "error" for e in out)
     warn = [r for r in caplog.records if r.levelno == logging.WARNING and "search-only" in r.getMessage()]
