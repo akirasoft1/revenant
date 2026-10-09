@@ -337,6 +337,25 @@ def test_every_session_write_route_checks_origin(client, method, suffix, body):
         assert r.json()["ship"]["ownerName"] == "Akira"
 
 
+@pytest.mark.parametrize("path,body", [
+    (f"/api/v1/members/{SELF}/fit", {"ship": "Connie", "item": "Hemera"}),
+    (f"/api/v1/members/{SELF}/ships/Connie/reset", {"slot": "all"}),
+])
+def test_chat_edit_routes_check_origin_for_sessions(client, path, body):
+    as_user(client)
+    client.post(f"/api/v1/members/{SELF}/ships", json={"vehicle": TAURUS_UUID}, headers={"Origin": ORIGIN})
+    assert client.post(path, json=body).status_code == 403
+    assert client.post(path, json=body, headers={"Origin": "https://evil.example"}).status_code == 403
+    r = client.post(path, json=body, headers={"Origin": ORIGIN})
+    assert r.status_code == 200, r.text
+
+
+def test_session_chat_fit_cannot_target_another_member(client):
+    as_user(client)
+    r = client.post(f"/api/v1/members/{OTHER}/fit", json={"ship": "Connie", "item": "Hemera"},
+                    headers={"Origin": ORIGIN, "X-Acting-Member": OTHER})
+    assert r.status_code == 403
+
 def test_session_acting_member_header_is_ignored(client):
     as_user(client)
     # claiming to be the admin does not let a session write someone else's hangar

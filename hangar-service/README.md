@@ -22,9 +22,10 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | `unauthenticated` | 401 | no / invalid / wrong-audience / non-allow-listed token (`WWW-Authenticate: Bearer`) |
 | `forbidden` | 403 | write without `X-Acting-Member`, or acting member is neither the path member nor an admin, or a browser-session write that is not same-origin |
 | `not_found` | 404 | unknown ship / vehicle / slot / item, unknown route |
-| `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
+| `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` (chat edits: ship text matches several of the member's ships, `candidates: [{shipId, label}]`) |
+| `choose_slot` | 409 | chat edits: several slots fit and the `slot` hint didn't pick one; body carries `ship`, `slots: [{slot, type, size, current: {name}}]` |
 | `limit` | 409 | adding the ship would exceed `HANGAR_MAX_SHIPS_PER_MEMBER` (body carries `limit`, `shipCount`) |
-| `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
+| `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why (chat fit: + `reason` `size_mismatch` \| `no_slot`) |
 | `too_large` | 413 | spviewer import body over 2 MB (+64 KiB envelope), or more than 100 rows |
 | `busy` | 503 | both import slots of this instance are in use (2 concurrent imports); retry shortly |
 | `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable; browser login not configured (`/api/auth/*`, `/api/me`) |
@@ -39,6 +40,8 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | DELETE | `/v1/members/{discordId}/ships/{shipId}` | – | `{deleted: true, shipId}` |
 | PUT | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | `{item}` (uuid or exact Wiki name) | `{ship: Ship}` |
 | DELETE | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | – | `{ship: Ship}` (reset to stock) |
+| POST | `/v1/members/{discordId}/fit` | `{ship, item, slot?}` (free text) | `{member, ship: {shipId, label, vehicle}, item: {uuid, name, type, size}, changes: [Change], unchanged}` — see "Chat edits" |
+| POST | `/v1/members/{discordId}/ships/{shipRef}/reset` | `{slot?}` (body optional) | `{member, ship: {shipId, label, vehicle}, changes: [Change], unchanged}` — see "Chat edits" |
 | GET | `/v1/catalog/vehicles?q=&limit=` | – | `{vehicles: [VehicleSummary]}` (≤25) |
 | GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary, slots: [SlotDef]}` |
 | GET | `/v1/catalog/items?type=&size=&q=` | – | `{items: [ItemSummary]}` |
@@ -78,6 +81,61 @@ holds only changes from stock). Full shapes: `src/app.py`.
 **Use `/health`, not `/healthz`, against Cloud Run.** Cloud Run's front end
 reserves URL paths ending in `z`, so `/healthz` gets Google's own 404 before it
 ever reaches the container. `/healthz` is kept for local and in-cluster parity.
+
+## Chat edits (`/fit`, `/ships/{shipRef}/reset`)
+
+The bot's agent and voice sidecars record "I put the Hemera in my Connie" /
+"put my Harbinger's shields back to stock" through these two writes, sending
+the real speaker as `X-Acting-Member` (same write rule as every other write:
+acting member == path member, or an admin; browser sessions need a
+same-origin request). The server does ALL resolution; every resolution error
+is returned before anything is written.
+
+- **Ship** (`ship`, `shipRef`): an exact `shipId`, else free text resolved
+  within the member's own hangar by `src/ship_resolve.py` — exact nickname →
+  nickname fuzzy → exact model → model tokens/prefixes with community
+  shorthand (`SHIP_SHORTHAND`: "Connie" → Constellation, "cutty", "msr", …) →
+  model fuzzy. **KEEP IN SYNC** with `sc-knowledge/src/tools_hangar.py`
+  (`sc_member_hangar` reads with the same rules and labels);
+  `tests/test_ship_resolve.py` fails if the copies drift. Several → 409
+  `ambiguous` `candidates: [{shipId, label}]`; none → 404 `not_found` with
+  `owned: [{shipId, label}]`. Labels: `"Nickname" (Model)`, else the model
+  name, plus `(ship <id>)` when two would read the same.
+- **Item** (`/fit` only): catalog lookup by uuid, exact Wiki name or class
+  name; unknown → 404 `not_found`.
+- **Target slots** (`/fit`): the ship's visible slots `check_compatible`
+  accepts; a mount of another type (Turret gimbal) that also accepts the item
+  is skipped when a fitting child is visible. None → 422 `incompatible` with
+  `reason` `size_mismatch` (+ `slots` it would go in, by size) or `no_slot`.
+  `slot` (`src/slot_hint.py`):
+  - omitted: exactly one compatible slot → it; several → 409 `choose_slot`;
+  - `"all"` / `"both"` / `"every"` → every compatible slot;
+  - an exact slot id (case-insensitive) → that slot (incompatible → 422);
+  - a hint matched against slot-id tokens: "left", "right", "nose", "upper",
+    "front"(=nose), "1"/"001"/"first" (numbers compare numerically, and tokens
+    every candidate shares — e.g. the `hardpoint_class_2` suffix on all
+    Harbinger nose guns — are ignored first, so "2" means `..._fixed_002`).
+    Component words filter by type ("shield 2", "left cooler", "qd"); a
+    plural one ("shields", "both coolers") selects every slot it leaves. One
+    match → it; several → 409 `choose_slot`; none → 409 `choose_slot` listing
+    every compatible slot.
+- **Writes** go through the same per-slot path as `PUT .../slots/{slot}`
+  (fitting the stock item clears the override). Slots already holding the
+  item are skipped; nothing to change → `changes: []`, `unchanged: true`.
+- **Reset** (`slot` omitted / `"all"` / id / hint): resets slots to stock.
+  Only non-stock slots matter: a ship with nothing fitted is always
+  `unchanged`; omitted `slot` → the one refitted slot, or 409 `choose_slot`
+  listing the refitted slots; `"all"` → every refitted slot in one write; a
+  hint matching several slots narrows to the refitted ones (one → it, several
+  → `choose_slot`, none → `unchanged`); no match → `choose_slot` listing the
+  refitted slots. Fitted ids the catalog no longer has (renamed in a patch)
+  are resettable by exact id.
+- `Change` = `{slot, from: {name, uuid}, to: {name, uuid}}` (`from` is the
+  previously effective item, `to` the new one — the stock item for a reset;
+  `null` names for an empty slot or an orphaned slot's stock).
+- One INFO log line per changed slot (`hangar: chat fit:` / `hangar: chat
+  reset:` with member, ship, slot, from -> to, acting member) and one for a
+  no-op.
 
 ## Catalog rules (Star Citizen Wiki `GET /api/vehicles/{slug|uuid}` → `ports[]`)
 

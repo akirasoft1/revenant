@@ -10,6 +10,9 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     DELETE /v1/members/{discordId}/ships/{shipId}
     PUT    /v1/members/{discordId}/ships/{shipId}/slots/{slot}   {item}
     DELETE /v1/members/{discordId}/ships/{shipId}/slots/{slot}
+    POST   /v1/members/{discordId}/fit                      {ship, item, slot?}   chat edits:
+    POST   /v1/members/{discordId}/ships/{shipRef}/reset    {slot?}               free-text ship /
+                                                             item / slot, resolved server side
     GET    /v1/catalog/vehicles?q=&limit=
     GET    /v1/catalog/vehicles/{uuid}/slots
     GET    /v1/catalog/items?type=&size=&q=
@@ -43,7 +46,8 @@ Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 ``unauthenticated`` 401, ``forbidden`` 403, ``not_found`` 404, ``ambiguous``
 409 (+ ``candidates``), ``incompatible`` 422, ``invalid_request`` 400,
 ``unavailable`` 503 (Wiki / Firestore / Google certs down), ``limit`` 409
-(ship cap), ``too_large`` 413 (import upload over 2 MB).
+(ship cap), ``too_large`` 413 (import upload over 2 MB), ``choose_slot`` 409
+(chat edits: several slots fit, + ``slots``).
 """
 import asyncio
 import contextlib
@@ -76,6 +80,8 @@ from .http import UpstreamError
 from .loadout import check_compatible, effective_loadout
 from .options import slot_options
 from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
+from .ship_resolve import resolve_ship, ship_labels
+from .slot_hint import ALL_WORDS, match_slots
 from .static_site import NO_CACHE, StaticSite, build_csp
 from .spviewer import MAX_ROWS, MAX_UPLOAD_BYTES, DecodeBudget, RowResult, analyze_row
 
@@ -244,6 +250,34 @@ def _required_text(body: dict, key: str) -> str:
     if len(value) > FREE_TEXT_MAX:
         raise _bad(f"'{key}' must be at most {FREE_TEXT_MAX} characters")
     return value
+
+
+def _optional_text(body: dict, key: str) -> str | None:
+    value = body.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _bad(f"'{key}' must be a string")
+    value = value.strip()
+    if len(value) > FREE_TEXT_MAX:
+        raise _bad(f"'{key}' must be at most {FREE_TEXT_MAX} characters")
+    return value or None
+
+
+def _size_label(lo: int | None, hi: int | None) -> str:
+    """Compact size for chat replies: S2, S1-2, any size."""
+    if lo is None and hi is None:
+        return "any size"
+    if lo == hi or hi is None:
+        return f"S{lo}"
+    if lo is None:
+        return f"S{hi}"
+    return f"S{lo}-{hi}"
+
+
+def _ref(item: dict | None) -> dict:
+    item = item or {}
+    return {"name": item.get("name"), "uuid": item.get("uuid")}
 
 
 def _check_member(member_id: str) -> str:
@@ -648,6 +682,202 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         return {"ship": await ship_view(app.state.catalog, updated)}
+
+    # ----- chat edits (free text resolved server side) -----
+    #
+    # The bot's agent / voice sidecars call these for "I put the Hemera in my
+    # Connie" with the speaker as X-Acting-Member. Every resolution error
+    # (ship, item, slot) is raised BEFORE the first write.
+
+    async def _owned_ship(member: str, ref: str) -> tuple[dict, str]:
+        """(ship, display label) for free text within ``member``'s hangar --
+        the same resolver sc-knowledge's sc_member_hangar uses (see
+        ship_resolve), plus an exact shipId."""
+        ships = await app.state.repository.list_ships(member)
+        labels = ship_labels(ships)
+        owned = [{"shipId": s["shipId"], "label": labels[s["shipId"]]} for s in ships]
+        exact = next((s for s in ships if s["shipId"] == ref), None)
+        if exact is not None:
+            return exact, labels[exact["shipId"]]
+        status, hits, _tier = resolve_ship(ref, ships)
+        if status == "ambiguous":
+            raise ApiError(409, "ambiguous", f"{ref!r} matches several of member {member}'s ships: "
+                                             f"{', '.join(labels[s['shipId']] for s in hits)}",
+                           candidates=[{"shipId": s["shipId"], "label": labels[s["shipId"]]} for s in hits])
+        if status != "match":
+            have = ", ".join(o["label"] for o in owned) or "none recorded"
+            raise ApiError(404, "not_found", f"member {member} has no ship matching {ref!r} (owned: {have})",
+                           owned=owned)
+        return hits[0], labels[hits[0]["shipId"]]
+
+    def _ship_ref(ship: dict, label: str) -> dict:
+        return {"shipId": ship["shipId"], "label": label, "vehicle": ship.get("vehicleName")}
+
+    def _choose_slot(message: str, ship: dict, label: str, entries: list[dict]) -> ApiError:
+        return ApiError(409, "choose_slot", message, ship=_ship_ref(ship, label),
+                        slots=[{"slot": e["slot"], "type": e["type"], "size": _size_label(e["sizeMin"], e["sizeMax"]),
+                                "current": {"name": (e.get("item") or {}).get("name")}} for e in entries])
+
+    async def _ship_slots(ship: dict):
+        slots = await app.state.catalog.slots(ship["vehicleUuid"])
+        if slots is None:
+            raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
+        return slots
+
+    @router.post("/members/{discordId}/fit")
+    async def chat_fit(request: Request, discordId: str, principal: Principal = Depends(write_member)):
+        body = await _json_object(request)
+        ship_text = _required_text(body, "ship")
+        item_text = _required_text(body, "item")
+        hint = _optional_text(body, "slot")
+        repo, catalog = app.state.repository, app.state.catalog
+        ship, label = await _owned_ship(discordId, ship_text)
+        slots = await _ship_slots(ship)
+        item = await catalog.item(item_text)
+        if item is None:
+            raise _not_found(f"no item {item_text!r} in the game catalog (use the exact Wiki name, "
+                             f"class name or uuid)")
+        loadout = {e["slot"]: e for e in effective_loadout(slots, ship.get("fitted"))}
+        visible = [s for s in slots if s.name in loadout]
+        reasons = {s.name: check_compatible(s, item) for s in visible}
+        fits = [s for s in visible if reasons[s.name] is None]
+        # A mount of another type that also accepts the item (a Turret gimbal
+        # accepting WeaponGun) is only a target when no fitting child is
+        # visible -- the child is where the item goes (sc-knowledge's
+        # fit-check applies the same rule).
+        names = [s.name for s in fits]
+        fits = [s for s in fits if s.type == item.get("type")
+                or not any(n.startswith(s.name + "/") for n in names)]
+        itype, iname, size = item.get("type"), item.get("name"), item.get("size")
+
+        def takes_type(s) -> bool:
+            return itype in ([c["type"] for c in s.compatible_types] or [s.type])
+
+        def size_miss(s) -> bool:
+            return (takes_type(s) and isinstance(size, int) and not isinstance(size, bool)
+                    and ((s.size_min is not None and size < s.size_min)
+                         or (s.size_max is not None and size > s.size_max)))
+
+        if hint is not None:
+            exact = next((s for s in visible if s.name.casefold() == hint.casefold()), None)
+            if exact is not None and reasons[exact.name] is not None:
+                raise ApiError(422, "incompatible", reasons[exact.name],
+                               reason="size_mismatch" if size_miss(exact) else "no_slot",
+                               ship=_ship_ref(ship, label))
+        if not fits:
+            typed = [s for s in visible if takes_type(s)]
+            sized = [s for s in typed if size_miss(s)]
+            if sized:
+                takes = ", ".join(sorted({_size_label(s.size_min, s.size_max) for s in sized}))
+                raise ApiError(422, "incompatible",
+                               f"{iname} is size {size}, but the {ship.get('vehicleName')}'s {itype} slots "
+                               f"take {takes}", reason="size_mismatch", ship=_ship_ref(ship, label),
+                               slots=[{"slot": s.name, "type": s.type, "size": _size_label(s.size_min, s.size_max),
+                                       "current": {"name": (loadout[s.name].get("item") or {}).get("name")}}
+                                      for s in sized])
+            detail = reasons[typed[0].name] if typed else f"the {ship.get('vehicleName')} has no {itype} slot"
+            raise ApiError(422, "incompatible", f"{iname} doesn't fit {label}: {detail}", reason="no_slot",
+                           ship=_ship_ref(ship, label))
+        fit_entries = [loadout[s.name] for s in fits]
+        if hint is None:
+            if len(fits) > 1:
+                raise _choose_slot(f"{iname} fits {len(fits)} slots on {label}; say which (or 'all')",
+                                   ship, label, fit_entries)
+            targets = fits
+        else:
+            status, chosen = match_slots(hint, [(s.name, s.type) for s in fits])
+            if status == "ambiguous":
+                raise _choose_slot(f"{hint!r} matches {len(chosen)} slots on {label} that take {iname}; "
+                                   f"say which (or 'all')", ship, label, [loadout[c] for c in chosen])
+            if status != "match":
+                raise _choose_slot(f"no slot on {label} that takes {iname} matches {hint!r}; say which "
+                                   f"(or 'all')", ship, label, fit_entries)
+            targets = [s for s in fits if s.name in chosen]
+
+        changes = []
+        updated = ship
+        by, owner = principal.acting_member, owner_name_for(principal, discordId)
+        for s in targets:
+            current = loadout[s.name].get("item")
+            if current and current.get("uuid") == item.get("uuid"):
+                continue
+            if s.stock_item and s.stock_item.get("uuid") == item.get("uuid"):
+                updated = await repo.clear_slot(discordId, ship["shipId"], s.name, updated_by=by, owner_name=owner)
+            else:
+                updated = await repo.set_slot(discordId, ship["shipId"], s.name, item_uuid=item["uuid"],
+                                              item_name=iname, updated_by=by, owner_name=owner)
+            if updated is None:
+                raise _not_found(f"member {discordId} has no ship {ship['shipId']}")
+            changes.append({"slot": s.name, "from": _ref(current), "to": _ref(item)})
+            log.info("hangar: chat fit: member %s ship %s (%s) slot %s: %s -> %s (%s) (by %s)",
+                     discordId, ship["shipId"], label, s.name, (current or {}).get("name") or "empty",
+                     iname, item.get("uuid"), by)
+        if not changes:
+            log.info("hangar: chat fit: member %s ship %s (%s): %s already fitted in %s -- no change (by %s)",
+                     discordId, ship["shipId"], label, iname, ", ".join(s.name for s in targets), by)
+        return {"member": discordId, "ship": _ship_ref(ship, label),
+                "item": {"uuid": item.get("uuid"), "name": iname, "type": itype, "size": item.get("size")},
+                "changes": changes, "unchanged": not changes}
+
+    @router.post("/members/{discordId}/ships/{shipRef}/reset")
+    async def chat_reset(request: Request, discordId: str, shipRef: str,
+                         principal: Principal = Depends(write_member)):
+        body = await _json_object(request) if (await request.body()).strip() else {}
+        hint = _optional_text(body, "slot")
+        if len(shipRef) > FREE_TEXT_MAX:
+            raise _bad(f"ship must be at most {FREE_TEXT_MAX} characters")
+        repo = app.state.repository
+        ship, label = await _owned_ship(discordId, shipRef.strip())
+        fitted = ship.get("fitted") or {}
+        slots = await _ship_slots(ship) if fitted else []
+        stock = {s.name: s.stock_item for s in slots}
+        entries = effective_loadout(slots, fitted)
+        known = {e["slot"] for e in entries}
+        # Fitted slots the catalog no longer has (renamed by a patch) stay resettable by exact id.
+        entries += [{"slot": k, "type": None, "sizeMin": None, "sizeMax": None,
+                     "item": {"uuid": v.get("itemUuid"), "name": v.get("itemName")}}
+                    for k, v in fitted.items() if k not in known]
+        by_slot = {e["slot"]: e for e in entries}
+        refitted = [e for e in entries if e["slot"] in fitted]
+        if not fitted:
+            targets = []
+        elif hint is None:
+            if len(refitted) > 1:
+                raise _choose_slot(f"{label} has {len(refitted)} non-stock slots; say which to reset (or 'all')",
+                                   ship, label, refitted)
+            targets = [e["slot"] for e in refitted]
+        elif hint.casefold() in ALL_WORDS:
+            targets = [e["slot"] for e in refitted]
+        else:
+            status, chosen = match_slots(hint, [(e["slot"], e["type"]) for e in entries])
+            if status == "none":
+                raise _choose_slot(f"no slot on {label} matches {hint!r}; its non-stock slots are listed "
+                                   f"(or say 'all')", ship, label, refitted)
+            chosen_fitted = [c for c in chosen if c in fitted]
+            if status == "ambiguous" and len(chosen_fitted) > 1:
+                raise _choose_slot(f"{hint!r} matches {len(chosen_fitted)} non-stock slots on {label}; say which "
+                                   f"(or 'all')", ship, label, [by_slot[c] for c in chosen_fitted])
+            targets = chosen_fitted
+
+        by, owner = principal.acting_member, owner_name_for(principal, discordId)
+        changes = [{"slot": t, "from": _ref(by_slot[t]["item"]), "to": _ref(stock.get(t))} for t in targets]
+        if targets:
+            if set(targets) == set(fitted):
+                updated = await repo.replace_fitted(discordId, ship["shipId"], {}, updated_by=by, owner_name=owner)
+                if updated is None:
+                    raise _not_found(f"member {discordId} has no ship {ship['shipId']}")
+            else:
+                for t in targets:
+                    if await repo.clear_slot(discordId, ship["shipId"], t, updated_by=by, owner_name=owner) is None:
+                        raise _not_found(f"member {discordId} has no ship {ship['shipId']}")
+            for c in changes:
+                log.info("hangar: chat reset: member %s ship %s (%s) slot %s: %s -> %s (stock) (by %s)",
+                         discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
+                         c["to"]["name"] or "empty", by)
+        else:
+            log.info("hangar: chat reset: member %s ship %s (%s) slot %r: already stock -- no change (by %s)",
+                     discordId, ship["shipId"], label, hint, by)
+        return {"member": discordId, "ship": _ship_ref(ship, label), "changes": changes, "unchanged": not changes}
 
     # ----- catalog -----
 
