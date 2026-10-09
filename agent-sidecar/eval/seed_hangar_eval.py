@@ -1,9 +1,10 @@
 """Seed / clean up the fake members the SC eval's member-hangar cases read.
 
 Standalone on purpose (stdlib + google-auth only, no `src`/`eval` imports) so
-it can be copied into any pod that has the hangar key mounted -- sc-knowledge
-and the bot both mount Secret `hangar-api-sa` at /var/secrets/hangar/key.json
-and carry HANGAR_API_URL:
+it can be piped into the sc-knowledge pod, which mounts Secret `hangar-api-sa`
+at /var/secrets/hangar/key.json, carries HANGAR_API_URL, and has Python +
+google-auth. Run it ONLY there: the bot image also mounts the key but is a
+Node image with no Python or google-auth.
 
   kubectl exec -i -n discord-article-bot deploy/sc-knowledge -- \
       python - --seed < agent-sidecar/eval/seed_hangar_eval.py      # before the eval

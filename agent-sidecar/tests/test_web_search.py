@@ -231,6 +231,10 @@ def test_sc_preamble_ordered_policy_names_search_only_when_attached():
     assert "google_search" in on and "web-sourced" in on
     for s in ("vehicle loadouts", "crafting/blueprints", "lore", "patch news", "location facilities"):
         assert s in on and s in off
+    # a member's own loadout is NOT uncovered: step (2) must not send "what's on
+    # my Connie?" to google_search (final review, member-hangar)
+    uncovered = "stock vehicle loadouts (for a member's own ships, use the hangar tools)"
+    assert uncovered in on and uncovered in off
     assert on.index("(1)") < on.index("(2)") < on.index("(3)")
     assert on.index("google_search") < on.index("(3)")
     assert "google_search" not in off

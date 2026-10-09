@@ -107,7 +107,7 @@ even trying).
 
 `eval/sc_eval_set.py` (`SC_EVAL_SET`) labels each prompt with the `sc_*` tool
 that must be called (`expect_tool`), or `None` for a non-SC control prompt
-where no `sc_*` tool may be called at all. Prompts flagged `uncovered_sc` are Star Citizen questions no `sc_*` tool covers (vehicle loadouts, crafting): they are excluded from `tool_hit_rate` and `control_false_sc_calls`, but still count toward the sandbox hard gate and the mid-run outage check, and the report prints a soft `NO WEB SEARCH in N/M runs` flag when the model answered them without `google_search` (a hint it may have answered from memory — not a failing gate). Prompts flagged `sc_dispute` are scored the same way (same exclusions, same sandbox/outage gates, same soft `NO WEB SEARCH` flag, labelled `sc-dispute` in the report) but carry an optional `history` list of `{role, content}` turns that `eval_sc.py` forwards to `process_chat(history=...)`: the replayed exchange has the bot asserting a Star Citizen mechanic from stale memory (1000 m/s is "just afterburner", quantum drive is "only for jumping") and the prompt is the player disputing it from what they see in-game. The expected behaviour — per the dispute rule in the SC preamble — is to search again (or defer to the player's observation), not to repeat the claim; a `NO WEB SEARCH` flag on it means the model argued from memory (2026-09-29 voice incident). Any case may carry `history`; cases without it run as single-turn prompts exactly as before. `eval/eval_sc.py` builds the
+where no `sc_*` tool may be called at all. Prompts flagged `uncovered_sc` are Star Citizen questions no `sc_*` tool covers (stock vehicle loadouts, crafting — a member's own loadout is covered by the hangar tools): they are excluded from `tool_hit_rate` and `control_false_sc_calls`, but still count toward the sandbox hard gate and the mid-run outage check, and the report prints a soft `NO WEB SEARCH in N/M runs` flag when the model answered them without `google_search` (a hint it may have answered from memory — not a failing gate). Prompts flagged `sc_dispute` are scored the same way (same exclusions, same sandbox/outage gates, same soft `NO WEB SEARCH` flag, labelled `sc-dispute` in the report) but carry an optional `history` list of `{role, content}` turns that `eval_sc.py` forwards to `process_chat(history=...)`: the replayed exchange has the bot asserting a Star Citizen mechanic from stale memory (1000 m/s is "just afterburner", quantum drive is "only for jumping") and the prompt is the player disputing it from what they see in-game. The expected behaviour — per the dispute rule in the SC preamble — is to search again (or defer to the player's observation), not to repeat the claim; a `NO WEB SEARCH` flag on it means the model argued from memory (2026-09-29 voice incident). Any case may carry `history`; cases without it run as single-turn prompts exactly as before. `eval/eval_sc.py` builds the
 **real** `ChannelVoiceAgent` wired to the **real** sc-knowledge MCP server
 (via `build_mcp_toolsets("channel_voice", ...)` + `ScToolsProvider`) but a
 **fake** sandbox orchestrator (`eval.harness.FakeOrchestrator`) — so a
@@ -225,14 +225,20 @@ A hangar case is a **hit** only when the expected tool was called with the
 expected `member_id` argument (`AgentChatResult.sc_tool_calls` records each
 sc_* call's name and args) — a fit check on Akira's ships for the Micro
 question is a miss. The report prints the `member_ids` the model actually
-used. Two more roster-carrying cases are NOT about anyone's ships (a size-3
+used. The UC1 case (`expect_purchasable_compare`) also gets a **soft** flag —
+`NO purchasable_only COMPARE after the hangar call in N/M runs` — when no
+`sc_compare_components(purchasable_only=True)` call followed the
+`sc_member_hangar` call; it is reported, never gated. The report's prompt
+column strips the `[Name · id]: ` label. Two more roster-carrying cases are NOT about anyone's ships (a size-3
 shield ranking that expects `sc_compare_components`, and a dinner question
 control); together with every other non-hangar case they feed
 `unprompted_hangar_calls`.
 
 **Seed before, clean up after.** `eval/seed_hangar_eval.py` is standalone
-(stdlib + google-auth), so pipe it into a pod that already mounts the
-`hangar-api-sa` key and has `HANGAR_API_URL` (sc-knowledge or the bot):
+(stdlib + google-auth), so pipe it into the **sc-knowledge** pod, which
+mounts the `hangar-api-sa` key, has `HANGAR_API_URL`, and has Python +
+google-auth. Not the bot pod: it mounts the key too, but the bot image is
+Node-only (no Python, no google-auth).
 
 ```bash
 # piped over stdin: no kubectl cp, works on a read-only root filesystem

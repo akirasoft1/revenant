@@ -8,7 +8,7 @@ answer directly or, if it truly needs execution, use the sandbox — SC data
 must never come from a sandboxed fetch, per the sc_state preamble).
 
 Entries flagged `"uncovered_sc": True` are Star Citizen questions NO sc_*
-tool answers (loadouts, crafting). They have `expect_tool: None` but are not
+tool answers (stock loadouts, crafting). They have `expect_tool: None` but are not
 controls: an sc_* call on them is not scored as a false call, they don't
 count toward tool_hit_rate, and they DO count toward the sandbox hard gate --
 the model must reach for google_search or an honest caveat, never the sandbox.
@@ -110,7 +110,9 @@ SC_EVAL_SET = [
     # UC1: hangar for the current shield, then sc_compare_components(purchasable_only=True)
     {"prompt": _akira("what's a purchasable upgraded shield for my Harbinger?"),
      "expect_tool": "sc_member_hangar", "expect_member_id": HANGAR_MEMBER_AKIRA,
-     "hangar": True, "system_prompt": _AKIRA_ONLY},
+     "hangar": True, "system_prompt": _AKIRA_ONLY,
+     # soft report flag (not a gate): did sc_compare_components(purchasable_only=True) follow?
+     "expect_purchasable_compare": True},
     # UC2: is a looted item an upgrade for anything I own?
     {"prompt": _akira("I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?"),
      "expect_tool": "sc_member_fit_check", "expect_member_id": HANGAR_MEMBER_AKIRA,

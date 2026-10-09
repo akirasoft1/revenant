@@ -61,7 +61,8 @@ ever reaches the container. `/healthz` is kept for local and in-cluster parity.
 - **Nesting:** ports are walked at every depth and the parent's
   `editable_children` flag is NOT used — live data has S5 turret gimbals with
   `editable_children: false` while the gun inside is `editable: true`. Slot
-  ids join the port names with `/` (up to three levels, e.g.
+  ids join the port names with `/` at whatever depth the port sits (no depth
+  cap; e.g. three levels deep on the Taurus's manned upper turret:
   `hardpoint_turret_base_upper/hardpoint_weapon_left/hardpoint_class_2`).
 - **Refitting a parent hides its stock children** in the effective loadout
   (an explicitly fitted child stays).

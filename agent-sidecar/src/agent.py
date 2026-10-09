@@ -340,7 +340,9 @@ SC_HANGAR_UNAVAILABLE = (
     "never guess what anyone owns or has fitted."
 )
 
-_SC_UNCOVERED = "vehicle loadouts, crafting/blueprints, lore, patch news, location facilities"
+# "stock" + the parenthetical: a member's OWN loadout is covered by the hangar
+# tools, so step (2) must not route "what's on my Connie?" to google_search.
+_SC_UNCOVERED = "stock vehicle loadouts (for a member's own ships, use the hangar tools), crafting/blueprints, lore, patch news, location facilities"
 
 _SC_MEMORY_FALLBACK = (
     "answer only as clearly-labelled, possibly outdated general knowledge and say live data "

@@ -304,3 +304,45 @@ def test_seed_raises_on_a_non_2xx_response():
 def test_fixture_member_ids_are_fake_numeric_discord_ids():
     assert HANGAR_MEMBER_AKIRA == "100000000000000001"
     assert HANGAR_MEMBER_MICRO == "100000000000000002"
+
+
+# --- final review fixes -------------------------------------------------------
+
+def test_purchasable_followup_detects_compare_after_hangar():
+    from eval.eval_sc import _purchasable_followup
+    hangar = {"name": "sc_member_hangar", "args": {"member_id": HANGAR_MEMBER_AKIRA}}
+    good = {"name": "sc_compare_components", "args": {"type": "shield", "size": 2, "purchasable_only": True}}
+    unfiltered = {"name": "sc_compare_components", "args": {"type": "shield", "size": 2}}
+    assert _purchasable_followup(_r([hangar, good]))
+    assert not _purchasable_followup(_r([hangar, unfiltered]))
+    assert not _purchasable_followup(_r([good, hangar]))          # compare must FOLLOW the hangar call
+    assert not _purchasable_followup(_r([hangar]))
+    assert _purchasable_followup(_r([hangar, unfiltered, good]))
+
+
+def test_uc1_case_asks_for_the_purchasable_followup_flag_only():
+    flagged = [c for c in SC_EVAL_SET if c.get("expect_purchasable_compare")]
+    assert [c["prompt"] for c in flagged] == [
+        f"[Akira · {HANGAR_MEMBER_AKIRA}]: what's a purchasable upgraded shield for my Harbinger?"]
+
+
+def test_purchasable_followup_is_not_a_scoring_gate():
+    uc1 = next(c for c in SC_EVAL_SET if c.get("expect_purchasable_compare"))
+    s = score_sc([(uc1, _r([_call("sc_member_hangar", HANGAR_MEMBER_AKIRA)]))])
+    assert s["tool_hit_rate"] == 1.0 and set(s) == {
+        "sandbox_attempts_total", "tool_hit_rate", "control_false_sc_calls", "unprompted_hangar_calls"}
+
+
+def test_report_prompt_strips_the_speaker_label():
+    from eval.eval_sc import _display_prompt
+    assert _display_prompt({"prompt": f"[Akira · {HANGAR_MEMBER_AKIRA}]: what's on my Connie?"}) == \
+        "what's on my Connie?"
+    assert _display_prompt({"prompt": "where can I buy a Scorpius"}) == "where can I buy a Scorpius"
+    assert _display_prompt({"prompt": "[not a label] hi"}) == "[not a label] hi"
+
+
+def test_seed_script_docs_name_the_sc_knowledge_pod_only():
+    import eval.seed_hangar_eval as seed_mod
+    doc = seed_mod.__doc__
+    assert "deploy/sc-knowledge" in doc
+    assert "bot image" in doc  # says why not the bot pod

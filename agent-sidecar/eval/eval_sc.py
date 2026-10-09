@@ -18,6 +18,7 @@ see eval/README.md.
 import argparse
 import asyncio
 import os
+import re
 import sys
 
 # config.load() requires a few env vars the eval never uses (fake
@@ -79,6 +80,28 @@ def _case_hit(case: dict, result: AgentChatResult) -> bool:
         and str((c.get("args") or {}).get("member_id", "")).strip() == want_member
         for c in result.sc_tool_calls
     )
+
+
+_SPEAKER_LABEL = re.compile(r"^\[[^\]]* · \d+\]: ")
+
+
+def _display_prompt(case: dict) -> str:
+    """The prompt without a leading `[Name · id]: ` speaker label, so the
+    50-char report column shows the question rather than the label."""
+    return _SPEAKER_LABEL.sub("", case["prompt"], count=1)
+
+
+def _purchasable_followup(result: AgentChatResult) -> bool:
+    """UC1 chaining: an sc_compare_components call with purchasable_only=True
+    AFTER an sc_member_hangar call. Reported as a soft flag, never a gate."""
+    seen_hangar = False
+    for c in result.sc_tool_calls:
+        if c.get("name") == "sc_member_hangar":
+            seen_hangar = True
+        elif (seen_hangar and c.get("name") == "sc_compare_components"
+              and (c.get("args") or {}).get("purchasable_only") is True):
+            return True
+    return False
 
 
 def _unprompted_hangar(case: dict, result: AgentChatResult) -> bool:
@@ -207,7 +230,13 @@ def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hi
                 ids = sorted({str((c.get("args") or {}).get("member_id"))
                               for r in case_records for c in r.sc_tool_calls if c.get("name") in HANGAR_TOOLS})
                 flag += f"  member_ids={','.join(ids) or 'none'} (want {case['expect_member_id']})"
-            print(f"  [{expect:22}] {rate:4.0%}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
+            if case.get("expect_purchasable_compare"):
+                # soft: UC1 should chain into sc_compare_components(purchasable_only=True)
+                missing = sum(1 for r in case_records if not _purchasable_followup(r))
+                if missing:
+                    flag += (f"  <-- NO purchasable_only COMPARE after the hangar call in "
+                             f"{missing}/{len(case_records)} runs")
+            print(f"  [{expect:22}] {rate:4.0%}  sc_state={states:<12} {_display_prompt(case)[:50]}{flag}")
         elif _is_soft_sc(case):
             label = "sc-dispute" if case.get("sc_dispute") else "uncovered-sc"
             called = ",".join(sorted({n for r in case_records for n in r.sc_tool_names})) or "none"
@@ -216,11 +245,11 @@ def _print_report(records: list[tuple[dict, AgentChatResult]], runs: int, min_hi
             # disputing a mechanics claim -- should normally go to
             # google_search rather than an unconfirmed-memory answer.
             flag = f"  <-- NO WEB SEARCH in {no_search}/{len(case_records)} runs" if no_search else ""
-            print(f"  [{label:22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}  sc_calls={called}{flag}")
+            print(f"  [{label:22}] {'--':>4}  sc_state={states:<12} {_display_prompt(case)[:50]}  sc_calls={called}{flag}")
         else:
             bad_n = sum(1 for r in case_records if r.sc_tool_names)
             flag = "  <-- FALSE SC CALL" if bad_n else ""
-            print(f"  [{'control':22}] {'--':>4}  sc_state={states:<12} {case['prompt'][:50]}{flag}")
+            print(f"  [{'control':22}] {'--':>4}  sc_state={states:<12} {_display_prompt(case)[:50]}{flag}")
         print(f"      web_search.queries per run: [{searches}]")
         unprompted_n = sum(1 for r in case_records if _unprompted_hangar(case, r))
         if unprompted_n:
