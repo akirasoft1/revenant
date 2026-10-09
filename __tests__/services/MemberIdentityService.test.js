@@ -96,29 +96,111 @@ describe('start / stop refresh timer', () => {
     expect(svc.get('c')).toBeNull();
   });
 
-  test('loads once Mongo connects late', async () => {
+  test('retries every retryMs until the first successful load, then switches to the refreshMs cadence', async () => {
     jest.useFakeTimers();
     const col = fakeCollection([AKIRA]);
     const mongoService = { db: null };
-    const svc = new MemberIdentityService({ mongoService, refreshMs: 1000 });
+    const svc = new MemberIdentityService({ mongoService, refreshMs: 60000, retryMs: 3000 });
+    const loadSpy = jest.spyOn(svc, 'load');
     svc.start();
     await jest.advanceTimersByTimeAsync(0);
+    expect(loadSpy).toHaveBeenCalledTimes(1);
     expect(svc.isLoaded()).toBe(false);
-    mongoService.db = { collection: () => col };
-    await jest.advanceTimersByTimeAsync(1000);
+    await jest.advanceTimersByTimeAsync(3000);
+    expect(loadSpy).toHaveBeenCalledTimes(2);
+    mongoService.db = { collection: () => col }; // Mongo connects late
+    await jest.advanceTimersByTimeAsync(3000);
+    expect(loadSpy).toHaveBeenCalledTimes(3);
     expect(svc.isLoaded()).toBe(true);
     expect(svc.get('a').addressName).toBe('Akira');
+    // Now on the slow cadence: no reload at +3s, one at +60s.
+    await jest.advanceTimersByTimeAsync(3000);
+    expect(loadSpy).toHaveBeenCalledTimes(3);
+    await jest.advanceTimersByTimeAsync(57000);
+    expect(loadSpy).toHaveBeenCalledTimes(4);
+    svc.stop();
+    await jest.advanceTimersByTimeAsync(600000);
+    expect(loadSpy).toHaveBeenCalledTimes(4);
+  });
+
+  test('retryMs defaults to ~3s', async () => {
+    jest.useFakeTimers();
+    const svc = new MemberIdentityService({ mongoService: { db: null } });
+    const loadSpy = jest.spyOn(svc, 'load');
+    svc.start();
+    await jest.advanceTimersByTimeAsync(2999);
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    expect(loadSpy).toHaveBeenCalledTimes(2);
     svc.stop();
   });
 
-  test('start() is idempotent', () => {
+  test('start() is idempotent and stop() leaves no timers', async () => {
     jest.useFakeTimers();
     const { svc } = makeService([]);
     svc.start();
     svc.start();
+    await jest.advanceTimersByTimeAsync(0);
     expect(jest.getTimerCount()).toBe(1);
     svc.stop();
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('stop() during an in-flight load does not schedule another', async () => {
+    jest.useFakeTimers();
+    const { svc } = makeService([]);
+    svc.start();
+    svc.stop();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+});
+
+describe('stale refresh guard', () => {
+  test('a slow earlier load resolving after a newer one does not overwrite it', async () => {
+    const { svc, col } = makeService([]);
+    let releaseSlow;
+    col.find
+      .mockImplementationOnce(() => ({ toArray: () => new Promise((r) => { releaseSlow = () => r([{ ...AKIRA, addressName: 'OldName' }]); }) }))
+      .mockImplementationOnce(() => ({ toArray: async () => [{ ...AKIRA, addressName: 'NewName' }] }));
+    const slow = svc.load();
+    await svc.load();
+    expect(svc.get('a').addressName).toBe('NewName');
+    releaseSlow();
+    await slow;
+    expect(svc.get('a').addressName).toBe('NewName');
+  });
+});
+
+describe('write serialisation', () => {
+  test('two concurrent addAlias for the same member both persist', async () => {
+    const { svc, col } = makeService([{ _id: 'a', addressName: 'Akira', aliases: [] }]);
+    await svc.load();
+    const [r1, r2] = await Promise.all([svc.addAlias('a', 'One', 'a'), svc.addAlias('a', 'Two', 'a')]);
+    expect(r1.ok && r2.ok).toBe(true);
+    expect(col.docs.get('a').aliases).toEqual(['One', 'Two']);
+    expect(svc.get('a').aliases).toEqual(['One', 'Two']);
+  });
+
+  test('two members concurrently claiming the same name: exactly one gets taken', async () => {
+    const { svc } = makeService([]);
+    await svc.load();
+    const results = await Promise.all([
+      svc.setAddressName('x', 'Shared', 'x'),
+      svc.addAlias('y', 'shared', 'y'),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results[1]).toEqual({ ok: false, reason: 'taken', holderId: 'x' });
+  });
+
+  test('a failed write does not poison later writes', async () => {
+    const { svc, col } = makeService([AKIRA]);
+    await svc.load();
+    col.updateOne.mockRejectedValueOnce(new Error('write failed'));
+    const [r1, r2] = await Promise.all([svc.addAlias('a', 'One', 'a'), svc.addAlias('a', 'Two', 'a')]);
+    expect(r1).toEqual({ ok: false, reason: 'unavailable' });
+    expect(r2.ok).toBe(true);
+    expect(svc.get('a').aliases).toEqual(['Akirasoft', 'Phalabala', 'Two']);
   });
 });
 
@@ -209,12 +291,12 @@ describe('addAlias', () => {
     expect(col.updateOne).not.toHaveBeenCalled();
   });
 
-  test('an alias equal to the member\'s own address name is allowed', async () => {
-    const { svc } = makeService([AKIRA]);
+  test('an alias equal to the member\'s own address name (any case) is ok with no write', async () => {
+    const { svc, col } = makeService([AKIRA]);
     await svc.load();
     const res = await svc.addAlias('a', 'akira', 'a');
-    expect(res.ok).toBe(true);
-    expect(res.record.aliases).toEqual(['Akirasoft', 'Phalabala', 'akira']);
+    expect(res).toEqual({ ok: true, record: { discordId: 'a', addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] } });
+    expect(col.updateOne).not.toHaveBeenCalled();
   });
 
   test('rejects an alias held by another member', async () => {

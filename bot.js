@@ -173,9 +173,12 @@ class DiscordBot {
     // The member identity registry (Mongo `member_identities`, managed via
     // /whois) is its first layer: a member's chosen address name wins over the
     // VOICE_SPEAKER_NAMES table and Discord's own names. Its reads are sync
-    // from an in-memory cache, loaded/refreshed from the ready handler; until
-    // Mongo connects it is simply empty and resolution behaves as before.
+    // from an in-memory cache. start() loads immediately and retries every
+    // ~3s until Mongo (which connects asynchronously) is up, then refreshes
+    // every 60s; until the first load the registry is simply empty and
+    // resolution behaves as before. Timers are unref'd; never blocks startup.
     this.memberIdentity = new MemberIdentityService({ mongoService: this.mongoService });
+    this.memberIdentity.start();
     this.speakerNames = createSpeakerNames({
       overrides: config.voice.speakerNames,
       identity: this.memberIdentity,
@@ -688,12 +691,6 @@ class DiscordBot {
         logger.info('Starting Voice Profile service...');
         await this.voiceProfileService.start();
       }
-
-      // Member identity registry: start() loads now and refreshes every 60s.
-      // Mongo connects asynchronously, so if it isn't up yet the registry
-      // stays empty (names fall back to VOICE_SPEAKER_NAMES / Discord) and the
-      // next refresh loads it. Never blocks startup.
-      if (this.memberIdentity) this.memberIdentity.start();
 
       // Periodically prune expired recall_ledger rows (best-effort, non-blocking)
       this.mongoService.pruneRecallLedger().catch(() => {});

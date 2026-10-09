@@ -8,10 +8,14 @@
 //
 // The member set is ~a dozen, so the whole collection is cached in memory and
 // every read (get/all) is synchronous -- it is consulted on every chat/voice
-// turn and must never throw into one. The cache is reloaded at startup, after
-// every write, and every `refreshMs` (default 60s). Mongo connects
-// asynchronously after the bot is constructed, so a load before the connection
-// lands just reports false and the next refresh picks it up.
+// turn and must never throw into one. The cache is reloaded after every write
+// and every `refreshMs` (default 60s). Mongo connects asynchronously after the
+// bot is constructed, so start() retries every `retryMs` (default 3s) until the
+// first successful load and only then drops to the slow cadence.
+//
+// Writes are serialised through one promise chain (read-validate-write is not
+// atomic in Mongo here), and a load that resolves after a newer one never
+// replaces the newer snapshot.
 //
 // Spec: docs/superpowers/specs/2026-10-09-member-identity-design.md
 const logger = require('../logger');
@@ -32,14 +36,19 @@ function copy(rec) {
 }
 
 class MemberIdentityService {
-  constructor({ mongoService = null, refreshMs = 60000, now = () => new Date() } = {}) {
+  constructor({ mongoService = null, refreshMs = 60000, retryMs = 3000, now = () => new Date() } = {}) {
     this.mongoService = mongoService;
     this.refreshMs = refreshMs;
+    this.retryMs = retryMs;
     this.now = now;
     this._cache = new Map();
     this._loaded = false;
     this._timer = null;
+    this._started = false;
     this._warnedUnavailable = false;
+    this._loadSeq = 0;
+    this._appliedSeq = 0;
+    this._writeChain = Promise.resolve();
   }
 
   _collection() {
@@ -68,8 +77,13 @@ class MemberIdentityService {
       }
       return false;
     }
+    const seq = ++this._loadSeq;
     try {
       const docs = await col.find({}).toArray();
+      // A slower, earlier load must not overwrite a newer snapshot (e.g. the
+      // post-write reload). The read itself still succeeded.
+      if (seq <= this._appliedSeq) return true;
+      this._appliedSeq = seq;
       const next = new Map();
       for (const doc of docs) {
         if (!doc || doc._id === undefined || doc._id === null) continue;
@@ -87,16 +101,28 @@ class MemberIdentityService {
     }
   }
 
-  /** Start the periodic refresh (immediate load, then every refreshMs). Idempotent. */
+  /**
+   * Start loading: immediately, then every retryMs until the first successful
+   * load, then every refreshMs. Timers are unref'd. Idempotent.
+   */
   start() {
-    if (this._timer) return;
-    this.load().catch(() => {});
-    this._timer = setInterval(() => { this.load().catch(() => {}); }, this.refreshMs);
-    if (this._timer.unref) this._timer.unref();
+    if (this._started) return;
+    this._started = true;
+    this._cycle();
+  }
+
+  _cycle() {
+    this._timer = null;
+    this.load().catch(() => false).then(() => {
+      if (!this._started) return; // stop() while the load was in flight
+      this._timer = setTimeout(() => this._cycle(), this._loaded ? this.refreshMs : this.retryMs);
+      if (this._timer.unref) this._timer.unref();
+    });
   }
 
   stop() {
-    if (this._timer) clearInterval(this._timer);
+    this._started = false;
+    if (this._timer) clearTimeout(this._timer);
     this._timer = null;
   }
 
@@ -131,8 +157,10 @@ class MemberIdentityService {
     return this._mutate(targetId, actorId, (current, records) => {
       const holderId = findHolder(records, normalized, String(targetId));
       if (holderId) return { ok: false, reason: 'taken', holderId };
-      // Idempotent: already one of theirs (any case) -> success, no write.
-      if (current.aliases.some((a) => namesEqual(a, normalized))) return { unchanged: true };
+      // Idempotent: already one of theirs, or their own address name (any
+      // case) -> success, record unchanged, no write.
+      if (namesEqual(current.addressName, normalized)
+        || current.aliases.some((a) => namesEqual(a, normalized))) return { unchanged: true };
       if (current.aliases.length >= MAX_ALIASES) return { ok: false, reason: 'too_many' };
       return { write: { addressName: current.addressName, aliases: [...current.aliases, normalized] } };
     });
@@ -153,9 +181,17 @@ class MemberIdentityService {
   /**
    * Shared write path: refresh from Mongo (so collision checks see writes made
    * since the last refresh), let `decide` validate against the fresh records,
-   * upsert the full doc, then refresh the cache again.
+   * upsert the full doc, then refresh the cache again. Serialised: each
+   * mutation runs only after the previous one settled, so two concurrent
+   * edits cannot both validate against the same snapshot.
    */
-  async _mutate(targetId, actorId, decide) {
+  _mutate(targetId, actorId, decide) {
+    const run = this._writeChain.then(() => this._mutateNow(targetId, actorId, decide));
+    this._writeChain = run.catch(() => {}); // one failure must not poison the chain
+    return run;
+  }
+
+  async _mutateNow(targetId, actorId, decide) {
     if (!targetId) return { ok: false, reason: 'not_found' };
     const id = String(targetId);
     let col;
