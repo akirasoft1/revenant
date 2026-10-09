@@ -16,6 +16,14 @@ DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (
 )
 
 
+DEFAULT_HANGAR_SA_KEY_PATH = "/var/secrets/hangar/key.json"
+
+
+def _hangar_url(raw: str | None) -> str | None:
+    url = (raw or "").strip().rstrip("/")
+    return url or None
+
+
 def _allowed_hosts(raw: str | None) -> tuple[str, ...]:
     if not raw or not raw.strip():
         return DEFAULT_ALLOWED_HOSTS
@@ -33,6 +41,11 @@ class Config:
     otlp_endpoint: str | None
     guides_dir: str
     allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS
+    # hangar-service (member ship loadouts). Unset URL = hangar tools answer
+    # error("unavailable"). The URL is also the ID-token audience, so it must
+    # match the service's HANGAR_AUDIENCE byte for byte (no trailing slash).
+    hangar_api_url: str | None = None
+    hangar_sa_key_path: str = DEFAULT_HANGAR_SA_KEY_PATH
 
 
 def load() -> Config:
@@ -46,4 +59,6 @@ def load() -> Config:
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or None,
         guides_dir=os.environ.get("SC_GUIDES_DIR", "/guides"),
         allowed_hosts=_allowed_hosts(os.environ.get("SC_ALLOWED_HOSTS")),
+        hangar_api_url=_hangar_url(os.environ.get("HANGAR_API_URL")),
+        hangar_sa_key_path=os.environ.get("HANGAR_SA_KEY_PATH") or DEFAULT_HANGAR_SA_KEY_PATH,
     )

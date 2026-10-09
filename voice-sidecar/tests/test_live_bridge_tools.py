@@ -267,7 +267,13 @@ def test_sc_voice_note_verbatim():
         "travel, how ship systems behave), use Google Search, not memory. If a player disputes you "
         "or describes what they're seeing in-game right now, look it up again (tool or search) before "
         "repeating yourself; if you still can't confirm it, go with what they're seeing -- never "
-        "argue a game mechanic from memory. Before a lookup, say a very short natural filler like \"let me check\". "
+        "argue a game mechanic from memory. Only when someone asks about a member's own ships or "
+        "loadouts -- never bring up anyone's ships unprompted -- use sc_member_hangar (what they own "
+        "and what's fitted; for a buyable upgrade, find the current part there, then "
+        "sc_compare_components with purchasable_only) or sc_member_fit_check (does an item fit and "
+        "upgrade any of their ships); member_id is the numeric Discord ID from the \"People in this "
+        "conversation\" roster, and \"my\" means the person speaking. "
+        "Before a lookup, say a very short natural filler like \"let me check\". "
         "When answering, speak only the top two or three results in plain sentences and offer the "
         "rest; never read tables or long number lists aloud.")
 
@@ -374,3 +380,10 @@ async def test_no_fallback_attempt_without_sc_tools():
     out = await _converse_briefly(bridge)
     assert len(opens) == 1
     assert any(e.WhichOneof("event") == "error" for e in out)
+
+
+def test_hangar_sentence_only_in_the_sc_attached_note():
+    assert "sc_member_hangar" in SC_VOICE_NOTE and "sc_member_fit_check" in SC_VOICE_NOTE
+    assert "People in this conversation" in SC_VOICE_NOTE
+    # the standalone mechanics note never names a tool that isn't attached
+    assert "sc_member" not in SC_MECHANICS_VOICE_NOTE

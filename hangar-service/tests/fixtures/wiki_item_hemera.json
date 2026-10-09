@@ -1,0 +1,122 @@
+{
+ "data": {
+  "uuid": "3bd1502d-f593-456f-a3a9-14fec5b8c1a5",
+  "slug": "hemera",
+  "name": "Hemera",
+  "class_name": "QDRV_RSI_S02_Hemera_SCItem",
+  "classification": "Ship.QuantumDrive",
+  "size": 2,
+  "grade": "A",
+  "class": "Civilian",
+  "manufacturer": {
+   "name": "Roberts Space Industries",
+   "code": "RSI",
+   "uuid": "093e6eba-93fa-4dad-b3dd-38966934e34e",
+   "link": "https://api.star-citizen.wiki/api/manufacturers/RSI"
+  },
+  "type": "QuantumDrive",
+  "sub_type": "UNDEFINED",
+  "quantum_drive": {
+   "quantum_fuel_requirement": 0.008393,
+   "jump_range": 3.402823e+38,
+   "jump_range_formatted": "Unlimited",
+   "disconnect_range": 34693,
+   "disconnect_range_formatted": "35 km",
+   "fuel_rate": 8.393e-09,
+   "thermal_energy_draw": {
+    "pre_ramp_up": 6540,
+    "ramp_up": 6540,
+    "in_flight": 6540,
+    "ramp_down": 6540,
+    "post_ramp_down": 6540
+   },
+   "standard_jump": {
+    "drive_speed": 326114300,
+    "drive_speed_formatted": "326.1 Mm/s",
+    "cooldown_time": 9.5,
+    "stage_one_accel_rate": 7026685,
+    "stage_one_accel_rate_formatted": "7 Mm/s\u00b2",
+    "stage_two_accel_rate": 10630280,
+    "stage_two_accel_rate_formatted": "10.6 Mm/s\u00b2",
+    "engage_speed": 84000000,
+    "engage_speed_formatted": "84 Mm/s",
+    "interdiction_effect_time": 1.6,
+    "calibration_rate": 1000,
+    "min_calibration_requirement": 5000,
+    "max_calibration_requirement": 10000,
+    "calibration_process_angle_limit": 5,
+    "calibration_warning_angle_limit": 8,
+    "calibration_delay_in_seconds": 1.5,
+    "spool_up_time": 6.2
+   },
+   "spline_jump": {
+    "drive_speed": 400000,
+    "drive_speed_formatted": "400 km/s",
+    "cooldown_time": 15.66,
+    "stage_one_accel_rate": 250,
+    "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+    "stage_two_accel_rate": 50000,
+    "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+    "engage_speed": 1500,
+    "engage_speed_formatted": "1.5 km/s",
+    "interdiction_effect_time": 5,
+    "calibration_rate": 1000,
+    "min_calibration_requirement": 5000,
+    "max_calibration_requirement": 10000,
+    "calibration_process_angle_limit": 5,
+    "calibration_warning_angle_limit": 8,
+    "calibration_delay_in_seconds": 1.5,
+    "spool_up_time": 6
+   },
+   "modes": [
+    {
+     "type": "normal_jump",
+     "drive_speed": 326114300,
+     "drive_speed_formatted": "326.1 Mm/s",
+     "cooldown_time": 9.5,
+     "stage_one_accel_rate": 7026685,
+     "stage_one_accel_rate_formatted": "7 Mm/s\u00b2",
+     "stage_two_accel_rate": 10630280,
+     "stage_two_accel_rate_formatted": "10.6 Mm/s\u00b2",
+     "engage_speed": 84000000,
+     "engage_speed_formatted": "84 Mm/s",
+     "interdiction_effect_time": 1.6,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 6.2
+    },
+    {
+     "type": "spline_jump",
+     "drive_speed": 400000,
+     "drive_speed_formatted": "400 km/s",
+     "cooldown_time": 15.66,
+     "stage_one_accel_rate": 250,
+     "stage_one_accel_rate_formatted": "250 m/s\u00b2",
+     "stage_two_accel_rate": 50000,
+     "stage_two_accel_rate_formatted": "50 km/s\u00b2",
+     "engage_speed": 1500,
+     "engage_speed_formatted": "1.5 km/s",
+     "interdiction_effect_time": 5,
+     "calibration_rate": 1000,
+     "min_calibration_requirement": 5000,
+     "max_calibration_requirement": 10000,
+     "calibration_process_angle_limit": 5,
+     "calibration_warning_angle_limit": 8,
+     "calibration_delay_in_seconds": 1.5,
+     "spool_up_time": 6
+    }
+   ],
+   "fuel_consumption_scu_per_gm": 0.022,
+   "fuel_efficiency": 1.48,
+   "travel_time_10gm": {
+    "seconds": 70,
+    "formatted": "1:09"
+   }
+  },
+  "version": "4.10.1-LIVE.12660092"
+ }
+}

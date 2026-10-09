@@ -1,0 +1,7 @@
+httpx>=0.28.0
+rapidfuzz>=3.10.0
+google-cloud-firestore>=2.21.0
+fastapi>=0.143.0
+uvicorn>=0.54.0
+google-auth>=2.61.0
+requests>=2.32.0

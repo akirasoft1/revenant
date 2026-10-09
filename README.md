@@ -96,6 +96,12 @@ For the system-level overview (software architecture + Kubernetes deployment top
 - **Channel Voice Personality**: Spoken replies reuse the same learned communication-style prompt as text chat
 - **Transcripts**: Every voice exchange is stored like a regular message, so it shows up in `/tldr` and memory recall
 
+### Member Hangar (Star Citizen)
+
+- Each member's ships and their component loadouts, stored in `hangar-service` (Cloud Run + Firestore) and managed with `/hangar`
+- Ask in chat or voice: "what's a purchasable upgraded shield for my Harbinger?", "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?", "can Micro use it?", "what's on my Connie?"
+- Ship data is looked up only for questions about a member's own ships — never mentioned unprompted
+
 ### Additional Features
 
 - **Article Follow-up Questions**: Reply to summaries to ask follow-up questions about the article
@@ -391,6 +397,15 @@ Backs channel-voice text chat and voice sessions with live Star Citizen data (it
 | `SC_KNOWLEDGE_URL` | `http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp` | Address of the sc-knowledge MCP service |
 | `UEXCORP_BEARER` | `` | Optional UEX Corp API bearer token (raises UEX rate limits); stored in Secret `sc-knowledge-secrets` |
 
+### Member Hangar Configuration
+
+Set on the **bot** (for `/hangar`) and on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools). See `CLAUDE.md`'s "Member hangar" section and `hangar-service/README.md`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HANGAR_API_URL` | `` | hangar-service URL, also the ID-token audience — must equal the service's `HANGAR_AUDIENCE` exactly (`https://hangar-service-hvmf2jpuca-uc.a.run.app`, no trailing slash). Unset on the bot → `/hangar` is not registered; unset on sc-knowledge → the hangar tools answer "unavailable" |
+| `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | `hangar-api@` service-account key (Secret `hangar-api-sa`) used to mint the ID token |
+
 ## Commands
 
 All commands use Discord's native slash command system. Type `/` to see available commands with autocomplete.
@@ -461,6 +476,16 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 | `/voice join` | Bot joins your current voice channel; say the wake phrase (default `"hey jarvis"`) to talk to it |
 | `/voice leave` | Bot leaves the voice channel |
 | `/voice resume` | Ends "go quiet" mode early (quiet mode is started by saying e.g. "go quiet for ten minutes" or "stop listening for 20 minutes"; "thanks jarvis, that's all" only ends the current conversation and does NOT start quiet mode) — reports how much quiet time was left, cancels a quiet request whose confirmation hadn't finished playing yet, or says it wasn't in quiet mode |
+
+### Hangar (Star Citizen ships)
+| Command | Description |
+|---------|-------------|
+| `/hangar list [member]` | List your (or another member's) ships, nicknames and what's changed from stock |
+| `/hangar add ship:<ship> [nickname] [member]` | Add a ship (autocompletes from the catalog) |
+| `/hangar rename ship:<ship> nickname:<name> [member]` | Set or change a ship's nickname |
+| `/hangar remove ship:<ship> [member]` | Remove a ship |
+
+Replies are only visible to you. Anyone can list anyone's hangar; changing another member's hangar requires a bot admin (`BOT_ADMIN_USER_IDS`). Only registered when `HANGAR_API_URL` is set — including in the environment that runs `scripts/registerCommands.js`.
 
 ### Identity
 

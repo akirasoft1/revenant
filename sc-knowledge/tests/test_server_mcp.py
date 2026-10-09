@@ -13,7 +13,8 @@ from src.server import _patch_note, build_app
 from tests.conftest import fixture_transport
 
 EXPECTED = {"sc_find_item", "sc_compare_components", "sc_faction_missions",
-            "sc_trade_routes", "sc_commodity_prices", "sc_org_guides", "sc_location_shops"}
+            "sc_trade_routes", "sc_commodity_prices", "sc_org_guides", "sc_location_shops",
+            "sc_member_hangar", "sc_member_fit_check"}
 
 GUIDES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "guides")
 
@@ -71,7 +72,7 @@ async def server_url():
         yield url
 
 
-async def test_lists_exactly_the_seven_tools(server_url):
+async def test_lists_exactly_the_nine_tools(server_url):
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     async with streamable_http_client(f"{server_url}/mcp") as streams:
@@ -386,3 +387,75 @@ async def test_startup_warms_shop_data_in_background():
                 break
             await asyncio.sleep(0.05)
     assert {"/2.0/items_prices_all", "/2.0/categories", "/2.0/terminals"} <= set(calls)
+
+
+async def _call(url, tool, args):
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    async with streamable_http_client(f"{url}/mcp") as streams:
+        async with ClientSession(streams[0], streams[1]) as s:
+            await s.initialize()
+            res = await s.call_tool(tool, args)
+    assert not res.is_error
+    data = res.structured_content or json.loads(res.content[0].text)
+    return data.get("result", data)
+
+
+async def test_hangar_tools_unavailable_when_hangar_url_unset(server_url, monkeypatch):
+    # server_url's app was built from load() with no HANGAR_API_URL in the env.
+    data = await _call(server_url, "sc_member_hangar", {"member_id": "111"})
+    assert data["error"] == "unavailable"
+    data = await _call(server_url, "sc_member_fit_check", {"member_id": "111", "item": "V801-12"})
+    assert data["error"] == "unavailable"
+
+
+class _FakeHangarClient:
+    def __init__(self):
+        self.closed = False
+
+    async def get_hangar(self, member_id):
+        return {"member": member_id, "ships": [{
+            "shipId": "s1", "vehicleUuid": "v1", "vehicleName": "Constellation Taurus",
+            "vehicleClassName": "RSI_Constellation_Taurus", "nickname": None, "fitted": {},
+            "loadout": [{"slot": "hardpoint_radar", "type": "Radar", "sizeMin": 1, "sizeMax": 2,
+                         "item": None, "source": "stock"}], "loadoutError": None}]}
+
+    async def aclose(self):
+        self.closed = True
+
+
+async def test_hangar_tools_round_trip_with_client():
+    fake = _FakeHangarClient()
+    app = build_app(load(),
+        uex_transport=fixture_transport({"/2.0/game_versions": "uex_game_versions.json"}),
+        wiki_transport=fixture_transport({"/api/v2/items/V801-12": "wiki_item_v801_12.json"}),
+        guides_dir=GUIDES_DIR, hangar_client=fake)
+    async with _running(app) as url:
+        data = await _call(url, "sc_member_hangar", {"member_id": "111", "ship": "Connie"})
+        assert data["ship"]["vehicle"] == "Constellation Taurus"
+        data = await _call(url, "sc_member_fit_check", {"member_id": "222", "item": "V801-12"})
+        assert data["member"] == "222"
+        assert data["ships"][0]["slots"][0]["verdict"] == "upgrade"  # empty radar slot
+    assert fake.closed
+
+
+async def test_compare_components_purchasable_only_over_mcp(server_url):
+    data = await _call(server_url, "sc_compare_components",
+                       {"type": "shield", "size": 2, "purchasable_only": True, "limit": 20})
+    assert data["purchasable_only"] is True
+    assert all(r["cheapest"] for r in data["results"])
+
+
+async def test_hangar_tool_docstrings_scope_and_member_id():
+    app = build_app(load(), guides_dir=GUIDES_DIR)
+    async with _running(app) as url:
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        async with streamable_http_client(f"{url}/mcp") as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                tools = {t.name: t for t in (await s.list_tools()).tools}
+    for name in ("sc_member_hangar", "sc_member_fit_check"):
+        d = " ".join(tools[name].description.split())
+        assert "ONLY" in d and "numeric Discord ID" in d and '"my"' in d and "sandbox" in d
+    assert "purchasable_only" in tools["sc_compare_components"].description

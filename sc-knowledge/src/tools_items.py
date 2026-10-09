@@ -424,7 +424,9 @@ class ItemTools:
                     return {**retried, "note": f"Interpreted '{name}' as '{variant}'."}
         return wiki_result
 
-    async def _find_wiki_item(self, name: str) -> dict:
+    async def _wiki_item_raw(self, name: str) -> tuple[dict | None, CacheResult | None, dict | None]:
+        """(raw Wiki item, its cache result, None) on success, or
+        (None, None, error envelope) for not_found / ambiguous / wiki_unavailable."""
         try:
             res = await self._cache.get_or_fetch(f"wiki:item:{normalise(name)}", _TTL,
                                                  lambda: self._wiki.item(name))
@@ -437,12 +439,18 @@ class ItemTools:
                 elif len(hits) == 1:
                     item = hits[0]
                 elif hits:
-                    return error("ambiguous", f"'{name}' matches several items",
-                                 candidates=[h.get("name") for h in hits[:5]])
+                    return None, None, error("ambiguous", f"'{name}' matches several items",
+                                             candidates=[h.get("name") for h in hits[:5]])
                 else:
-                    return error("not_found", f"no item named '{name}'", candidates=[])
+                    return None, None, error("not_found", f"no item named '{name}'", candidates=[])
         except UpstreamError as e:
-            return error("wiki_unavailable", str(e))
+            return None, None, error("wiki_unavailable", str(e))
+        return item, res, None
+
+    async def _find_wiki_item(self, name: str) -> dict:
+        item, res, err = await self._wiki_item_raw(name)
+        if err is not None:
+            return err
         shops = _shops(item)
         out = {"source": SOURCE, "game_version": item.get("version"),
                "item": _summary(item), "where_to_buy": shops,
@@ -452,9 +460,31 @@ class ItemTools:
             out["note"] = "No player-reported shop listings on UEX for this item (it may be loot/craft/pledge-only)."
         return out
 
+    async def component(self, name_or_uuid: str) -> dict:
+        """Item profile for the member-hangar fit-check: the same summary
+        sc_find_item reports (type, size, key_stats keyed like
+        compare_components' stats) plus the Wiki uuid and shop listings.
+        Wiki items only -- no vehicle path -- with the same ASR-tolerant
+        retry as find_item. Never raises; errors are envelopes."""
+        item, res, err = await self._wiki_item_raw(name_or_uuid)
+        note = None
+        if err is not None and err.get("error") == "not_found":
+            for variant in _asr_variants(name_or_uuid):
+                item, res, retry_err = await self._wiki_item_raw(variant)
+                if retry_err is None:
+                    err, note = None, f"Interpreted '{name_or_uuid}' as '{variant}'."
+                    break
+        if err is not None:
+            return err
+        out = {"source": SOURCE, "game_version": item.get("version"), "uuid": item.get("uuid"),
+               "item": _summary(item), "where_to_buy": _shops(item), **freshness(res)}
+        if note:
+            out["note"] = note
+        return out
+
     async def compare_components(self, type: str, size: int, rank_by: str | None = None,
                                  grade: str | None = None, class_: str | None = None,
-                                 limit: int = 5) -> dict:
+                                 limit: int = 5, purchasable_only: bool = False) -> dict:
         norm_type = _normalise_token(type)
         ct = COMPONENT_TYPES.get(_TYPE_SYNONYMS.get(norm_type, norm_type))
         if ct is None:
@@ -488,6 +518,7 @@ class ItemTools:
         lower_is_better = rank in ct.get("lower_is_better", ())
         rows = []
         excluded_missing_stat = 0
+        excluded_not_purchasable = 0
         seen: set = set()
         for it in res.value:
             if grade and (it.get("grade") or "").upper() != grade.upper():
@@ -511,6 +542,11 @@ class ItemTools:
                 excluded_missing_stat += 1
                 continue
             shops = _shops(it)
+            # "Purchasable" = at least one current player-reported UEX shop
+            # buy price (the same listings `cheapest` is taken from).
+            if purchasable_only and not shops:
+                excluded_not_purchasable += 1
+                continue
             rows.append({"name": it.get("name"), "manufacturer": (it.get("manufacturer") or {}).get("name"),
                          "grade": it.get("grade"), "class": it.get("class"), "stats": stats,
                          "cheapest": ({k: shops[0][k] for k in ("shop", "location", "price_auec")} if shops else None)})
@@ -526,6 +562,9 @@ class ItemTools:
                "results": rows[:max(1, min(limit, 20))], **freshness(res)}
         if excluded_missing_stat:
             out["excluded_missing_stat"] = excluded_missing_stat
+        if purchasable_only:
+            out["purchasable_only"] = True
+            out["excluded_not_purchasable"] = excluded_not_purchasable
         if rank_note:
             out["note"] = rank_note
         return out

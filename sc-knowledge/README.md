@@ -6,7 +6,8 @@ agent sidecar (`discord-article-bot-agent`) and voice sidecar
 (`discord-article-bot-voice`) fast, pre-computed answers to "what does the
 game actually say right now" questions -- item stats and shop prices,
 component rankings, faction mission rep-per-minute, profitable trade routes,
-commodity prices, and org-authored strategy guides -- instead of relying on
+commodity prices, org-authored strategy guides, and members' own ship
+loadouts (read from hangar-service) -- instead of relying on
 an LLM's training data, which is stale the moment a patch ships.
 
 It wraps two upstream APIs (UEX Corp for crowd-sourced economy data, the
@@ -21,11 +22,13 @@ envelope.
 | Tool | Purpose |
 |---|---|
 | `sc_find_item(name)` | Item/component lookup by fuzzy name; stats + every player-reported shop selling it, cheapest first. |
-| `sc_compare_components(type, size, rank_by=None, grade=None, component_class=None, limit=5)` | Ranks components of one type+size (shield, power_plant, cooler, quantum_drive, radar, weapon, missile) by a real stat. |
+| `sc_compare_components(type, size, rank_by=None, grade=None, component_class=None, limit=5, purchasable_only=False)` | Ranks components of one type+size (shield, power_plant, cooler, quantum_drive, radar, weapon, missile) by a real stat. `purchasable_only=True` keeps only items with at least one current UEX shop buy price (adds `purchasable_only: true` and `excluded_not_purchasable: N`; ranking among the rest unchanged). |
 | `sc_faction_missions(faction, current_rank=None, system=None, limit=10)` | Faction missions ranked by reputation gained per estimated minute. |
 | `sc_trade_routes(origin, destination=None, commodity=None, cargo_scu=None, budget_auec=None, limit=5)` | Profitable UEX commodity trade routes from an origin, capped by cargo/budget when given. |
 | `sc_commodity_prices(commodity, location=None, side="sell", limit=5)` | Current UEX buy/sell prices for a commodity, best price first. |
 | `sc_location_shops(location, category=None, exclusive_only=False, limit=40)` | What a place's live UEX shops sell, and which of those items are sold nowhere else. Optional category filter (with ship-parts/FPS-gear aliases) and exclusive-only flag. |
+| `sc_member_hangar(member_id, ship=None)` | A member's ships with their effective loadouts (slot, size, item, `stock`/`fitted`). `ship` resolves within that member's hangar: exact nickname → nickname fuzzy → exact model → model token/prefix (with a small community-shorthand table: "Connie" → Constellation, "Cutty" → Cutlass, …) → model fuzzy; ambiguous → `ambiguous` + `candidates`, unknown → `not_found` + `owned`. See "Member hangar tools" below. |
+| `sc_member_fit_check(member_id, item)` | Is an item a usable upgrade for any of a member's ships? Resolves the item (Wiki), checks every owned ship's compatible slots, and gives a per-slot verdict against what is fitted now. See below. |
 | `sc_org_guides(query, limit=3)` | BM25 search over privately-synced org guide text (mining/salvage/trading strategy notes; live data from the other tools wins for prices/stats). |
 
 Every successful result includes `source` and (except `sc_org_guides`, whose
@@ -59,6 +62,57 @@ default list covers every in-cluster spelling of the Service
 the Service is renamed or reached through another name, extend the env var or
 every call will 421.
 
+## Member hangar tools
+
+`sc_member_hangar` and `sc_member_fit_check` read per-member ship loadouts
+from **hangar-service** (Cloud Run, see `hangar-service/README.md` and the
+"Member hangar" section of the repo `CLAUDE.md`). They are for questions
+about a member's OWN ships only; `member_id` is the numeric Discord ID from
+the bot's `[Name · id]` message labels or the "People in this conversation"
+roster ("my" = the labelled speaker). A non-numeric `member_id` returns
+`invalid_request` (hangar-service's code for a bad member id) without a call. Reads of any member are allowed ("can Micro use
+it?"); there is no write path here.
+
+- **Read-only client** (`src/hangar.py`): only `GET /v1/members/{id}/hangar`,
+  never an `X-Acting-Member` header (a test pins the absence of any write
+  verb). Auth is a Google ID token minted from the `hangar-api@` key at
+  `HANGAR_SA_KEY_PATH` (`service_account.IDTokenCredentials`, audience =
+  `HANGAR_API_URL`), single-flight, cached until 5 minutes before expiry.
+  Token + request are bounded at 3s; successful bodies are cached 30s per
+  member (errors are not).
+- **Deadlines:** each tool has a 5s overall deadline (the voice sidecar
+  bounds a tool call at 6s). `sc_member_fit_check` fetches the hangar and
+  looks up the item concurrently (item lookup capped at 3s → `wiki_unavailable`
+  on timeout); stat lookups for the currently fitted items share whatever
+  time remains (≤2s each) and fall back to verdict `unknown`.
+- **Errors never raise:** hangar down / timed out / our credentials refused
+  (5xx, 401, 403, connect error) → `unavailable`; other 4xx pass the
+  service's code through. Without `HANGAR_API_URL` both tools are still
+  registered (stable tool list) and return `unavailable`.
+- **Fit check output:** `{item: {name, type, sub_type, size, grade, class,
+  key_stats}, key_stat, order, ships: [{…, slots: [{slot, size, item_value,
+  current: {name, source, value}, verdict, delta_pct}]}], not_compatible:
+  [{…, reason, detail}]}`. Verdicts: `upgrade` / `downgrade` / `sidegrade`
+  (|Δ| ≤ 2% on the key stat `sc_compare_components` ranks by) / `same`
+  (same uuid; names only when a uuid is missing) / `unknown` (no stat to
+  compare, or the lookup ran out of time). An empty slot is an `upgrade`.
+  `not_compatible` reasons: `size_mismatch` (the ship has slots of that type
+  but none of the right size), `no_slot` (no such slot, or a sub-type the
+  slot rejects), `loadout_unavailable`.
+- **Compatibility parity with hangar-service** (`check_compatible`): the
+  item's type must be in the slot's `compatibleTypes` (falling back to the
+  slot's own type for older loadouts), sub-types are enforced only when the
+  slot lists some and the item's sub-type isn't empty/`UNDEFINED`, and the
+  size must be within `[sizeMin, sizeMax]`. A gimbal/turret mount slot is not
+  offered when a fitting child slot is visible. Change the rule in BOTH
+  places.
+- **Not tracked:** missiles (→ `not_tracked`; a `MissileLauncher` rack is a
+  slot only where the Wiki marks it editable, which the common ships don't),
+  and any item type outside hangar-service's slot types.
+- **UC1** ("a purchasable upgraded shield for my Harbinger") is
+  `sc_member_hangar` (current shield + slot size) then
+  `sc_compare_components(..., purchasable_only=True)`.
+
 **Upstream failure backoff:** after a failed fetch the cache does not retry
 that key for 30s -- it serves the stale entry (or re-raises the failure)
 immediately, so an outage does not cost every caller the full retry budget.
@@ -75,6 +129,8 @@ immediately, so an outage does not cost every caller the full retry budget.
 | `SC_KNOWLEDGE_VERSION` | `dev` | Sent as `User-Agent: revenant-discord-bot/<version>` and `X-Client-Version: revenant-sc-knowledge/<version>`; also the `/healthz` `version` field. Set to the deployed image's git short-SHA. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint for traces; unset -> tracing is a no-op. |
 | `SC_ALLOWED_HOSTS` | the in-cluster Service names + loopback, each `:*` | Comma-separated `Host` header allow-list for `/mcp` (`name:*` = any port, otherwise exact match). Anything else gets `421`. |
+| `HANGAR_API_URL` | unset | hangar-service base URL, ALSO the ID-token audience: must equal the service's `HANGAR_AUDIENCE` byte for byte (`https://hangar-service-hvmf2jpuca-uc.a.run.app`); whitespace and a trailing `/` are stripped. Unset → the hangar tools return `unavailable`. |
+| `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | `hangar-api@` service-account key (Secret `hangar-api-sa`). The image runs as uid 1000, so the mount must be readable by it (the default 0644 secret mode works; `defaultMode: 0400` breaks it → `unavailable` + a WARNING naming the path). Rotating the key needs a pod restart. |
 | `SC_GUIDES_DIR` | `/guides` | Directory of `*.txt` org guides (mounted ConfigMap in-cluster). Missing/empty -> `sc_org_guides` returns `{"sections": [], "note": "no org guides loaded"}`, never an error. |
 
 ## Cache TTLs (seconds)

@@ -1,6 +1,6 @@
 {
   "name": "revenant",
-  "version": "2.20.0",
+  "version": "2.21.0",
   "license": "MIT",
   "description": "A Discord bot that talks in your channel's learned voice, with long-term memory, IRC history recall, an agentic code sandbox, and image/video/music generation.",
   "main": "bot.js",
@@ -30,6 +30,7 @@
     "discord-article-archiver-bot": "file:",
     "discord.js": "^14.27.0",
     "dotenv": "^18.0.4",
+    "google-auth-library": "^11.2.0",
     "mem0ai": "^3.3.1",
     "mongodb": "^7.6.0",
     "onnxruntime-node": "^1.30.0",
