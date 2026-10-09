@@ -61,6 +61,21 @@ describe('AuthGate', () => {
     );
   });
 
+  it.each([
+    ['not_member', "Only members of the org's Discord server can use the hangar editor."],
+    ['discord_unavailable', 'Discord is unavailable — try again shortly.'],
+    ['brand_new_code', 'Sign-in failed (brand_new_code). Please try again.'],
+  ])('explains login_error=%s', async (code, text) => {
+    mockFetch({ 'GET /api/me': { status: 401, body: { error: 'unauthenticated', message: 'x' } } });
+    renderWithProviders(
+      <AuthGate>
+        <Secret />
+      </AuthGate>,
+      { route: `/?login_error=${code}` },
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(text);
+  });
+
   it('offers a retry for other errors', async () => {
     mockFetch({ 'GET /api/me': { status: 500, body: { error: 'unavailable', message: 'boom' } } });
     renderWithProviders(

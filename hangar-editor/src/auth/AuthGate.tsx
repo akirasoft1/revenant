@@ -26,6 +26,8 @@ const LOGIN_ERRORS: Record<string, string> = {
   token_error: 'Discord rejected the sign-in. Please try again.',
   user_error: 'Could not read your Discord profile. Please try again.',
   server_error: 'Something went wrong signing you in. Please try again.',
+  not_member: "Only members of the org's Discord server can use the hangar editor.",
+  discord_unavailable: 'Discord is unavailable — try again shortly.',
 };
 
 export function loginErrorMessage(code: string | null): string | null {
