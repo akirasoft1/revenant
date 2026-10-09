@@ -52,5 +52,14 @@
   },
   "devDependencies": {
     "jest": "^30.5.2"
+  },
+  "jest": {
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/hangar-editor/"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/hangar-editor/"
+    ]
   }
 }
