@@ -642,6 +642,10 @@ class DiscordBot {
     // sidecar is disabled — this.agentClient is null in that case).
     this.slashCommandHandler.register(new ObserveSlashCommand(this.agentClient));
 
+    // Member identity (/whois) -- always registered; degrades to "unavailable" without Mongo
+    const WhoisSlashCommand = require('./commands/slash/WhoisCommand');
+    this.slashCommandHandler.register(new WhoisSlashCommand(this.memberIdentity, this.speakerNames));
+
     // Register voice slash command (only if voice is enabled and initialized)
     if (config.voice.enabled && this.voiceService) {
       const VoiceSlashCommand = require('./commands/slash/voice');
