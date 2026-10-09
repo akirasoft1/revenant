@@ -1,18 +1,21 @@
 """Seed / clean up the fake members the SC eval's member-hangar cases read.
 
 Standalone on purpose (stdlib + google-auth only, no `src`/`eval` imports) so
-it can be piped into the sc-knowledge pod, which mounts Secret `hangar-api-sa`
-at /var/secrets/hangar/key.json, carries HANGAR_API_URL, and has Python +
-google-auth. Run it ONLY there: the bot image also mounts the key but is a
-Node image with no Python or google-auth.
+it can be piped into a pod over stdin. Run it in the AGENT sidecar pod -- the
+same place eval_sc.py now runs, because the hangar chat-edit cases need the
+hangar-api@ key in the eval's own process -- which (once the deployed overlay
+mounts Secret `hangar-api-sa` at /var/secrets/hangar/key.json and sets
+HANGAR_API_URL) has Python + google-auth. (The sc-knowledge pod also works
+for this standalone script; the bot pod does not: its image is Node-only.)
 
-  kubectl exec -i -n discord-article-bot deploy/sc-knowledge -- \
+  kubectl exec -i -n discord-article-bot deploy/discord-article-bot-agent -- \
       python - --seed < agent-sidecar/eval/seed_hangar_eval.py      # before the eval
-  kubectl exec -i -n discord-article-bot deploy/sc-knowledge -- \
+  kubectl exec -i -n discord-article-bot deploy/discord-article-bot-agent -- \
       python - --cleanup < agent-sidecar/eval/seed_hangar_eval.py   # after it
 
 Env: HANGAR_API_URL (also the ID-token audience -- must equal the service's
-HANGAR_AUDIENCE byte for byte, no trailing slash), HANGAR_SA_KEY_PATH
+HANGAR_AUDIENCE byte for byte; a trailing slash is stripped and the stripped
+form is used as both audience and base), HANGAR_SA_KEY_PATH
 (default /var/secrets/hangar/key.json).
 
 Writes go through the real API as the member themselves (X-Acting-Member =

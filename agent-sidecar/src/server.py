@@ -450,6 +450,10 @@ def serve() -> None:
         server.add_insecure_port(config.grpc_listen_addr)
         await server.start()
         log.info("agent sidecar listening on %s", config.grpc_listen_addr)
+        if hangar_edits is not None:
+            # Mint the hangar ID token in the background so the first edit
+            # doesn't pay for it inside its 5s bound; prewarm() never raises.
+            asyncio.create_task(hangar_edits.prewarm())
 
         loop = asyncio.get_running_loop()
         stop_event = asyncio.Event()

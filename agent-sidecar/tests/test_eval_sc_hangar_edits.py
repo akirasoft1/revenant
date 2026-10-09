@@ -40,7 +40,7 @@ def test_eval_set_has_the_four_spec_edit_cases():
     assert _by_text("should I put the Hemera in my Connie?")["expect_tool"] is None
     assert _by_text("put a Hemera in Micro's Titan")["expect_tool"] is None
     assert _by_text("I just bought a Cutlass Black")["expect_tool"] == "hangar_add_ship"
-    assert len(_edit_cases()) == 4
+    assert len(_edit_cases()) == 5
     for c in _edit_cases():
         # the speaker is the eval member, as the bot would send ChatRequest.user_id
         assert c["user_id"] == HANGAR_MEMBER_AKIRA
@@ -161,3 +161,20 @@ def test_seed_raises_when_a_reset_fails():
         {"shipId": "c", "vehicleName": "Constellation Taurus", "nickname": "Connie", "fitted": {"a": "b"}}]})
     with pytest.raises(HangarSeedError, match="503"):
         seed("https://hangar.example", token="TOK", http=http)
+
+
+def test_eval_set_has_an_imperative_own_ship_edit_case():
+    c = _by_text("put my Harbinger's shields back to stock")
+    assert c["expect_tool"] == "hangar_reset"
+    assert c["user_id"] == HANGAR_MEMBER_AKIRA
+
+
+def test_reset_hangar_fixture_strips_a_trailing_slash_for_audience_and_base():
+    from types import SimpleNamespace
+    import eval.eval_sc as eval_sc
+    calls = []
+    eval_sc.reset_hangar_fixture(
+        SimpleNamespace(hangar_api_url="https://h.example/", hangar_sa_key_path="/k"),
+        seed_fn=lambda base, token: calls.append((base, token)),
+        mint=lambda aud, key: f"tok:{aud}")
+    assert calls == [("https://h.example", "tok:https://h.example")]

@@ -1,4 +1,5 @@
 """Environment-driven configuration for the agent sidecar."""
+import logging
 import os
 from dataclasses import dataclass
 
@@ -96,7 +97,13 @@ class Config:
 
 
 def _hangar_settings() -> dict:
-    url = (os.environ.get("HANGAR_API_URL") or "").strip() or None
+    raw = (os.environ.get("HANGAR_API_URL") or "").strip()
+    url = raw.rstrip("/") or None
+    if url and url != raw:
+        # One normalized form is both the ID-token audience and the request
+        # base; a trailing slash would otherwise make the audience mismatch.
+        logging.getLogger(__name__).warning(
+            "HANGAR_API_URL %r has a trailing '/'; using %r (audience + request base)", raw, url)
     default = "true" if url else "false"
     flag = os.environ.get("HANGAR_EDITS_ENABLED", default).strip().lower() in ("true", "1", "yes")
     return {

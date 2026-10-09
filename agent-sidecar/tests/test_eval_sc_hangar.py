@@ -342,8 +342,9 @@ def test_report_prompt_strips_the_speaker_label():
     assert _display_prompt({"prompt": "[not a label] hi"}) == "[not a label] hi"
 
 
-def test_seed_script_docs_name_the_sc_knowledge_pod_only():
+def test_seed_script_docs_name_the_agent_pod():
     import eval.seed_hangar_eval as seed_mod
     doc = seed_mod.__doc__
-    assert "deploy/sc-knowledge" in doc
-    assert "bot image" in doc  # says why not the bot pod
+    assert "deploy/discord-article-bot-agent" in doc
+    assert "hangar-api-sa" in doc
+    assert "Node-only" in doc  # says why not the bot pod

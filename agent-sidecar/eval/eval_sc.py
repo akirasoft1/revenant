@@ -38,7 +38,7 @@ os.environ.setdefault("SC_KNOWLEDGE_URL", "http://127.0.0.1:18080/mcp")
 
 from src.agent import AgentChatResult, ChannelVoiceAgent  # noqa: E402
 from src.config import load  # noqa: E402
-from src.hangar_edit import HangarEditClient  # noqa: E402
+from src.hangar_edit import HangarEditClient, normalize_base_url  # noqa: E402
 from src.mcp_registry import build_mcp_toolsets  # noqa: E402
 from src.sc_tools import ScToolsProvider, health_url_for  # noqa: E402
 from eval.harness import FakeOrchestrator  # noqa: E402
@@ -203,8 +203,8 @@ def reset_hangar_fixture(config, *, seed_fn=None, mint=None) -> None:
     and after every run of an edit case."""
     seed_fn = seed_fn or seed_hangar.seed
     mint = mint or seed_hangar.mint_id_token
-    base = config.hangar_api_url.rstrip("/")
-    seed_fn(base, token=mint(config.hangar_api_url, config.hangar_sa_key_path))
+    base = normalize_base_url(config.hangar_api_url)  # audience == base, one form
+    seed_fn(base, token=mint(base, config.hangar_sa_key_path))
 
 
 def _preflight_fail(url: str, reason: str) -> None:

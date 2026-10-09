@@ -164,6 +164,11 @@ SC_EVAL_SET = [
     {"prompt": _akira("I just bought a Cutlass Black"),
      "expect_tool": "hangar_add_ship", "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
      "system_prompt": _AKIRA_ONLY},
+    # imperative request to update the speaker's OWN hangar counts as an edit
+    # (owner ruling); the seeded Harbinger is stock, so the reply is "unchanged"
+    {"prompt": _akira("put my Harbinger's shields back to stock"),
+     "expect_tool": "hangar_reset", "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
+     "system_prompt": _AKIRA_ONLY},
 
     # --- roster present but NOT about anyone's ships: no hangar tool may be called ---
     {"prompt": _akira("what's the best size 3 shield generator right now?"),

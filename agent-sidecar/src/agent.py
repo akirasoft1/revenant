@@ -349,11 +349,14 @@ SC_HANGAR_UNAVAILABLE = (
 # Mirrored (short, spoken) in voice-sidecar's voice notes.
 SC_HANGAR_EDIT_RULE = (
     "Call hangar_fit / hangar_add_ship / hangar_reset ONLY when the speaker says they already DID "
-    "something to their own ships (bought, fitted, swapped, put back to stock) — never for "
-    "hypotheticals or advice (\"should I…\", \"would X be better…\") — and on choose_slot or "
-    "ambiguous ask a short follow-up about which one they meant, after a write say exactly what "
-    "changed using the canonical item name returned, and remember these tools only ever edit the "
-    "speaker's own hangar, so refuse requests to change anyone else's ships."
+    "something to their own ships (bought, fitted, swapped, put back to stock) or explicitly asks you "
+    "to update their own hangar (\"put my Harbinger's shields back to stock\", \"mark my Connie as "
+    "having a Hemera\") — never for hypotheticals or advice (\"should I…\", \"would X be better…\") — "
+    "and on choose_slot or ambiguous ask a short follow-up about which one they meant, after a write "
+    "say exactly what changed using the canonical item name returned, after a maybe_applied result "
+    "never repeat the call (above all hangar_add_ship) but check sc_member_hangar first, and remember "
+    "these tools only ever edit the speaker's own hangar, so refuse requests to change anyone else's "
+    "ships."
 )
 
 # "stock" + the parenthetical: a member's OWN loadout is covered by the hangar

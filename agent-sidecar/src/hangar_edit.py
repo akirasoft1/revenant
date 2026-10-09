@@ -44,7 +44,7 @@ EDIT_TOOL_NAMES = ("hangar_fit", "hangar_add_ship", "hangar_reset")
 
 _TOKEN_REFRESH_MARGIN_S = 300.0
 _DEFAULT_TIMEOUT_S = 5.0
-_DISCORD_ID = re.compile(r"\d{1,32}")
+_DISCORD_ID = re.compile(r"[0-9]{1,32}")  # ASCII only: \d also matches other scripts' digits
 
 
 class HangarTokenError(Exception):
@@ -120,6 +120,25 @@ def _unavailable(message: str) -> dict:
     return {"error": "unavailable", "message": message}
 
 
+MAYBE_APPLIED_MESSAGE = ("The hangar service didn't answer in time — the change may have been saved; "
+                         "check before retrying")
+
+
+def _maybe_applied(detail: str) -> dict:
+    # The request left this process, so hangar-service may have committed the
+    # write even though we never saw the answer. Distinct from a plain
+    # "unavailable" so the model checks (sc_member_hangar) instead of
+    # repeating a non-idempotent hangar_add_ship. `detail` goes to the log only.
+    log.warning("hangar edit outcome unknown (request was sent): %s", detail)
+    return {"error": "unavailable", "maybe_applied": True, "message": MAYBE_APPLIED_MESSAGE}
+
+
+def normalize_base_url(url: str) -> str:
+    """HANGAR_API_URL with surrounding whitespace and trailing '/' removed --
+    the ONE form used as both the ID-token audience and the request base."""
+    return (url or "").strip().rstrip("/")
+
+
 class HangarEditClient:
     """POST-only hangar-service client for chat edits. Never raises."""
 
@@ -137,30 +156,44 @@ class HangarEditClient:
         """The production client when hangar edits are enabled, else None."""
         if not getattr(config, "hangar_edits_enabled", False) or not getattr(config, "hangar_api_url", None):
             return None
-        url = config.hangar_api_url
         # The token audience must equal hangar-service's HANGAR_AUDIENCE byte
-        # for byte: use HANGAR_API_URL exactly as configured.
+        # for byte; audience and request base share the one normalized form.
+        url = normalize_base_url(config.hangar_api_url)
         return cls(url, IdTokenProvider(config.hangar_sa_key_path, url))
+
+    async def prewarm(self) -> None:
+        """Mint the ID token ahead of the first edit (startup). Never raises."""
+        try:
+            await self._tokens.token()
+            log.info("hangar edit ID token prewarmed")
+        except Exception as e:  # noqa: BLE001
+            log.warning("hangar edit ID-token prewarm failed (will retry on first edit): %s: %s",
+                        type(e).__name__, e)
 
     async def aclose(self) -> None:
         await self._http.aclose()
 
     async def post(self, path: str, member: str, body: dict) -> dict:
         """POST `body` as `member`; returns the JSON reply or an error envelope."""
+        sent = False  # past this point the write may have reached the service
         try:
             async with asyncio.timeout(self.timeout_s):
                 token = await self._tokens.token()
+                sent = True
                 resp = await self._http.post(
                     path, json=body,
                     headers={"Authorization": f"Bearer {token}", "X-Acting-Member": member})
         except TimeoutError:
-            return _unavailable(f"hangar-service POST {path} timed out after {self.timeout_s}s")
+            detail = f"hangar-service POST {path} timed out after {self.timeout_s}s"
+            return _maybe_applied(detail) if sent else _unavailable(detail)
         except HangarTokenError as e:
             return _unavailable(str(e))
-        except httpx.HTTPError as e:
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            # never connected: nothing can have been written
             return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
         except Exception as e:  # noqa: BLE001 -- never raise into the agent turn
-            return _unavailable(f"hangar-service POST {path} failed: {type(e).__name__}: {e}")
+            detail = f"hangar-service POST {path} failed: {type(e).__name__}: {e}"
+            return _maybe_applied(detail) if sent else _unavailable(detail)
         try:
             data = resp.json()
         except ValueError:
@@ -169,6 +202,11 @@ class HangarEditClient:
             return data
         if isinstance(data, dict) and data.get("error"):
             return data
+        if resp.status_code >= 500:
+            # a non-JSON 5xx is the gateway (e.g. Cloud Run's 504), not the
+            # service's own envelope: the write may have landed behind it
+            return _maybe_applied(f"hangar-service POST {path} answered HTTP {resp.status_code} "
+                                  "without a JSON body")
         return _unavailable(f"hangar-service POST {path} answered HTTP {resp.status_code} "
                             "without a usable JSON body")
 
@@ -229,7 +267,8 @@ class HangarEditTools:
         async def hangar_fit(ship: str, item: str, slot: str | None = None) -> dict:
             """Record that the SPEAKER fitted an item to one of their OWN ships (writes their hangar).
 
-            Call ONLY when the speaker says they already did it ("I put the Hemera in my Connie");
+            Call ONLY when the speaker says they already did it ("I put the Hemera in my Connie") or
+            explicitly asks you to update their own hangar ("mark my Connie as having a Hemera");
             never for "should I…" questions or advice. There is no member argument: this always
             edits the speaker's own hangar, never anyone else's.
 
@@ -255,8 +294,9 @@ class HangarEditTools:
         async def hangar_add_ship(vehicle: str, nickname: str | None = None) -> dict:
             """Record that the SPEAKER bought / acquired a ship: adds it to their OWN hangar.
 
-            Call ONLY when the speaker says they already got it ("I just bought a Cutlass Black");
-            never for plans or hypotheticals. There is no member argument: this always edits the
+            Call ONLY when the speaker says they already got it ("I just bought a Cutlass Black") or
+            explicitly asks you to add it to their hangar; never for plans or hypotheticals. If a
+            previous call returned maybe_applied, do NOT call again -- check sc_member_hangar first. There is no member argument: this always edits the
             speaker's own hangar.
 
             Args:
@@ -276,8 +316,8 @@ class HangarEditTools:
         async def hangar_reset(ship: str, slot: str) -> dict:
             """Record that the SPEAKER put one of their OWN ship's slots (or the whole ship) back to stock.
 
-            Call ONLY when the speaker says they did it ("I put my Harbinger's shields back to
-            stock"). There is no member argument: this always edits the speaker's own hangar.
+            Call ONLY when the speaker says they did it or explicitly asks for it ("put my
+            Harbinger's shields back to stock"); never for advice questions. There is no member argument: this always edits the speaker's own hangar.
 
             Args:
               ship: the speaker's ship as they named it.
@@ -290,9 +330,9 @@ class HangarEditTools:
             """
             args = {"ship": ship, "slot": slot}
             local_error = None
-            if "/" in (ship or ""):
+            if "/" in (ship or "") or (ship or "").strip() in (".", ".."):
                 local_error = {"error": "invalid_request",
-                               "message": "A ship name can't contain '/'; use the ship's nickname or model."}
+                               "message": "A ship name can't contain '/' or be '.'/'..'; use the ship's nickname or model."}
             elif not (slot or "").strip():
                 local_error = {"error": "invalid_request",
                                "message": "Say which slot to reset (e.g. 'shields', 'left') or 'all' for "

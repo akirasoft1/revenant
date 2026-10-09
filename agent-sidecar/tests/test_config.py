@@ -149,3 +149,20 @@ def test_hangar_edits_can_be_switched_off(_no_hangar_env, monkeypatch):
 def test_hangar_key_path_overridable(_no_hangar_env, monkeypatch):
     monkeypatch.setenv("HANGAR_SA_KEY_PATH", "/tmp/k.json")
     assert config_mod.load().hangar_sa_key_path == "/tmp/k.json"
+
+
+def test_hangar_url_trailing_slash_is_stripped_with_a_warning(_no_hangar_env, monkeypatch, caplog):
+    import logging
+    monkeypatch.setenv("HANGAR_API_URL", _HANGAR_URL + "/")
+    with caplog.at_level(logging.WARNING):
+        cfg = config_mod.load()
+    assert cfg.hangar_api_url == _HANGAR_URL
+    assert any("trailing" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_hangar_url_without_slash_logs_no_warning(_no_hangar_env, monkeypatch, caplog):
+    import logging
+    monkeypatch.setenv("HANGAR_API_URL", _HANGAR_URL)
+    with caplog.at_level(logging.WARNING):
+        config_mod.load()
+    assert not any("trailing" in r.getMessage() for r in caplog.records)

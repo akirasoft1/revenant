@@ -206,10 +206,11 @@ def test_error_envelopes_are_returned_to_the_model_verbatim(status, body):
 
 
 def test_non_json_error_maps_to_unavailable():
-    client, _ = _client(lambda r: httpx.Response(502, text="<html>bad gateway</html>"))
+    # a non-JSON 4xx was rejected before any write (5xx: see maybe_applied below)
+    client, _ = _client(lambda r: httpx.Response(413, text="<html>too large</html>"))
     out = _run(HangarEditTools(client, user_id=AKIRA).functions()[0]("Connie", "Hemera"))
-    assert out["error"] == "unavailable"
-    assert "502" in out["message"]
+    assert out["error"] == "unavailable" and "maybe_applied" not in out
+    assert "413" in out["message"]
 
 
 def test_transport_error_maps_to_unavailable():
@@ -331,3 +332,102 @@ def test_from_config_builds_a_client_only_when_enabled():
     c = HangarEditClient.from_config(on)
     assert isinstance(c, HangarEditClient)
     assert c.base_url == BASE
+
+
+# --- fix round 1 ---------------------------------------------------------------
+
+MAYBE = ("The hangar service didn't answer in time — the change may have been saved; "
+         "check before retrying")
+
+
+@pytest.mark.parametrize("exc", [httpx.ReadTimeout("slow"), httpx.ReadError("reset"),
+                                 httpx.RemoteProtocolError("eof")])
+def test_failure_after_the_request_was_sent_is_maybe_applied(exc):
+    def boom(request):
+        raise exc
+    client, _ = _client(boom)
+    tools = HangarEditTools(client, user_id=AKIRA)
+    out = _run(tools.functions()[1]("Cutlass Black"))
+    assert out == {"error": "unavailable", "maybe_applied": True, "message": MAYBE}
+    assert tools.calls[-1]["result"] == "unavailable"
+    assert tools.edits == 0
+
+
+def test_overall_timeout_while_the_request_is_in_flight_is_maybe_applied():
+    async def slow(request):
+        await asyncio.sleep(1)
+        return httpx.Response(200, json=FIT_OK)
+
+    class _Slow(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            return await slow(request)
+    client = HangarEditClient(BASE, _Tokens(), transport=_Slow(), timeout_s=0.05)
+    out = _run(HangarEditTools(client, user_id=AKIRA).functions()[0]("Connie", "Hemera"))
+    assert out["maybe_applied"] is True and out["error"] == "unavailable"
+
+
+@pytest.mark.parametrize("exc", [httpx.ConnectError("refused"), httpx.ConnectTimeout("no route")])
+def test_connect_failures_are_not_maybe_applied(exc):
+    def boom(request):
+        raise exc
+    client, _ = _client(boom)
+    out = _run(HangarEditTools(client, user_id=AKIRA).functions()[0]("Connie", "Hemera"))
+    assert out["error"] == "unavailable" and "maybe_applied" not in out
+
+
+def test_timeout_during_token_mint_is_not_maybe_applied():
+    class _SlowTokens(_Tokens):
+        async def token(self):
+            await asyncio.sleep(1)
+            return "t"
+    client, seen = _client(_json(200, FIT_OK), tokens=_SlowTokens(), timeout_s=0.05)
+    out = _run(HangarEditTools(client, user_id=AKIRA).functions()[0]("Connie", "Hemera"))
+    assert "maybe_applied" not in out and seen == []
+
+
+def test_non_json_gateway_5xx_is_maybe_applied():
+    client, _ = _client(lambda r: httpx.Response(504, text="upstream request timeout"))
+    out = _run(HangarEditTools(client, user_id=AKIRA).functions()[0]("Connie", "Hemera"))
+    assert out["maybe_applied"] is True
+
+
+def test_prewarm_mints_the_token_and_never_raises():
+    tokens = _Tokens()
+    client, _ = _client(_json(200, FIT_OK), tokens=tokens)
+    _run(client.prewarm())
+    assert tokens.calls == 1
+    bad, _ = _client(_json(200, FIT_OK), tokens=_Tokens(exc=RuntimeError("no key")))
+    _run(bad.prewarm())  # must not raise
+
+
+@pytest.mark.parametrize("ref", [".", "..", " .. ", " . "])
+def test_reset_refuses_dot_ship_refs_locally(ref):
+    client, seen = _client(_json(200, {}))
+    out = _run(HangarEditTools(client, user_id=AKIRA).functions()[2](ref, "all"))
+    assert out["error"] == "invalid_request"
+    assert seen == []
+
+
+@pytest.mark.parametrize("uid", ["١٢٣", "１２３", "²³"])
+def test_non_ascii_digits_are_not_a_discord_id(uid):
+    client, seen = _client(_json(200, FIT_OK))
+    out = _run(HangarEditTools(client, user_id=uid).functions()[0]("Connie", "Hemera"))
+    assert out["error"] == "unknown_speaker" and seen == []
+
+
+def test_from_config_strips_a_trailing_slash_for_audience_and_paths():
+    from types import SimpleNamespace
+    made = {}
+
+    class _P:
+        def __init__(self, key, aud):
+            made["aud"] = aud
+    import src.hangar_edit as H
+    orig = H.IdTokenProvider
+    H.IdTokenProvider = _P
+    try:
+        c = HangarEditClient.from_config(SimpleNamespace(
+            hangar_edits_enabled=True, hangar_api_url=BASE + "/", hangar_sa_key_path="/k.json"))
+    finally:
+        H.IdTokenProvider = orig
+    assert c.base_url == BASE and made["aud"] == BASE

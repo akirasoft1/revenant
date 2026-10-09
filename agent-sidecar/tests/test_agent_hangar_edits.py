@@ -115,6 +115,10 @@ def test_edit_rule_covers_every_spec_point():
     low = r.lower()
     assert "only when" in low and "did" in low.lower()
     assert "should i" in low  # hypotheticals/advice excluded
+    # owner ruling: an explicit request to update the speaker's OWN hangar is an edit
+    assert "asks you to update" in low or "asks to update" in low
+    # a write that may have landed is never blindly repeated
+    assert "maybe_applied" in r and "sc_member_hangar" in r
     assert "choose_slot" in r and "ambiguous" in r
     assert "exactly what changed" in low
     assert "canonical item name" in low  # a fuzzy item match must be visible
