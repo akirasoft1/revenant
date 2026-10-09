@@ -1,0 +1,663 @@
+{
+ "stock": [
+  {
+   "slot": "hardpoint_turret_base_upper/hardpoint_weapon_left/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 3,
+   "sizeMax": 3,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "bd13235d-1261-4b71-b32f-aed1a8beb526",
+    "name": "CF-337 Panther Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_turret_base_upper/hardpoint_weapon_right/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 3,
+   "sizeMax": 3,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "bd13235d-1261-4b71-b32f-aed1a8beb526",
+    "name": "CF-337 Panther Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_radar",
+   "type": "Radar",
+   "sizeMin": 1,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "Radar",
+     "subTypes": [
+      "ShortRangeRadar",
+      "MidRangeRadar"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "3260e018-64ca-42e9-b85a-8b80d24d5375",
+    "name": "Surveyor"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_quantum_drive",
+   "type": "QuantumDrive",
+   "sizeMin": 2,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "QuantumDrive",
+     "subTypes": [
+      "QDrive"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "74cc0d0b-1bf5-436c-a38c-1baf93962b89",
+    "name": "Bolon"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_shield_generator",
+   "type": "Shield",
+   "sizeMin": 3,
+   "sizeMax": 3,
+   "compatibleTypes": [
+    {
+     "type": "Shield",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "3a2e37f0-dc95-4082-b74d-fe968ed64eb3",
+    "name": "Stronghold"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_powerplant_right",
+   "type": "PowerPlant",
+   "sizeMin": 2,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "PowerPlant",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "be3eb52b-243a-4ed9-833a-d348f910a32a",
+    "name": "Diligence"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_powerplant_left",
+   "type": "PowerPlant",
+   "sizeMin": 2,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "PowerPlant",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "be3eb52b-243a-4ed9-833a-d348f910a32a",
+    "name": "Diligence"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_cooler_right",
+   "type": "Cooler",
+   "sizeMin": 1,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "Cooler",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "553f7473-1d24-41b5-bd53-baa4190464d0",
+    "name": "CoolCore"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_right",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_right/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_cooler_left",
+   "type": "Cooler",
+   "sizeMin": 1,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "Cooler",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "553f7473-1d24-41b5-bd53-baa4190464d0",
+    "name": "CoolCore"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_left",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_left/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_right",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_right/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_left",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_left/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  }
+ ],
+ "fixed_gun_on_gimbal_hardpoint": [
+  {
+   "slot": "hardpoint_turret_base_upper/hardpoint_weapon_left/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 3,
+   "sizeMax": 3,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "bd13235d-1261-4b71-b32f-aed1a8beb526",
+    "name": "CF-337 Panther Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_turret_base_upper/hardpoint_weapon_right/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 3,
+   "sizeMax": 3,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "bd13235d-1261-4b71-b32f-aed1a8beb526",
+    "name": "CF-337 Panther Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_radar",
+   "type": "Radar",
+   "sizeMin": 1,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "Radar",
+     "subTypes": [
+      "ShortRangeRadar",
+      "MidRangeRadar"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "3260e018-64ca-42e9-b85a-8b80d24d5375",
+    "name": "Surveyor"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_quantum_drive",
+   "type": "QuantumDrive",
+   "sizeMin": 2,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "QuantumDrive",
+     "subTypes": [
+      "QDrive"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "74cc0d0b-1bf5-436c-a38c-1baf93962b89",
+    "name": "Bolon"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_shield_generator",
+   "type": "Shield",
+   "sizeMin": 3,
+   "sizeMax": 3,
+   "compatibleTypes": [
+    {
+     "type": "Shield",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "3a2e37f0-dc95-4082-b74d-fe968ed64eb3",
+    "name": "Stronghold"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_powerplant_right",
+   "type": "PowerPlant",
+   "sizeMin": 2,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "PowerPlant",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "be3eb52b-243a-4ed9-833a-d348f910a32a",
+    "name": "Diligence"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_powerplant_left",
+   "type": "PowerPlant",
+   "sizeMin": 2,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "PowerPlant",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "be3eb52b-243a-4ed9-833a-d348f910a32a",
+    "name": "Diligence"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_cooler_right",
+   "type": "Cooler",
+   "sizeMin": 1,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "Cooler",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "553f7473-1d24-41b5-bd53-baa4190464d0",
+    "name": "CoolCore"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_right",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_right/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_cooler_left",
+   "type": "Cooler",
+   "sizeMin": 1,
+   "sizeMax": 2,
+   "compatibleTypes": [
+    {
+     "type": "Cooler",
+     "subTypes": []
+    }
+   ],
+   "item": {
+    "uuid": "553f7473-1d24-41b5-bd53-baa4190464d0",
+    "name": "CoolCore"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_top_left",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "uuid-fixed-s5",
+    "name": "Fixed S5 Cannon"
+   },
+   "source": "fitted"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_right",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_right/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_left",
+   "type": "Turret",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "Turret",
+     "subTypes": [
+      "GunTurret"
+     ]
+    },
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "99e0ea17-45fc-4700-8607-ab879d05a284",
+    "name": "VariPuck S5 Gimbal Mount"
+   },
+   "source": "stock"
+  },
+  {
+   "slot": "hardpoint_gun_laser_bottom_left/hardpoint_class_2",
+   "type": "WeaponGun",
+   "sizeMin": 5,
+   "sizeMax": 5,
+   "compatibleTypes": [
+    {
+     "type": "WeaponGun",
+     "subTypes": [
+      "Gun"
+     ]
+    }
+   ],
+   "item": {
+    "uuid": "4170fcb0-0cef-4228-a3d5-7efc41ba4ea3",
+    "name": "CF-557 Galdereen Repeater"
+   },
+   "source": "stock"
+  }
+ ]
+}

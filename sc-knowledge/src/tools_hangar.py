@@ -7,10 +7,20 @@ nickname fuzzy -> owned model name/token (with community shorthand like
 `ambiguous` with display-label candidates; nothing -> `not_found` with the
 member's owned ships listed.
 
-Fit-check slot compatibility uses the hangar API's effective-loadout entries
-(`type`, `sizeMin`, `sizeMax`): an item fits a slot when its Wiki type equals
-the slot type and its size is within the range. Verdicts compare the item's
-per-type key stat -- the same default stat sc_compare_components ranks by.
+Fit-check slot compatibility is the SAME rule as hangar-service's
+`check_compatible`, applied to the effective-loadout entries (`type`,
+`sizeMin`, `sizeMax`, `compatibleTypes`): the item's type must be one of the
+slot's compatible types (falling back to the slot's own type), a listed
+sub-type is enforced only when the item states a real one (not empty /
+"UNDEFINED"), and the size must be within the range. Verdicts compare the
+item's per-type key stat -- the same default stat sc_compare_components
+ranks by.
+
+Time budget: the voice sidecar bounds a whole tool call at 6s, including
+opening the MCP session. So the hangar fetch and the item lookup run
+concurrently, the item lookup is capped, every tool call has an overall
+deadline, and the current-item stat lookups only get what is left of it
+(running out yields verdict `unknown`, never a cancelled call).
 """
 import asyncio
 import logging
@@ -34,9 +44,17 @@ _FUZZY_CLEAR_LEAD = 5.0
 # Relative key-stat difference at or under which two different items are a
 # sidegrade rather than an up/downgrade.
 _SIDEGRADE_PCT = 2.0
-# Per current-item stat lookup; the whole tool call must stay inside the
-# voice sidecar's 6s bound (hangar fetch is capped at 3s separately).
+# Overall per-tool-call deadline, target-item lookup cap, and per-attempt
+# cap on a current-item stat lookup (which also never exceeds what is left
+# of the deadline). The hangar client caps its own fetch at 3s.
+_TOOL_DEADLINE_S = 5.0
+_ITEM_TIMEOUT_S = 3.0
 _LOOKUP_TIMEOUT_S = 2.0
+
+# Component types hangar-service tracks as slots (its catalog SLOT_TYPES).
+# Missiles (ordnance on racks) are not tracked -- a known limitation.
+TRACKED_TYPES = frozenset({"QuantumDrive", "Shield", "PowerPlant", "Cooler", "Radar", "WeaponGun",
+                           "Turret", "MissileLauncher", "WeaponMining", "TractorBeam"})
 
 # Community shorthand -> a token of the official model name. Only needed for
 # nicknames that are neither a token nor a prefix of the real name ("harb"
@@ -152,6 +170,38 @@ def resolve_ship(query: str, ships: list[dict]) -> tuple[str, list[dict], str | 
     return "not_found", [], None
 
 
+def _real_sub_type(sub) -> str | None:
+    return sub if sub and str(sub).upper() != "UNDEFINED" else None
+
+
+def slot_mismatch(slot: dict, itype: str | None, isub: str | None, isize) -> str | None:
+    """None when the item fits `slot` (hangar-service check_compatible rule),
+    else which test failed: "type", "sub_type" or "size"."""
+    compat = slot.get("compatibleTypes") or []
+    allowed = [c.get("type") for c in compat] or [slot.get("type")]
+    if itype not in allowed:
+        return "type"
+    entries = [c for c in compat if c.get("type") == itype]
+    listed = [c.get("subTypes") or [] for c in entries]
+    isub = _real_sub_type(isub)
+    if isub and entries and all(listed) and not any(isub in subs for subs in listed):
+        return "sub_type"
+    if isize is None:
+        return None  # unknown item size: reported with size_unverified
+    lo, hi = slot.get("sizeMin"), slot.get("sizeMax")
+    if (lo is not None and isize < lo) or (hi is not None and isize > hi):
+        return "size"
+    return None
+
+
+def _same_item(ref: dict, target_uuid: str | None, target_name: str | None) -> bool:
+    # Distinct items can share a display name (two different "CF-227 Badger
+    # Repeater"s), so when both uuids are known only the uuid decides.
+    if ref.get("uuid") and target_uuid:
+        return ref["uuid"] == target_uuid
+    return normalise(ref.get("name") or "") == normalise(target_name or "")
+
+
 def _verdict(item_value, current_value, lower_is_better: bool) -> tuple[str, float | None]:
     if item_value is None or current_value is None:
         return "unknown", None
@@ -168,12 +218,17 @@ def _verdict(item_value, current_value, lower_is_better: bool) -> tuple[str, flo
 
 
 class HangarTools:
-    def __init__(self, client, items) -> None:
+    def __init__(self, client, items, *, deadline_s: float = _TOOL_DEADLINE_S,
+                 item_timeout_s: float = _ITEM_TIMEOUT_S,
+                 lookup_timeout_s: float = _LOOKUP_TIMEOUT_S) -> None:
         """`client`: HangarClient (or None when HANGAR_API_URL is unset).
         `items`: anything with `async component(name_or_uuid) -> dict`
         (ItemTools in production)."""
         self._client = client
         self._items = items
+        self._deadline_s = deadline_s
+        self._item_timeout_s = item_timeout_s
+        self._lookup_timeout_s = lookup_timeout_s
 
     async def _hangar(self, member_id: str) -> tuple[dict | None, dict | None]:
         if self._client is None:
@@ -186,11 +241,23 @@ class HangarTools:
                                f"'[Name · 123456789]' label or the conversation roster), "
                                f"not {member_id!r}")
         try:
-            return await self._client.get_hangar(mid), None
+            # The client bounds itself at 3s; this is the belt to that brace.
+            return await asyncio.wait_for(self._client.get_hangar(mid), self._deadline_s), None
+        except TimeoutError:
+            return None, error("unavailable", f"member hangar unavailable: timed out after "
+                                              f"{self._deadline_s}s")
         except HangarUnavailable as e:
             return None, error("unavailable", f"member hangar unavailable: {e}")
         except HangarError as e:
             return None, error(e.code, e.message)
+
+    async def _target(self, item: str) -> dict:
+        try:
+            return await asyncio.wait_for(self._items.component(item), self._item_timeout_s)
+        except TimeoutError:
+            logger.warning("fit-check: item lookup for %r timed out after %ss", item, self._item_timeout_s)
+            return error("wiki_unavailable", f"item lookup for '{item}' timed out after "
+                                             f"{self._item_timeout_s}s")
 
     async def member_hangar(self, member_id: str, ship: str | None = None) -> dict:
         body, err = await self._hangar(member_id)
@@ -217,12 +284,11 @@ class HangarTools:
 
     async def _current_profile(self, ref: dict) -> dict | None:
         """Wiki profile of a fitted item: by uuid first (exact), then name."""
-        attempts = [x for x in (ref.get("uuid"), ref.get("name")) if x]
-        for key in attempts:
+        for key in [x for x in (ref.get("uuid"), ref.get("name")) if x]:
             try:
-                r = await asyncio.wait_for(self._items.component(key), _LOOKUP_TIMEOUT_S)
+                r = await asyncio.wait_for(self._items.component(key), self._lookup_timeout_s)
             except TimeoutError:
-                logger.warning("fit-check: stat lookup for %r timed out after %ss", key, _LOOKUP_TIMEOUT_S)
+                logger.warning("fit-check: stat lookup for %r timed out after %ss", key, self._lookup_timeout_s)
                 return None
             except Exception:
                 logger.warning("fit-check: stat lookup for %r failed", key, exc_info=True)
@@ -231,15 +297,44 @@ class HangarTools:
                 return r
         return None
 
+    async def _profiles(self, refs: dict[tuple, dict], budget_s: float) -> tuple[dict, set]:
+        """Concurrent current-item lookups within `budget_s`. Returns
+        (profiles by ref key, keys whose lookup ran out of time)."""
+        if not refs:
+            return {}, set()
+        tasks = {key: asyncio.ensure_future(self._current_profile(ref)) for key, ref in refs.items()}
+        done, pending = await asyncio.wait(tasks.values(), timeout=max(0.0, budget_s))
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+            logger.warning("fit-check: %d stat lookup(s) ran out of the %ss tool budget",
+                           len(pending), self._deadline_s)
+        profiles, timed_out = {}, set()
+        for key, t in tasks.items():
+            if t in done and not t.cancelled() and t.exception() is None:
+                profiles[key] = t.result()
+            elif t in pending:
+                timed_out.add(key)
+        return profiles, timed_out
+
     async def member_fit_check(self, member_id: str, item: str) -> dict:
-        body, err = await self._hangar(member_id)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._deadline_s
+        (body, err), target = await asyncio.gather(self._hangar(member_id), self._target(item))
         if err is not None:
             return err
-        target = await self._items.component(item)
         if "error" in target:
             return target
         t = target["item"]
-        ttype, tsize = t.get("type"), t.get("size")
+        ttype, tsub, tsize = t.get("type"), t.get("sub_type"), t.get("size")
+        if ttype not in TRACKED_TYPES:
+            if ttype == "Missile":
+                return error("not_tracked", "missiles and missile racks aren't tracked in the member "
+                                            "hangar, so it can't say which ships carry or can use them")
+            return error("not_tracked", f"{t.get('name')} is a {ttype or 'item of unknown type'}, which "
+                                        f"isn't a ship component the member hangar tracks "
+                                        f"({', '.join(sorted(TRACKED_TYPES))})")
         ct = next((c for c in COMPONENT_TYPES.values() if c["wiki_type"] == ttype), None)
         key = ct["default_rank"] if ct else None
         lower = bool(ct and key in ct.get("lower_is_better", ()))
@@ -257,64 +352,88 @@ class HangarTools:
                 not_compatible.append({**base, "reason": "loadout_unavailable",
                                        "detail": "this ship's slots couldn't be loaded from the catalog"})
                 continue
-            same_type = [sl for sl in loadout if sl.get("type") == ttype]
-            if not same_type:
-                not_compatible.append({**base, "reason": "no_slot",
-                                       "detail": f"{s.get('vehicleName')} has no {ttype} slot"})
-                continue
-            fits = [sl for sl in same_type if tsize is None
-                    or ((sl.get("sizeMin") is None or tsize >= sl["sizeMin"])
-                        and (sl.get("sizeMax") is None or tsize <= sl["sizeMax"]))]
+            checks = [(sl, slot_mismatch(sl, ttype, tsub, tsize)) for sl in loadout]
+            fits = [sl for sl, why in checks if why is None]
             if not fits:
-                sizes = ", ".join(sorted({_size_label(sl.get("sizeMin"), sl.get("sizeMax")) for sl in same_type}))
-                not_compatible.append({**base, "reason": "size_mismatch",
-                                       "detail": f"{t.get('name')} is size {tsize}, but the "
-                                                 f"{s.get('vehicleName')}'s {ttype} slots take {sizes}"})
+                size_miss = [sl for sl, why in checks if why == "size"]
+                sub_miss = [sl for sl, why in checks if why == "sub_type"]
+                if size_miss:
+                    sizes = ", ".join(sorted({_size_label(sl.get("sizeMin"), sl.get("sizeMax")) for sl in size_miss}))
+                    not_compatible.append({**base, "reason": "size_mismatch",
+                                           "detail": f"{t.get('name')} is size {tsize}, but the "
+                                                     f"{s.get('vehicleName')}'s {ttype} slots take {sizes}"})
+                elif sub_miss:
+                    subs = sorted({x for sl in sub_miss for c in (sl.get("compatibleTypes") or [])
+                                   if c.get("type") == ttype for x in (c.get("subTypes") or [])})
+                    not_compatible.append({**base, "reason": "no_slot",
+                                           "detail": f"{s.get('vehicleName')}'s {ttype} slots take "
+                                                     f"{', '.join(subs)}, not {tsub}"})
+                else:
+                    not_compatible.append({**base, "reason": "no_slot",
+                                           "detail": f"{s.get('vehicleName')} has no {ttype} slot"})
                 continue
+            # A mount slot of another type that also accepts the item (a gimbal
+            # Turret hardpoint accepting WeaponGun) is only offered when it has
+            # no fitting child visible -- the child is where the item goes.
+            names = [sl.get("slot") or "" for sl in fits]
+            fits = [sl for sl in fits if sl.get("type") == ttype
+                    or not any(n.startswith((sl.get("slot") or "") + "/") for n in names)]
             candidates.append((base, fits))
 
-        # One stat lookup per distinct fitted item, concurrently.
         refs: dict[tuple, dict] = {}
         for _, fits in candidates:
             for sl in fits:
                 ref = sl.get("item")
-                if ref:
+                if ref and not _same_item(ref, target.get("uuid"), t.get("name")):
                     refs.setdefault((ref.get("uuid"), ref.get("name")), ref)
-        profiles = dict(zip(refs, await asyncio.gather(*(self._current_profile(r) for r in refs.values()))))
+        profiles, timed_out = await self._profiles(refs, deadline - loop.time())
 
         out_ships = []
         for base, fits in candidates:
             rows = []
             for sl in fits:
                 ref = sl.get("item")
+                cross_type = sl.get("type") != ttype
                 row = {"slot": sl.get("slot"), "size": _size_label(sl.get("sizeMin"), sl.get("sizeMax")),
                        "item_value": t_value}
                 if not ref:
                     row.update(current=None, verdict="upgrade", delta_pct=None,
                                reason="slot is empty -- anything that fits is an upgrade")
-                elif (ref.get("uuid") and ref.get("uuid") == target.get("uuid")) or \
-                        normalise(ref.get("name") or "") == normalise(t.get("name") or ""):
+                elif _same_item(ref, target.get("uuid"), t.get("name")):
                     row.update(current={"name": ref.get("name"), "source": sl.get("source"),
                                         "value": t_value},
                                verdict="same", delta_pct=0.0)
                 else:
-                    prof = profiles.get((ref.get("uuid"), ref.get("name")))
-                    c_value = ((prof or {}).get("item", {}).get("key_stats") or {}).get(key) if key else None
+                    rkey = (ref.get("uuid"), ref.get("name"))
+                    prof = profiles.get(rkey)
+                    p_item = (prof or {}).get("item") or {}
+                    if cross_type and prof is not None and p_item.get("type") != ttype:
+                        continue  # the mount holds a gimbal/turret, not an item of this type
+                    c_value = (p_item.get("key_stats") or {}).get(key) if key else None
                     verdict, delta = _verdict(t_value, c_value, lower)
                     row.update(current={"name": ref.get("name"), "source": sl.get("source"),
                                         "value": c_value},
                                verdict=verdict, delta_pct=delta)
                     if verdict == "unknown":
-                        row["reason"] = (f"no comparable {key} figure for one of the items"
-                                         if key else f"no key stat is defined for {ttype}")
+                        if rkey in timed_out:
+                            row["reason"] = "ran out of time looking up the fitted item's stats"
+                        elif not key:
+                            row["reason"] = f"no key stat is defined for {ttype}"
+                        else:
+                            row["reason"] = f"no comparable {key} figure for one of the items"
                 if tsize is None:
                     row["size_unverified"] = True
                 rows.append(row)
-            out_ships.append({**base, "slots": rows})
+            if rows:
+                out_ships.append({**base, "slots": rows})
+            else:
+                not_compatible.append({**base, "reason": "no_slot",
+                                       "detail": f"its only mounts that accept a {ttype} currently hold "
+                                                 f"a gimbal/turret, not a {ttype}"})
 
         out = {"source": SOURCE, "game_version": target.get("game_version"),
                "member": body.get("member"),
-               "item": {k: t.get(k) for k in ("name", "type", "size", "grade", "class", "key_stats")},
+               "item": {k: t.get(k) for k in ("name", "type", "sub_type", "size", "grade", "class", "key_stats")},
                "key_stat": key, "order": "asc" if lower else "desc",
                "ships": out_ships, "not_compatible": not_compatible}
         if target.get("stale"):

@@ -330,7 +330,8 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         upgrade / downgrade / sidegrade / same -- on the key stat
         sc_compare_components ranks by; ships it can't fit are listed
         separately with the reason (size_mismatch: the ship has that kind of
-        slot but the wrong size; no_slot: no such slot at all). Call this
+        slot but the wrong size; no_slot: no such slot at all). Missiles and
+        missile racks are not tracked in the hangar. Call this
         ONLY when the question is about a member's own ships ("I looted a
         Hemera, is it an upgrade for any of my ships?", "can Micro use it?")
         -- any member's ID works. member_id is the member's numeric Discord
