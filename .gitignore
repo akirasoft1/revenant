@@ -56,3 +56,7 @@ voice-fixtures/
 
 # Org-curated Star Citizen guides: private, never commit (repo is public)
 OrgGuides/
+
+# Local secret files of any .env variant (e.g. .env_sc_hanger) — never commit.
+.env_*
+.env-*

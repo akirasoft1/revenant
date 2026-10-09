@@ -3,6 +3,8 @@
 # .dockerignore published .env (and a GCP SA key) into public Docker Hub layers.
 .env
 .env.*
+.env_*
+.env-*
 !.env.example
 .envrc
 service_account_key.json
