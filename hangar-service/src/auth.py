@@ -8,27 +8,39 @@ Shape: a request is authenticated by a CHAIN of credential resolvers
 - raises ``AuthError`` -- a credential of its kind WAS presented and is bad.
   The chain stops: a bad token is never silently retried as another kind.
 
-Today there is one resolver, ``GoogleIdTokenResolver`` (service callers: the
-bot and sc-knowledge, holding a Google-signed ID token for SA ``hangar-api@``).
-Project 2 (web editor) adds a Discord-OAuth session resolver that returns
-``Principal(kind="discord_session", subject=<discordId>, acting_member=<discordId>)``
--- routes and ``authorize_write`` stay unchanged.
+Resolvers, in chain order:
+
+1. ``GoogleIdTokenResolver`` -- service callers (the bot and sc-knowledge,
+   holding a Google-signed ID token for SA ``hangar-api@``) ->
+   ``Principal(kind="service", acting_member=<X-Acting-Member header>)``.
+2. ``DiscordSessionResolver`` (only when browser auth is configured) -- the web
+   editor's signed ``__Host-hangar_session`` cookie ->
+   ``Principal(kind="session", subject=<discordId>, acting_member=<discordId>, user=...)``.
+   ``X-Acting-Member`` is IGNORED for sessions: a browser acts only as itself.
+
+A valid Bearer token therefore always wins over a cookie; a bad Bearer token
+is a 401 even with a valid cookie (the chain stops on a bad credential).
 
 Write rule (``authorize_write``): the principal's acting member must equal the
 path member, or be in ``HANGAR_ADMIN_IDS``. Service callers state the acting
-member in ``X-Acting-Member``; reads need none.
+member in ``X-Acting-Member``; reads need none. Session principals' writes
+must additionally be same-origin (``check_same_origin``) -- CSRF protection on
+top of the ``SameSite=Lax`` cookie.
 """
 import asyncio
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Protocol
+from urllib.parse import urlsplit
 
 from google.auth import exceptions as gexc
 from google.oauth2 import id_token
 
 from starlette.requests import Request
+
+from .session import SESSION_COOKIE, InvalidSession, SessionCodec, SessionUser
 
 log = logging.getLogger(__name__)
 
@@ -50,9 +62,10 @@ class Forbidden(Exception):
 
 @dataclass(frozen=True)
 class Principal:
-    kind: str                  # "service" (Google ID token) | future: "discord_session"
+    kind: str                  # "service" (Google ID token) | "session" (Discord browser session)
     subject: str               # caller SA email, or the Discord ID of a session
     acting_member: str | None  # the Discord member the request acts as (writes)
+    user: SessionUser | None = field(default=None, compare=False)   # session principals only
 
 
 class CredentialResolver(Protocol):
@@ -105,6 +118,14 @@ class CachingRequest:
         return resp
 
 
+def _scrub_token(text: str, token: str) -> str:
+    """Remove the raw token, and each of its dot-separated segments, from ``text``."""
+    for piece in sorted({token, *token.split(".")}, key=len, reverse=True):
+        if len(piece) >= 4:
+            text = text.replace(piece, "<token>")
+    return text
+
+
 class GoogleIdTokenVerifier:
     """The production ``TokenVerifier``: ``google.oauth2.id_token.verify_oauth2_token``
     (signature against Google's certs, expiry, issuer ``accounts.google.com``,
@@ -124,7 +145,11 @@ class GoogleIdTokenVerifier:
         except gexc.TransportError as e:
             raise AuthUnavailable(f"could not fetch Google signing certs: {e}") from e
         except (ValueError, gexc.GoogleAuthError) as e:
-            raise AuthError(f"invalid ID token: {e}") from e
+            # google-auth messages can quote the token (e.g. "Wrong number of
+            # segments in token: b'...'"): log the reason with the token
+            # scrubbed, and never echo it to the caller.
+            log.warning("hangar: invalid ID token (%s): %s", type(e).__name__, _scrub_token(str(e), token))
+            raise AuthError("invalid ID token") from None
 
 
 class GoogleIdTokenResolver:
@@ -161,6 +186,44 @@ class GoogleIdTokenResolver:
         return Principal(kind="service", subject=email, acting_member=acting)
 
 
+class DiscordSessionResolver:
+    """``__Host-hangar_session`` cookie -> session Principal. No cookie -> not
+    applicable; a cookie that fails verification (tampered / expired /
+    signed with another key) -> 401."""
+
+    def __init__(self, codec: SessionCodec) -> None:
+        self._codec = codec
+
+    async def resolve(self, request: Request) -> Principal | None:
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            return None
+        try:
+            user = self._codec.verify_session(token)
+        except InvalidSession as e:
+            raise AuthError(f"browser session invalid or expired: {e}") from None
+        return Principal(kind="session", subject=user.discord_id, acting_member=user.discord_id,
+                         user=user)
+
+
+def check_same_origin(request: Request, public_origin: str) -> None:
+    """CSRF guard for session-principal writes: ``Origin`` must equal the
+    editor's public origin; without an ``Origin`` header, ``Referer`` must be
+    on that origin. Raises ``Forbidden`` otherwise (incl. neither header)."""
+    origin = request.headers.get("origin")
+    if origin is not None:
+        if origin == public_origin:
+            return
+        raise Forbidden(f"cross-origin write refused (Origin {origin!r} is not {public_origin})")
+    referer = request.headers.get("referer")
+    if referer:
+        parts = urlsplit(referer)
+        if f"{parts.scheme}://{parts.netloc}" == public_origin:
+            return
+        raise Forbidden(f"cross-origin write refused (Referer is not on {public_origin})")
+    raise Forbidden("browser writes must carry an Origin or Referer header (same-origin check)")
+
+
 class Authenticator:
     """Runs credential resolvers in order; the first non-None result wins."""
 
@@ -172,7 +235,8 @@ class Authenticator:
             principal = await r.resolve(request)
             if principal is not None:
                 return principal
-        raise AuthError("no credentials (expected Authorization: Bearer <Google ID token>)")
+        raise AuthError("no credentials (expected Authorization: Bearer <Google ID token> "
+                        "or a __Host-hangar_session login cookie)")
 
 
 def authorize_write(principal: Principal, member_id: str, admin_ids: frozenset[str]) -> None:

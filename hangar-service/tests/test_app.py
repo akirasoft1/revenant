@@ -9,7 +9,6 @@ from src.app import create_app
 from src.auth import AuthError, AuthUnavailable
 from src.catalog import Slot, build_catalog
 from src.config import load
-from src.http import UpstreamError
 from src.repository import InMemoryShipRepository
 from tests.conftest import HARBINGER_UUID, HEMERA_UUID, TAURUS_UUID, wiki_handler
 
@@ -117,6 +116,18 @@ def test_healthz_unauthenticated_and_no_upstream_calls(client, wiki_calls):
     ("DELETE", f"/v1/members/{SELF}/ships/abc"),
     ("PUT", f"/v1/members/{SELF}/ships/abc/slots/x"),
     ("DELETE", f"/v1/members/{SELF}/ships/abc/slots/x"),
+    ("GET", "/v1/members"),
+    # the browser aliases (same handlers under /api)
+    ("GET", f"/api/v1/members/{SELF}/hangar"),
+    ("GET", "/api/v1/catalog/vehicles?q=harbinger"),
+    ("GET", f"/api/v1/catalog/vehicles/{TAURUS_UUID}/slots"),
+    ("GET", "/api/v1/catalog/items?type=QuantumDrive"),
+    ("POST", f"/api/v1/members/{SELF}/ships"),
+    ("PATCH", f"/api/v1/members/{SELF}/ships/abc"),
+    ("DELETE", f"/api/v1/members/{SELF}/ships/abc"),
+    ("PUT", f"/api/v1/members/{SELF}/ships/abc/slots/x"),
+    ("DELETE", f"/api/v1/members/{SELF}/ships/abc/slots/x"),
+    ("GET", "/api/v1/members"),
 ])
 def test_every_v1_route_requires_auth(client, wiki_calls, headers, method, path):
     r = client.request(method, path, headers={**headers, "X-Acting-Member": SELF}, json={"bogus": 1})
@@ -543,6 +554,9 @@ def test_catalog_items(client):
     r = client.get("/v1/catalog/items", params={"type": "quantumdrive", "size": 2}, headers=H())
     assert r.status_code == 200
     assert len(r.json()["items"]) == 20
+    # picker extras (keyStat / cheapestPrice) stay out of this route's shape
+    assert set(r.json()["items"][0]) == {"uuid", "name", "className", "type", "subType", "size", "grade",
+                                         "class", "manufacturer"}
     r = client.get("/v1/catalog/items", params={"type": "QuantumDrive", "size": 2, "q": "hem"}, headers=H())
     assert [i["name"] for i in r.json()["items"]] == ["Hemera"]
 

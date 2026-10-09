@@ -13,32 +13,71 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     GET    /v1/catalog/vehicles?q=&limit=
     GET    /v1/catalog/vehicles/{uuid}/slots
     GET    /v1/catalog/items?type=&size=&q=
+    GET    /v1/members                                      member directory (>= 1 ship)
+    GET    /v1/catalog/slot-options?vehicle=<uuid>&slot=<id> compatible items for one slot
+                                                             (+ keyStat, cheapestPrice?)
+    POST   /v1/import/spviewer/preview[?member=]            {file: <spviewer export array>}
+    POST   /v1/import/spviewer/apply[?member=]              {rows: [{rowIndex, mode, shipId?, nickname?}], file}
+
+Every ``/v1/...`` route is ALSO served at ``/api/v1/...`` (same handler): service
+callers use ``/v1`` on the run.app URL, the browser editor uses ``/api/v1``
+through the load balancer. Browser-only routes (web editor, Discord login):
+
+    GET    /api/auth/login?next=/path      302 -> Discord authorize (sets hangar_oauth_state)
+    GET    /api/auth/callback?code&state   302 -> next (sets hangar_session) | /?login_error=<code>
+    POST   /api/auth/logout                204, clears hangar_session
+    GET    /api/me                         {discordId, username, globalName, avatarUrl, isAdmin} | 401
+
+The built web editor (HANGAR_STATIC_DIR, see src/static_site.py) is served
+for every other GET: ``/assets/*`` long-cached, root files short-cached, and
+any non-reserved path (not /api, /v1, /health, /healthz, /assets) ->
+index.html (no-cache, with the SPA CSP). ``GET /version.txt`` = HANGAR_VERSION.
+
+Browser login is configured by DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET /
+HANGAR_SESSION_KEY; without them the login routes and /api/me answer 503
+``unavailable`` and session cookies are not a credential (service callers are
+unaffected). Session-principal writes must be same-origin (Origin/Referer ==
+HANGAR_PUBLIC_ORIGIN) and ignore X-Acting-Member.
 
 Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 ``unauthenticated`` 401, ``forbidden`` 403, ``not_found`` 404, ``ambiguous``
 409 (+ ``candidates``), ``incompatible`` 422, ``invalid_request`` 400,
-``unavailable`` 503 (Wiki / Firestore / Google certs down).
+``unavailable`` 503 (Wiki / Firestore / Google certs down), ``limit`` 409
+(ship cap), ``too_large`` 413 (import upload over 2 MB).
 """
 import asyncio
 import contextlib
+import dataclasses
+import hmac
+import json
 import logging
 import re
-from typing import Any
+import secrets
+import time
+from typing import Any, Awaitable, Callable
 
-from fastapi import Depends, FastAPI, Request
+import httpx
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import (
-    AuthError, AuthUnavailable, Authenticator, CredentialResolver, Forbidden,
+    AuthError, AuthUnavailable, Authenticator, CredentialResolver, DiscordSessionResolver, Forbidden,
     GoogleIdTokenResolver, GoogleIdTokenVerifier, Principal, TokenVerifier, authorize_write,
+    check_same_origin,
 )
+from .discord_oauth import DiscordOAuth, DiscordOAuthError
+from .session import (OAUTH_STATE_COOKIE, OAUTH_STATE_MAX_AGE_S, SESSION_COOKIE, SESSION_MAX_AGE_S,
+                      InvalidSession, SessionCodec, SessionUser)
 from .catalog import UnknownItemType, build_catalog
 from .config import Config
 from .http import UpstreamError
 from .loadout import check_compatible, effective_loadout
+from .options import slot_options
 from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
+from .static_site import NO_CACHE, StaticSite, build_csp
+from .spviewer import MAX_ROWS, MAX_UPLOAD_BYTES, DecodeBudget, RowResult, analyze_row
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +86,66 @@ SHIP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 NICKNAME_MAX = 64
 SLOT_MAX = 300
 FREE_TEXT_MAX = 200
+API_PREFIXES = ("/v1", "/api/v1")     # service callers, browser editor
+MEMBER_DIRECTORY_TTL_S = 60.0
+# The spviewer file is capped at 2 MB; the JSON envelope ({file, rows}) may add a little.
+IMPORT_BODY_MAX = MAX_UPLOAD_BYTES + 64 * 1024
+IMPORT_MODES = ("new", "existing")
+# Concurrent import requests per instance (each may hold a 2 MB body, its
+# parsed JSON and up to 16 MB of decoded loadouts). Full -> 503 ``busy``.
+IMPORT_CONCURRENCY = 2
+
+# On EVERY response (incl. errors and 500s). Task 4's static SPA serving adds
+# its own Cache-Control for assets; these stay.
+SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+# API responses (authenticated / per-user data): never cached by a browser or
+# shared cache, and keyed on the cookie if anything does cache them.
+API_PATH_PREFIXES = ("/v1/", "/api/")
+
+# A login gate decides, after Discord has identified the user, whether they may
+# sign in: returns a login_error code (refused), a SessionUser (allowed, possibly
+# enriched -- e.g. with guildId/nick) or None (allowed unchanged). Receives the
+# user's Discord access token for membership lookups (never log it). May raise
+# DiscordOAuthError (its code becomes the login_error).
+LoginGate = Callable[[SessionUser, str], Awaitable["SessionUser | str | None"]]
+
+
+def guild_login_gate(oauth: DiscordOAuth, allowed_guild_ids: frozenset[str]) -> LoginGate:
+    """Only members of an allowed Discord server may sign in. Guilds are tried
+    in sorted order; the first membership wins (recorded as ``guildId``, with
+    the server nickname as a display-name candidate after globalName). If no
+    guild confirms membership and any lookup was unavailable (429/5xx/network)
+    -> ``discord_unavailable``; otherwise ``not_member``."""
+    async def gate(user: SessionUser, access_token: str):
+        unavailable: DiscordOAuthError | None = None
+        for gid in sorted(allowed_guild_ids):
+            try:
+                member = await oauth.guild_member(access_token, gid)
+            except DiscordOAuthError as e:
+                if e.code != "discord_unavailable":
+                    raise
+                log.warning("hangar: guild membership check for member %s: %s", user.discord_id, e)
+                unavailable = e
+                continue
+            if member is not None and member.get("pending") is True:
+                # Membership screening not passed yet: not (yet) a member.
+                log.info("hangar: member %s is pending membership screening in guild %s",
+                         user.discord_id, gid)
+                continue
+            if member is not None:
+                nick = member.get("nick")
+                return dataclasses.replace(user, guild_id=gid,
+                                           nick=nick if isinstance(nick, str) and nick else None)
+        if unavailable is not None:
+            raise unavailable
+        return "not_member"
+    return gate
 
 
 class ApiError(Exception):
@@ -80,6 +179,50 @@ async def _json_object(request: Request) -> dict:
     if not isinstance(body, dict):
         raise _bad("request body must be a JSON object")
     return body
+
+
+async def _capped_json_object(request: Request, limit: int) -> dict:
+    """The JSON object body, refused with 413 ``too_large`` past ``limit``
+    bytes (checked on Content-Length AND while streaming)."""
+    declared = request.headers.get("content-length") or ""
+    if re.fullmatch(r"[0-9]+", declared) and int(declared) > limit:
+        raise ApiError(413, "too_large", f"request body is over the {limit // 1024} KiB import limit")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise ApiError(413, "too_large", f"request body is over the {limit // 1024} KiB import limit")
+        chunks.append(chunk)
+    try:
+        body = json.loads(b"".join(chunks))
+    except (ValueError, RecursionError):      # RecursionError: absurdly deep nesting
+        raise _bad("request body must be valid JSON") from None
+    if not isinstance(body, dict):
+        raise _bad("request body must be a JSON object")
+    return body
+
+
+def _export_rows(body: dict) -> list:
+    rows = body.get("file")
+    if not isinstance(rows, list):
+        raise _bad("'file' must be the spviewer export: a JSON array of saved loadouts")
+    if len(rows) > MAX_ROWS:
+        raise ApiError(413, "too_large",
+                       f"the export has {len(rows)} loadouts; at most {MAX_ROWS} can be imported at once")
+    return rows
+
+
+def _import_member(principal: Principal, member: str | None) -> str:
+    """Target hangar: ``?member=`` (admins: someone else's) or the acting member."""
+    target = member if member not in (None, "") else principal.acting_member
+    if not target:
+        raise _bad("no target member: pass ?member=<discordId> (or X-Acting-Member as a service caller)")
+    return _check_member(target)
+
+
+def _ship_label(ship: dict) -> str:
+    nick, name = ship.get("nickname"), ship.get("vehicleName") or "ship"
+    return f"{nick} ({name})" if nick else name
 
 
 def _nickname(value: Any) -> str | None:
@@ -125,11 +268,105 @@ async def read_member(discordId: str, principal: Principal = Depends(get_princip
     return _check_member(discordId)
 
 
+def authorize_browser_write(request: Request, principal: Principal) -> None:
+    """CSRF: a session principal's write must come from the editor's own origin.
+    Service (Bearer) callers are unaffected. Every write route must call this
+    (``write_member`` does)."""
+    if principal.kind == "session":
+        check_same_origin(request, request.app.state.config.public_origin)
+
+
 async def write_member(request: Request, discordId: str,
                        principal: Principal = Depends(get_principal)) -> Principal:
     _check_member(discordId)
+    authorize_browser_write(request, principal)
     authorize_write(principal, discordId, request.app.state.config.admin_ids)
     return principal
+
+
+async def ensure_ship_capacity(repository: ShipRepository, member_id: str, *, adding: int,
+                               limit: int) -> None:
+    """409 ``limit`` unless ``member_id`` can take ``adding`` more ships under
+    ``HANGAR_MAX_SHIPS_PER_MEMBER``. Every ship-creating route (add, import
+    apply) must call this before writing."""
+    have = len(await repository.list_ships(member_id))
+    if have + adding > limit:
+        raise ApiError(409, "limit", f"member {member_id} has {have} ships; adding {adding} would exceed "
+                                     f"the limit of {limit} ships per member", limit=limit, shipCount=have)
+
+
+class MemberDirectoryCache:
+    """In-process 60s cache of the member directory. Ship create/delete
+    invalidate it (``invalidate_member_directory``); renames and fits can be up
+    to 60s stale in display names, which is fine."""
+
+    def __init__(self, ttl_s: float, monotonic: Callable[[], float]) -> None:
+        self._ttl = ttl_s
+        self._now = monotonic
+        self._value: list | None = None
+        self._at = 0.0
+
+    def get(self) -> list | None:
+        if self._value is not None and self._now() - self._at < self._ttl:
+            return self._value
+        return None
+
+    def put(self, value: list) -> None:
+        self._value, self._at = value, self._now()
+
+    def invalidate(self) -> None:
+        self._value = None
+
+
+def invalidate_member_directory(app: FastAPI) -> None:
+    app.state.member_directory.invalidate()
+
+
+class SecurityHeadersMiddleware:
+    """Pure ASGI: adds ``SECURITY_HEADERS`` to every response, plus
+    ``Cache-Control: no-store`` (unless set) and ``Vary: Cookie`` on API paths."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        is_api = scope.get("path", "").startswith(API_PATH_PREFIXES)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                apply_security_headers(message.setdefault("headers", []), is_api)
+            await send(message)
+        await self.app(scope, receive, send_wrapper)
+
+
+def apply_security_headers(raw: list, is_api: bool) -> None:
+    """Mutates an ASGI raw header list in place."""
+    present = {k.lower() for k, _ in raw}
+    for k, v in SECURITY_HEADERS.items():
+        if k.lower().encode() not in present:
+            raw.append((k.lower().encode(), v.encode()))
+    if is_api:
+        if b"cache-control" not in present:
+            raw.append((b"cache-control", b"no-store"))
+        vary = [i for i, (k, _) in enumerate(raw) if k.lower() == b"vary"]
+        if vary:
+            i = vary[0]
+            values = [x.strip().lower() for x in raw[i][1].decode().split(",")]
+            if "cookie" not in values:
+                raw[i] = (b"vary", raw[i][1] + b", Cookie")
+        else:
+            raw.append((b"vary", b"Cookie"))
+
+
+def owner_name_for(principal: Principal, member_id: str) -> str | None:
+    """The ``ownerName`` to store on a ship write: the session user's display
+    name when a member edits THEIR OWN hangar in the browser; None otherwise
+    (service writes, and admins editing someone else's hangar, leave it alone)."""
+    if principal.kind == "session" and principal.user is not None and principal.acting_member == member_id:
+        return principal.user.display_name
+    return None
 
 
 # ---------- views ----------
@@ -159,13 +396,31 @@ async def ship_view(catalog, ship: dict) -> dict:
 def create_app(config: Config, *, catalog: Any = None, repository: ShipRepository | None = None,
                verifier: TokenVerifier | None = None,
                resolvers: list[CredentialResolver] | None = None,
-               warm: bool = True) -> FastAPI:
+               warm: bool = True,
+               discord_transport: httpx.AsyncBaseTransport | None = None,
+               clock: Callable[[], float] | None = None,
+               monotonic: Callable[[], float] = time.monotonic,
+               login_gate: LoginGate | None = None) -> FastAPI:
     owns_catalog = catalog is None
     if catalog is None:
         catalog = build_catalog(config.wiki_base, version=config.version)
+    browser_problem = config.browser_auth_problem()
+    codec: SessionCodec | None = None
+    oauth: DiscordOAuth | None = None
+    if browser_problem is None:
+        codec = SessionCodec(config.session_key, clock=clock or time.time,
+                             previous_keys=[config.session_key_previous] if config.session_key_previous else [],
+                             not_before=config.session_not_before,
+                             allowed_guild_ids=config.allowed_guild_ids)
+        oauth = DiscordOAuth(config.discord_client_id, config.discord_client_secret,
+                             config.redirect_uri, transport=discord_transport)
+        if login_gate is None:
+            login_gate = guild_login_gate(oauth, config.allowed_guild_ids)
     if resolvers is None:
         resolvers = [GoogleIdTokenResolver(config.audience, config.allowed_callers,
                                            verifier or GoogleIdTokenVerifier())]
+        if codec is not None:
+            resolvers.append(DiscordSessionResolver(codec))
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -178,6 +433,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         log.info("hangar-service %s ready (storage=%s, wiki=%s, allowed callers=%s, admins=%d)",
                  config.version, config.storage, config.wiki_base,
                  sorted(config.allowed_callers), len(config.admin_ids))
+        if browser_problem is None:
+            log.info("hangar: browser login enabled (origin %s, redirect %s)",
+                     config.public_origin, config.redirect_uri)
+        else:
+            log.warning("hangar: browser login DISABLED (%s) -- /api/auth/* and /api/me answer 503; "
+                        "service callers are unaffected", browser_problem)
         try:
             yield
         finally:
@@ -194,6 +455,14 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     app.state.catalog = catalog
     app.state.repository = repository
     app.state.authenticator = Authenticator(resolvers)
+    app.state.session_codec = codec
+    app.state.member_directory = MemberDirectoryCache(MEMBER_DIRECTORY_TTL_S, monotonic)
+    app.add_middleware(SecurityHeadersMiddleware)
+    for bad in config.rum_origin_problems:
+        log.warning("hangar: HANGAR_RUM_ORIGINS entry %r is not an https origin -- ignored", bad)
+    site = StaticSite(config.static_dir, build_csp(config.rum_origins))
+    app.state.static_site = site
+    router = APIRouter()
 
     # ----- error envelopes -----
 
@@ -239,10 +508,20 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     async def _unexpected(request: Request, e: Exception):
         log.error("hangar: 500 %s %s: unexpected %s: %s", request.method, request.url.path,
                   type(e).__name__, e, exc_info=e)
-        return _err(500, "unavailable", f"internal error: {type(e).__name__}: {e}")
+        # Detail stays in the log. This handler runs in ServerErrorMiddleware,
+        # OUTSIDE SecurityHeadersMiddleware, so it applies the headers itself.
+        resp = _err(500, "unavailable", "internal error (details are in the server log)")
+        apply_security_headers(resp.raw_headers, request.url.path.startswith(API_PATH_PREFIXES))
+        return resp
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, e: StarletteHTTPException):
+        # The web editor: a GET/HEAD no API route matched is a static file or
+        # a client route (-> index.html). Reserved prefixes keep the JSON 404.
+        if e.status_code == 404 and request.method in ("GET", "HEAD"):
+            resp = site.response(request.url.path)
+            if resp is not None:
+                return resp
         code = {404: "not_found", 401: "unauthenticated", 403: "forbidden"}.get(e.status_code, "invalid_request")
         return _err(e.status_code, code, str(e.detail), headers=getattr(e, "headers", None))
 
@@ -257,15 +536,21 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         cached = getattr(app.state.catalog, "vehicle_index_cached", lambda: False)()
         return {"status": "ok", "version": config.version, "vehicleIndexCached": bool(cached)}
 
+    # Build identity (the git short SHA in the image; HANGAR_VERSION).
+    @app.get("/version.txt")
+    async def version_txt():
+        return Response(config.version + "\n", media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": NO_CACHE})
+
     # ----- members -----
 
-    @app.get("/v1/members/{discordId}/hangar")
+    @router.get("/members/{discordId}/hangar")
     async def get_hangar(member: str = Depends(read_member)):
         ships = await app.state.repository.list_ships(member)
         views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in ships))
         return {"member": member, "ships": list(views)}
 
-    @app.post("/v1/members/{discordId}/ships", status_code=201)
+    @router.post("/members/{discordId}/ships", status_code=201)
     async def add_ship(request: Request, discordId: str, principal: Principal = Depends(write_member)):
         body = await _json_object(request)
         vehicle = _required_text(body, "vehicle")
@@ -278,15 +563,18 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if res.status != "match":
             raise _not_found(f"no vehicle matches {vehicle!r}")
         v = res.match
+        await ensure_ship_capacity(app.state.repository, discordId, adding=1,
+                                   limit=config.max_ships_per_member)
         ship = await app.state.repository.create_ship(
             discordId, vehicle_uuid=v["uuid"], vehicle_name=v["name"],
             vehicle_class_name=v.get("className"), nickname=nickname,
-            updated_by=principal.acting_member)
+            updated_by=principal.acting_member, owner_name=owner_name_for(principal, discordId))
+        invalidate_member_directory(app)
         log.info("hangar: member %s added %s (%s) as ship %s (by %s)",
                  discordId, v["name"], v["uuid"], ship["shipId"], principal.acting_member)
         return {"ship": await ship_view(app.state.catalog, ship)}
 
-    @app.patch("/v1/members/{discordId}/ships/{shipId}")
+    @router.patch("/members/{discordId}/ships/{shipId}")
     async def rename_ship(request: Request, discordId: str, shipId: str,
                           principal: Principal = Depends(write_member)):
         _check_ship_id(shipId)
@@ -294,20 +582,22 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if "nickname" not in body:
             raise _bad("'nickname' is required (null clears it)")
         ship = await app.state.repository.set_nickname(
-            discordId, shipId, _nickname(body["nickname"]), updated_by=principal.acting_member)
+            discordId, shipId, _nickname(body["nickname"]), updated_by=principal.acting_member,
+            owner_name=owner_name_for(principal, discordId))
         if ship is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         return {"ship": await ship_view(app.state.catalog, ship)}
 
-    @app.delete("/v1/members/{discordId}/ships/{shipId}")
+    @router.delete("/members/{discordId}/ships/{shipId}")
     async def delete_ship(discordId: str, shipId: str, principal: Principal = Depends(write_member)):
         _check_ship_id(shipId)
         if not await app.state.repository.delete_ship(discordId, shipId):
             raise _not_found(f"member {discordId} has no ship {shipId}")
+        invalidate_member_directory(app)
         log.info("hangar: member %s ship %s deleted (by %s)", discordId, shipId, principal.acting_member)
         return {"deleted": True, "shipId": shipId}
 
-    @app.put("/v1/members/{discordId}/ships/{shipId}/slots/{slot:path}")
+    @router.put("/members/{discordId}/ships/{shipId}/slots/{slot:path}")
     async def fit_slot(request: Request, discordId: str, shipId: str, slot: str,
                        principal: Principal = Depends(write_member)):
         _check_ship_id(shipId)
@@ -333,17 +623,19 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         stock = target.stock_item
         if stock and stock.get("uuid") == item.get("uuid"):
             # `fitted` holds only changes from stock: fitting the stock item is a reset.
-            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=principal.acting_member)
+            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=principal.acting_member,
+                                            owner_name=owner_name_for(principal, discordId))
         else:
             updated = await repo.set_slot(discordId, shipId, slot, item_uuid=item["uuid"],
-                                          item_name=item.get("name"), updated_by=principal.acting_member)
+                                          item_name=item.get("name"), updated_by=principal.acting_member,
+                                          owner_name=owner_name_for(principal, discordId))
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         log.info("hangar: member %s ship %s slot %s <- %s (%s) (by %s)", discordId, shipId, slot,
                  item.get("name"), item.get("uuid"), principal.acting_member)
         return {"ship": await ship_view(catalog, updated)}
 
-    @app.delete("/v1/members/{discordId}/ships/{shipId}/slots/{slot:path}")
+    @router.delete("/members/{discordId}/ships/{shipId}/slots/{slot:path}")
     async def reset_slot(discordId: str, shipId: str, slot: str,
                          principal: Principal = Depends(write_member)):
         # No catalog check: a slot renamed by a patch must still be clearable.
@@ -351,14 +643,15 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if len(slot) > SLOT_MAX:
             raise _not_found(f"no slot {slot!r}")
         updated = await app.state.repository.clear_slot(discordId, shipId, slot,
-                                                        updated_by=principal.acting_member)
+                                                        updated_by=principal.acting_member,
+                                                        owner_name=owner_name_for(principal, discordId))
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         return {"ship": await ship_view(app.state.catalog, updated)}
 
     # ----- catalog -----
 
-    @app.get("/v1/catalog/vehicles")
+    @router.get("/catalog/vehicles")
     async def search_vehicles(q: str = "", limit: str = "25", principal: Principal = Depends(get_principal)):
         try:
             n = int(limit)
@@ -366,7 +659,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             raise _bad("limit must be an integer") from None
         return {"vehicles": await app.state.catalog.search_vehicles(q[:FREE_TEXT_MAX], limit=n)}
 
-    @app.get("/v1/catalog/vehicles/{uuid}/slots")
+    @router.get("/catalog/vehicles/{uuid}/slots")
     async def vehicle_slots(uuid: str, principal: Principal = Depends(get_principal)):
         catalog = app.state.catalog
         vehicle = await catalog.vehicle(uuid)
@@ -375,7 +668,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             raise _not_found(f"no vehicle {uuid!r}")
         return {"vehicle": vehicle, "slots": [s.to_dict() for s in slots]}
 
-    @app.get("/v1/catalog/items")
+    @router.get("/catalog/items")
     async def list_items(type: str | None = None, size: str | None = None, q: str | None = None,
                          principal: Principal = Depends(get_principal)):
         if not type:
@@ -390,6 +683,280 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                 raise _bad("size must be a non-negative integer")
         items = await app.state.catalog.items(type, size=size_n, q=(q or "")[:FREE_TEXT_MAX] or None)
         return {"items": items}
+
+    @router.get("/catalog/slot-options")
+    async def catalog_slot_options(vehicle: str | None = None, slot: str | None = None,
+                                   principal: Principal = Depends(get_principal)):
+        if not vehicle or not slot:
+            raise _bad("'vehicle' (uuid) and 'slot' (slot id) are required")
+        catalog = app.state.catalog
+        slots = await catalog.slots(vehicle) if len(vehicle) <= FREE_TEXT_MAX else None
+        if slots is None:
+            raise _not_found(f"no vehicle {vehicle!r}")
+        target = next((s for s in slots if s.name == slot), None) if len(slot) <= SLOT_MAX else None
+        if target is None:
+            raise _not_found(f"vehicle {vehicle} has no component slot {slot!r}")
+        return {"items": await slot_options(catalog, target)}
+
+    # ----- spviewer import -----
+
+    import_slots = asyncio.Semaphore(IMPORT_CONCURRENCY)
+    app.state.import_slots = import_slots
+
+    @contextlib.asynccontextmanager
+    async def import_slot():
+        # Non-blocking: a full semaphore answers 503 at once instead of queueing
+        # (the fast path of acquire() does not yield when a slot is free).
+        if import_slots.locked():
+            raise ApiError(503, "busy", "the server is busy with other imports; try again in a moment")
+        await import_slots.acquire()
+        try:
+            yield
+        finally:
+            import_slots.release()
+
+    async def _analyze(rows: list, indexes) -> dict[int, RowResult]:
+        budget = DecodeBudget()
+        out: dict[int, RowResult] = {}
+        for i in indexes:
+            out[i] = await analyze_row(app.state.catalog, i, rows[i], budget=budget)
+        return out
+
+    @router.post("/import/spviewer/preview")
+    async def import_preview(request: Request, member: str | None = None,
+                             principal: Principal = Depends(get_principal)):
+        # Read-only (nothing is stored), so no CSRF / write check: any
+        # authenticated caller may preview against any member's ships.
+        target = _import_member(principal, member)
+        # Body first (capped), THEN the slot: a slow upload must not hold one.
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
+        async with import_slot():
+            rows = _export_rows(body)
+            results = await _analyze(rows, range(len(rows)))
+        ships = await app.state.repository.list_ships(target)
+        out = []
+        for i in range(len(rows)):
+            r = results[i]
+            view = r.to_preview()
+            vuuid = r.vehicle["uuid"] if r.vehicle else None
+            view["matchingShips"] = [{"shipId": s["shipId"], "label": _ship_label(s)}
+                                     for s in ships if vuuid and s.get("vehicleUuid") == vuuid]
+            out.append(view)
+        log.info("hangar: spviewer preview for member %s by %s: %d rows, %d changes, %d skipped",
+                 target, principal.acting_member or principal.subject, len(out),
+                 sum(len(v["changes"]) for v in out), sum(len(v["skipped"]) for v in out))
+        return {"rows": out}
+
+    @router.post("/import/spviewer/apply")
+    async def import_apply(request: Request, member: str | None = None,
+                           principal: Principal = Depends(get_principal)):
+        target = _import_member(principal, member)
+        authorize_browser_write(request, principal)
+        authorize_write(principal, target, config.admin_ids)
+        # Body first (capped), THEN the slot: a slow upload must not hold one.
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
+        async with import_slot():
+            return await _apply(principal, target, body)
+
+    async def _apply(principal: Principal, target: str, body: dict) -> dict:
+        rows = _export_rows(body)
+        wanted = body.get("rows")
+        if not isinstance(wanted, list) or not wanted:
+            raise _bad("'rows' must be a non-empty array of {rowIndex, mode, shipId?, nickname?}")
+        if len(wanted) > MAX_ROWS:
+            raise _bad(f"at most {MAX_ROWS} rows can be applied at once")
+        reqs, seen = [], set()
+        for w in wanted:
+            if not isinstance(w, dict):
+                raise _bad("each entry of 'rows' must be an object")
+            idx = w.get("rowIndex")
+            if not isinstance(idx, int) or isinstance(idx, bool) or not 0 <= idx < len(rows):
+                raise _bad(f"rowIndex {idx!r} is not a row of the uploaded file (0..{len(rows) - 1})")
+            if idx in seen:
+                raise _bad(f"rowIndex {idx} is listed twice")
+            seen.add(idx)
+            mode = w.get("mode")
+            if mode not in IMPORT_MODES:
+                raise _bad(f"row {idx}: mode must be one of {list(IMPORT_MODES)}")
+            ship_id = None
+            if mode == "existing":
+                ship_id = w.get("shipId")
+                if not isinstance(ship_id, str) or not SHIP_ID_RE.match(ship_id):
+                    raise _bad(f"row {idx}: mode 'existing' needs a valid shipId")
+            nickname = _nickname(w.get("nickname")) if mode == "new" else None
+            reqs.append({"rowIndex": idx, "mode": mode, "shipId": ship_id, "nickname": nickname})
+
+        # Re-decode server side: client-sent changes are never trusted.
+        results = await _analyze(rows, [r["rowIndex"] for r in reqs])
+        repo = app.state.repository
+        owned = {s["shipId"]: s for s in await repo.list_ships(target)}
+        errors, plan = [], []
+        for r in reqs:
+            res = results[r["rowIndex"]]
+            # Apply is authoritative: an incompletely analysed row (row-level
+            # failure, over the lookup budget, unknown selection category)
+            # would reset its unresolved slots to stock -- never write it.
+            blocked = res.blocking()
+            if blocked is not None:
+                errors.append({"rowIndex": r["rowIndex"], "error": blocked[0], "message": blocked[1]})
+                continue
+            if r["mode"] == "existing":
+                ship = owned.get(r["shipId"])
+                if ship is None:
+                    errors.append({"rowIndex": r["rowIndex"], "error": "not_found",
+                                   "message": f"member {target} has no ship {r['shipId']}"})
+                    continue
+                if ship.get("vehicleUuid") != res.vehicle["uuid"]:
+                    errors.append({"rowIndex": r["rowIndex"], "error": "vehicle_mismatch",
+                                   "message": f"ship {r['shipId']} is a {ship.get('vehicleName')}, but the "
+                                              f"loadout is for a {res.vehicle['name']}"})
+                    continue
+            plan.append((r, res))
+        adding = sum(1 for r, _ in plan if r["mode"] == "new")
+        if adding:
+            await ensure_ship_capacity(repo, target, adding=adding, limit=config.max_ships_per_member)
+        owner_name = owner_name_for(principal, target)
+        by = principal.acting_member or principal.subject
+        updated_ships = []
+        for r, res in plan:
+            ship_id = r["shipId"]
+            if r["mode"] == "new":
+                nickname = r["nickname"] or ((res.loadout_name or "").strip()[:NICKNAME_MAX].strip() or None)
+                v = res.vehicle
+                created = await repo.create_ship(target, vehicle_uuid=v["uuid"], vehicle_name=v["name"],
+                                                 vehicle_class_name=v.get("className"), nickname=nickname,
+                                                 updated_by=by, owner_name=owner_name)
+                ship_id = created["shipId"]
+            updated = await repo.replace_fitted(target, ship_id, res.fitted, updated_by=by,
+                                                owner_name=owner_name)
+            if updated is None:          # deleted concurrently
+                errors.append({"rowIndex": r["rowIndex"], "error": "not_found",
+                               "message": f"member {target} has no ship {ship_id}"})
+                continue
+            log.info("hangar: member %s ship %s %s from spviewer loadout %r (row %d): %d fitted, "
+                     "%d skipped (by %s)", target, ship_id,
+                     "created" if r["mode"] == "new" else "replaced", res.loadout_name, r["rowIndex"],
+                     len(res.fitted), len(res.skipped), by)
+            updated_ships.append(updated)
+        if adding:
+            invalidate_member_directory(app)
+        for e in errors:
+            log.warning("hangar: spviewer import row %s for member %s not applied: %s: %s",
+                        e["rowIndex"], target, e["error"], e["message"])
+        views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in updated_ships))
+        return {"ships": list(views), "errors": errors}
+
+    # ----- member directory -----
+
+    @router.get("/members")
+    async def list_members(principal: Principal = Depends(get_principal)):
+        cached = app.state.member_directory.get()
+        if cached is not None:
+            return {"members": cached}
+        out = []
+        for m in await app.state.repository.list_members():
+            entry = {"discordId": m["discordId"], "shipCount": m["shipCount"]}
+            if m.get("ownerName"):
+                entry["displayName"] = m["ownerName"]
+            out.append(entry)
+        out.sort(key=lambda e: ((e.get("displayName") or e["discordId"]).casefold(), e["discordId"]))
+        app.state.member_directory.put(out)
+        return {"members": out}
+
+    # Every API route is served under both prefixes (same handlers).
+    for prefix in API_PREFIXES:
+        app.include_router(router, prefix=prefix)
+
+    # ----- browser login (web editor) -----
+
+    def require_browser_auth() -> tuple[SessionCodec, DiscordOAuth]:
+        if codec is None or oauth is None:
+            raise ApiError(503, "unavailable",
+                           f"browser login is not configured on this server ({browser_problem})")
+        return codec, oauth
+
+    # __Host- cookies: Secure, Path=/, no Domain (the browser enforces all three).
+    COOKIE_KWARGS = {"path": "/", "secure": True, "httponly": True, "samesite": "lax"}
+
+    def no_store(resp: Response) -> Response:
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.get("/api/auth/login")
+    async def auth_login(next: str | None = None):
+        c, o = require_browser_auth()
+        state = secrets.token_urlsafe(32)
+        resp = RedirectResponse(o.authorize_url(state), status_code=302)
+        resp.set_cookie(OAUTH_STATE_COOKIE, c.sign_state(state, next or "/"),
+                        max_age=OAUTH_STATE_MAX_AGE_S, **COOKIE_KWARGS)
+        return no_store(resp)
+
+    @app.get("/api/auth/callback")
+    async def auth_callback(request: Request, code: str | None = None, state: str | None = None,
+                            error: str | None = None):
+        c, o = require_browser_auth()
+
+        def fail(reason: str, detail: str) -> Response:
+            log.warning("hangar: discord login failed (%s): %s", reason, detail)
+            resp = RedirectResponse(f"/?login_error={reason}", status_code=302)
+            resp.delete_cookie(OAUTH_STATE_COOKIE, **COOKIE_KWARGS)
+            return no_store(resp)
+
+        try:
+            expected, next_path = c.verify_state(request.cookies.get(OAUTH_STATE_COOKIE))
+        except InvalidSession as e:
+            return fail("state_mismatch", f"state cookie: {e}")
+        if not state or not hmac.compare_digest(state.encode(), expected.encode()):
+            return fail("state_mismatch", "state parameter does not match the state cookie")
+        if error:
+            return fail("denied", f"Discord returned error={error!r}")
+        if not code:
+            return fail("missing_code", "callback carried no authorization code")
+        try:
+            access_token = await o.exchange_code(code)
+            user = await o.fetch_user(access_token)
+            # Who may sign in at all (e.g. guild membership) is decided here,
+            # after Discord identified the user and before any session exists.
+            if login_gate is not None:
+                verdict = await login_gate(user, access_token)
+                if isinstance(verdict, str):
+                    return fail(verdict, f"member {user.discord_id} ({user.username}) refused by login gate")
+                if isinstance(verdict, SessionUser):
+                    user = verdict
+        except DiscordOAuthError as e:
+            return fail(e.code, str(e))
+        except Exception as e:     # never a stack trace to the browser
+            log.error("hangar: discord login crashed: %s", type(e).__name__, exc_info=e)
+            return fail("server_error", f"unexpected {type(e).__name__}")
+        resp = RedirectResponse(next_path, status_code=302)
+        resp.set_cookie(SESSION_COOKIE, c.sign_session(user), max_age=SESSION_MAX_AGE_S,
+                        **COOKIE_KWARGS)
+        resp.delete_cookie(OAUTH_STATE_COOKIE, **COOKIE_KWARGS)
+        log.info("hangar: member %s (%s) logged in to the web editor (guild %s)",
+                 user.discord_id, user.username, user.guild_id)
+        return no_store(resp)
+
+    @app.post("/api/auth/logout", status_code=204)
+    async def auth_logout(request: Request):
+        # Same-origin only (no forced cross-site logouts); no session needed.
+        check_same_origin(request, config.public_origin)
+        resp = Response(status_code=204)
+        resp.delete_cookie(SESSION_COOKIE, **COOKIE_KWARGS)
+        return no_store(resp)
+
+    @app.get("/api/me")
+    async def me(request: Request):
+        c, _ = require_browser_auth()
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            raise AuthError("not logged in")
+        try:
+            user = c.verify_session(token)
+        except InvalidSession as e:
+            raise AuthError(f"browser session invalid or expired: {e}") from None
+        return no_store(JSONResponse({
+            "discordId": user.discord_id, "username": user.username, "globalName": user.global_name,
+            "avatarUrl": user.avatar_url, "isAdmin": user.discord_id in config.admin_ids}))
 
     return app
 

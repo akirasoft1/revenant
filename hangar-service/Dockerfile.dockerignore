@@ -1,0 +1,27 @@
+# Context filter for `docker build -f hangar-service/Dockerfile .` (context =
+# repo root). Docker uses <Dockerfile>.dockerignore instead of the root
+# .dockerignore. ALLOW-LIST: ignore everything, re-include only what the image
+# needs. The root holds .env files, service-account keys and private org guides,
+# and the image may be pushed to a public registry -- never widen this lightly.
+*
+
+!hangar-service/requirements.txt
+!hangar-service/src/**
+!hangar-editor/**
+
+# ...but never these, even inside the re-included trees.
+hangar-editor/node_modules
+hangar-editor/dist
+hangar-editor/coverage
+**/__pycache__
+**/*.pyc
+**/.venv
+**/node_modules
+**/.env
+**/.env*
+**/*key*.json
+**/*.pem
+**/*.key
+**/credentials.json
+OrgGuides
+**/OrgGuides

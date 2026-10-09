@@ -27,6 +27,8 @@ from rapidfuzz import fuzz
 
 from .cache import RateLimiter, TTLCache
 from .http import UpstreamClient, UpstreamError
+from .keystats import key_stat
+from .prices import cheapest_price
 
 log = logging.getLogger(__name__)
 
@@ -132,6 +134,15 @@ def item_summary(i: dict) -> dict:
             "type": i.get("type"), "subType": i.get("sub_type"), "size": i.get("size"),
             "grade": i.get("grade"), "class": i.get("class"),
             "manufacturer": _manufacturer_name(i.get("manufacturer"))}
+
+
+ITEM_SUMMARY_KEYS = ("uuid", "name", "className", "type", "subType", "size", "grade", "class", "manufacturer")
+
+
+def item_option(i: dict) -> dict:
+    """``item_summary`` plus the picker extras: ``keyStat`` (or None) and
+    ``cheapestPrice`` (or None) -- see ``keystats`` / ``prices``."""
+    return {**item_summary(i), "keyStat": key_stat(i), "cheapestPrice": cheapest_price(i)}
 
 
 def _search_score(q: str, v: dict) -> float:
@@ -353,6 +364,15 @@ class Catalog:
         scored.sort(key=lambda sv: (-sv[0], (sv[1]["name"] or "").casefold()))
         return [v for _, v in scored[:limit]]
 
+    async def vehicle_by_class_name(self, class_name: str) -> dict | None:
+        """The catalog vehicle whose game ``className`` equals ``class_name``
+        (case-insensitive; e.g. spviewer's ``vehicleClassName``), or None."""
+        wanted = (class_name or "").strip().casefold()
+        if not wanted:
+            return None
+        return next((v for v in await self.vehicle_index()
+                     if (v.get("className") or "").casefold() == wanted), None)
+
     async def resolve_vehicle(self, query: str):
         """Resolve free text (name/slug/uuid/class name, fuzzy) to one catalog
         vehicle -> ``loadout.Resolution``."""
@@ -361,10 +381,8 @@ class Catalog:
 
     # ----- items -----
 
-    async def items(self, type_: str, size: int | None = None, q: str | None = None) -> list[dict]:
-        """Items of a Wiki type (case-insensitive, must be in ``SLOT_TYPES``
-        else ``UnknownItemType``), optionally one size, optionally filtered by
-        a case-insensitive name substring; sorted by name."""
+    async def _item_records(self, type_: str, size: int | None) -> list[dict]:
+        """Cached ``item_option`` records of one type (+ optional size), by name."""
         canonical = normalize_item_type(type_)
         if size is not None:
             size = int(size)
@@ -377,7 +395,7 @@ class Catalog:
                 params["filter[size]"] = size
             while page <= _MAX_PAGES:
                 body = await self._u.get_json("v2/items", {**params, "page": page})
-                out.extend(item_summary(i) for i in body.get("data") or [] if isinstance(i, dict))
+                out.extend(item_option(i) for i in body.get("data") or [] if isinstance(i, dict))
                 last = (body.get("meta") or {}).get("last_page") or 1
                 if page >= last:
                     break
@@ -385,12 +403,23 @@ class Catalog:
             out.sort(key=lambda i: (i["name"] or "").casefold())
             return out
 
-        items = await self._cached(f"items:{canonical}:{size}", fetch)
+        return await self._cached(f"items:{canonical}:{size}", fetch)
+
+    async def items(self, type_: str, size: int | None = None, q: str | None = None) -> list[dict]:
+        """Items of a Wiki type (case-insensitive, must be in ``SLOT_TYPES``
+        else ``UnknownItemType``), optionally one size, optionally filtered by
+        a case-insensitive name substring; sorted by name."""
+        items = await self._item_records(type_, size)
         if q and q.strip():
             needle = q.strip().casefold()
             items = [i for i in items
                      if needle in (i["name"] or "").casefold() or needle in (i["className"] or "").casefold()]
-        return [dict(i) for i in items]
+        return [{k: i.get(k) for k in ITEM_SUMMARY_KEYS} for i in items]
+
+    async def item_options(self, type_: str, size: int | None = None) -> list[dict]:
+        """Like ``items`` (same cache entry, so no extra Wiki call) but each item
+        also carries ``keyStat`` and ``cheapestPrice`` for the web editor's picker."""
+        return copy.deepcopy(await self._item_records(type_, size))
 
     async def item(self, uuid_or_name: str) -> dict | None:
         """One item summary by uuid (or exact Wiki name), None if unknown."""

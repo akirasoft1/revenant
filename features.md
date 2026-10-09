@@ -165,7 +165,9 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Only when asked**: ship data is fetched by tool only for questions about a member's own ships — never injected into prompts or mentioned unprompted; "my" means whoever is speaking, other members resolve via the identity roster
 - **`/hangar`**: `list [member]`, `add ship [nickname] [member]` (catalog autocomplete), `rename ship nickname [member]`, `remove ship [member]` — ephemeral; anyone can list anyone's hangar, edits are self-only unless you're a bot admin
 - **Graceful degradation**: a hangar outage returns "unavailable" to the model (the turn continues) and "Hangar service is unavailable right now." to `/hangar`
-- **Limitations / planned**: no loadout editing yet (slot changes exist in the API; a web loadout editor and chat edits like "I put the Hemera in my Connie" are the next two projects); missiles aren't tracked; no loose inventory (items in storage); no org-wide queries ("who has a ship that fits a size-2 quantum drive?"); optional spviewer import into the editor
+- **Web editor — https://hangar.aklabs.io** (`hangar-editor/`, served by `hangar-service` behind a GCP HTTPS load balancer): Discord sign-in limited to members of the org's Discord server; My hangar (add with catalog search, rename, remove); ship detail with a slot table and a compatible-item picker sorted by the type's key stat (lower-is-better respected) with the cheapest UEX shop price; reset to stock; members directory and read-only views of other hangars (admins can edit); `/hangar list` links to it
+- **spviewer import**: a console snippet exports your saved spviewer.eu loadouts; the editor previews each one (component changes, skipped slots with reasons) and applies it to a new or existing ship — authoritatively (other slots reset to stock), so a loadout that couldn't be fully analysed is refused rather than half-applied
+- **Limitations / planned**: chat edits like "I put the Hemera in my Connie" are the next project; missiles aren't tracked; no loose inventory (items in storage); no org-wide queries ("who has a ship that fits a size-2 quantum drive?"); spviewer's required tags (e.g. nose-only guns) aren't modelled
 
 ### Member Identity (who said what)
 - **Registry**: Mongo `member_identities` holds each member's preferred address name and aliases, cached in memory (3s startup retry, 60s refresh, serialised writes); it is the first layer of `SpeakerNames` resolution, so chat, recall, `/tldr` and voice `[SPEAKER:]` markers all use it
@@ -245,9 +247,9 @@ The "planned" section below reflects items that have NOT yet shipped. Anything p
 - [ ] **Custom personality creation via commands.**
 
 ### Member hangar follow-ups
-- [ ] **Web loadout editor** (project 2): Discord-OAuth browser editor on hangar-service for bulk-seeding loadouts; needs a public-access approach other than Cloud Run invoker IAM.
+- [x] **Web loadout editor** (project 2): https://hangar.aklabs.io — Discord-OAuth browser editor served by hangar-service (Cloud Run with `--no-invoker-iam-check`, app auth only) behind a GCP load balancer; includes spviewer import.
 - [ ] **Chat edits** (project 3): "I put the Hemera in my Connie" records the change via the existing slot `PUT`.
-- [ ] **Loose inventory**, **org-wide queries**, **spviewer import** (from a member's own exported `SCSPVDatabase`/`vehiclesLoadout` rows).
+- [ ] **Loose inventory**, **org-wide queries**. (spviewer import shipped with the web editor.)
 
 ### Digests
 - [ ] **Digests channel feature.** Blocked on a dedicated Discord channel being set up; see project memory.

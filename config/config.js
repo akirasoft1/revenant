@@ -483,6 +483,9 @@ module.exports = {
   hangar: {
     apiUrl: (process.env.HANGAR_API_URL || '').trim(),
     saKeyPath: process.env.HANGAR_SA_KEY_PATH || '/var/secrets/hangar/key.json',
+    // Web editor (https://hangar.aklabs.io): shown as a footer on /hangar list.
+    // Empty = no footer.
+    editorUrl: (process.env.HANGAR_EDITOR_URL || '').trim().replace(/\/+$/, ''),
   },
   // Health check server configuration for Kubernetes probes
   health: {

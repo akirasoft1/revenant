@@ -1,6 +1,7 @@
 // commands/slash/HangarCommand.js
-// /hangar: view and seed members' Star Citizen ships in hangar-service
-// (the seeding path until the web editor exists).
+// /hangar: view and seed members' Star Citizen ships in hangar-service.
+// Bulk editing (fitting, spviewer import) lives in the web editor; /hangar list
+// links to it when HANGAR_EDITOR_URL is set.
 //
 // Omitted `member` = the invoker. Writes for another member need a bot admin;
 // the bot refuses first and hangar-service re-enforces via X-Acting-Member.
@@ -33,7 +34,7 @@ function shipLabel(s) {
 }
 
 class HangarSlashCommand extends BaseSlashCommand {
-  constructor(hangarClient) {
+  constructor(hangarClient, { editorUrl = '' } = {}) {
     const member = (o) => o.setName('member').setDescription('Another member (admin only for changes; default: you)').setRequired(false);
     super({
       data: new SlashCommandBuilder()
@@ -56,6 +57,12 @@ class HangarSlashCommand extends BaseSlashCommand {
       ephemeral: true,
     });
     this.hangarClient = hangarClient;
+    this.editorUrl = String(editorUrl || '').trim();
+  }
+
+  // "\nEdit in the browser: <url>" for /hangar list replies, or '' when unset.
+  _footer() {
+    return this.editorUrl ? `\nEdit in the browser: ${this.editorUrl}` : '';
   }
 
   _available() {
@@ -127,24 +134,26 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
     const ships = (res.data && res.data.ships) || [];
     if (!ships.length) {
-      await this._say(interaction, `No ships in ${who.possessive} hangar yet. Add one with \`/hangar add\`.`);
+      await this._say(interaction, `No ships in ${who.possessive} hangar yet. Add one with \`/hangar add\`.${this._footer()}`);
       return;
     }
     const header = `**${who.self ? 'Your' : `<@${who.targetId}>'s`} hangar** (${ships.length} ship${ships.length === 1 ? '' : 's'})`;
     const lines = ships.map((s) => this._shipLine(s));
+    const footer = this._footer();
+    const budget = MAX_REPLY - footer.length;
     let out = header;
     for (let n = 0; n < lines.length; n++) {
       const remaining = lines.length - n;
       const more = `\n…and ${remaining} more.`;
       const candidate = `${out}\n${lines[n]}`;
       // Keep room for the "…and N more" tail unless this is the last line.
-      if (candidate.length > MAX_REPLY - (n === lines.length - 1 ? 0 : more.length + 2)) {
+      if (candidate.length > budget - (n === lines.length - 1 ? 0 : more.length + 2)) {
         out += more;
         break;
       }
       out = candidate;
     }
-    await this._say(interaction, out);
+    await this._say(interaction, out + footer);
   }
 
   _shipLine(s) {

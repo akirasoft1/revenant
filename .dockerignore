@@ -3,6 +3,8 @@
 # .dockerignore published .env (and a GCP SA key) into public Docker Hub layers.
 .env
 .env.*
+.env_*
+.env-*
 !.env.example
 .envrc
 service_account_key.json
@@ -28,6 +30,11 @@ k8s/overlays/deployed/
 agent-sidecar/
 voice-sidecar/
 sc-knowledge/
+# The member-hangar service + web editor ship in their own image (built from the
+# repo root with hangar-service/Dockerfile.dockerignore). Without these lines the
+# bot's `COPY . .` would bake hangar-editor/node_modules and the hangar venv in.
+hangar-service/
+hangar-editor/
 **/venv/
 **/.venv/
 **/__pycache__/

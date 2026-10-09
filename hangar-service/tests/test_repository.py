@@ -48,7 +48,8 @@ async def _add(repo, member="111", nickname=None, name="Constellation Taurus"):
 async def test_create_returns_full_document_shape(repo):
     ship = await _add(repo, nickname="Big Connie")
     assert set(ship) == {"shipId", "vehicleUuid", "vehicleName", "vehicleClassName", "nickname",
-                         "fitted", "createdAt", "updatedAt", "updatedBy"}
+                         "fitted", "createdAt", "updatedAt", "updatedBy", "ownerName"}
+    assert ship["ownerName"] is None              # not written through a browser session
     assert ship["vehicleName"] == "Constellation Taurus" and ship["nickname"] == "Big Connie"
     assert ship["fitted"] == {} and ship["updatedBy"] == "111"
     datetime.fromisoformat(ship["createdAt"]); datetime.fromisoformat(ship["updatedAt"])
@@ -64,6 +65,39 @@ async def test_list_is_per_member_ordered_by_creation_and_allows_duplicates(repo
     assert a["shipId"] != b["shipId"]
     assert [s["vehicleName"] for s in await repo.list_ships("222")] == ["Vanguard Harbinger"]
     assert await repo.list_ships("nobody") == []
+
+
+async def test_owner_name_is_optional_and_only_changed_when_given(repo):
+    s = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="Taurus", vehicle_class_name=None,
+                               nickname=None, updated_by="111", owner_name="Akira")
+    assert s["ownerName"] == "Akira"
+    u = await repo.set_nickname("111", s["shipId"], "x", updated_by="111")        # service write
+    assert u["ownerName"] == "Akira"
+    u = await repo.set_nickname("111", s["shipId"], "y", updated_by="111", owner_name="Aki")
+    assert u["ownerName"] == "Aki"
+    u = await repo.set_slot("111", s["shipId"], SLOT, item_uuid="i", item_name="G", updated_by="111",
+                            owner_name="Aki2")
+    assert u["ownerName"] == "Aki2"
+    u = await repo.clear_slot("111", s["shipId"], SLOT, updated_by="111", owner_name="Aki3")
+    assert u["ownerName"] == "Aki3"
+    assert await repo.get_ship("111", s["shipId"]) == u
+
+
+async def test_list_members_counts_ships_and_picks_latest_owner_name(repo):
+    assert await repo.list_members() == []
+    await _add(repo, member="111")
+    await repo.create_ship("111", vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                           nickname=None, updated_by="111", owner_name="Old")
+    newest = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                                    nickname=None, updated_by="111", owner_name="Older")
+    await repo.set_nickname("111", newest["shipId"], "n", updated_by="111", owner_name="Akira")
+    await _add(repo, member="222")
+    gone = await _add(repo, member="333")
+    await repo.delete_ship("333", gone["shipId"])
+    members = {m["discordId"]: m for m in await repo.list_members()}
+    assert set(members) == {"111", "222"}                       # a member with 0 ships is absent
+    assert members["111"]["shipCount"] == 3 and members["111"]["ownerName"] == "Akira"
+    assert members["222"] == {"discordId": "222", "shipCount": 1, "ownerName": None}
 
 
 async def test_get_missing_is_none(repo):
@@ -225,3 +259,94 @@ async def test_firestore_auth_errors_are_wrapped():
     with pytest.raises(RepositoryError) as ei:
         await FirestoreShipRepository(NoCreds()).get_ship("111", "s")
     assert "no ADC available" in str(ei.value)
+
+
+async def test_firestore_list_members_uses_ships_collection_group():
+    from types import SimpleNamespace as NS
+
+    def snap(member, ship, data):
+        member_ref = NS(id=member)
+        ref = NS(id=ship, parent=NS(id="ships", parent=member_ref))
+        return NS(id=ship, reference=ref, to_dict=lambda: dict(data))
+
+    t0 = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    snaps = [snap("111", "a", {"ownerName": "Old", "updatedAt": t0}),
+             snap("111", "b", {"ownerName": "New", "updatedAt": t0 + timedelta(hours=1)}),
+             snap("111", "c", {"updatedAt": t0 + timedelta(hours=2)}),     # service write, no name
+             snap("222", "d", {"updatedAt": t0})]
+    groups = []
+
+    class Query:
+        def stream(self, timeout=None):
+            async def gen():
+                for s in snaps:
+                    yield s
+            return gen()
+
+    class Client:
+        def collection_group(self, name):
+            groups.append(name)
+            return Query()
+
+    members = await FirestoreShipRepository(Client()).list_members()
+    assert groups == ["ships"]
+    assert sorted(members, key=lambda m: m["discordId"]) == [
+        {"discordId": "111", "shipCount": 3, "ownerName": "New"},
+        {"discordId": "222", "shipCount": 1, "ownerName": None}]
+
+
+async def test_firestore_update_writes_owner_name_only_when_given():
+    store = _Store()
+    repo = FirestoreShipRepository(store, clock=Clock())
+    ship = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                                  nickname=None, updated_by="111", owner_name="Akira")
+    assert store.calls[0][2]["ownerName"] == "Akira"
+    await repo.set_nickname("111", ship["shipId"], "x", updated_by="111")
+    assert "ownerName" not in store.calls[1][2]
+    await repo.set_nickname("111", ship["shipId"], "x", updated_by="111", owner_name="Aki")
+    assert store.calls[2][2]["ownerName"] == "Aki"
+
+
+# ---------- replace_fitted (spviewer import: authoritative per ship) ----------
+
+async def test_replace_fitted_replaces_the_whole_map(repo):
+    s = await _add(repo)
+    await repo.set_slot("111", s["shipId"], SLOT, item_uuid="old", item_name="Old", updated_by="111")
+    await repo.set_slot("111", s["shipId"], "hardpoint_radar", item_uuid="r", item_name="R", updated_by="111")
+    new = {SLOT: {"itemUuid": "i", "itemName": "Gun"},
+           "hardpoint_quantum_drive": {"itemUuid": "h", "itemName": "Hemera"}}
+    u = await repo.replace_fitted("111", s["shipId"], new, updated_by="999", owner_name="Akira")
+    assert u["fitted"] == new                      # hardpoint_radar reset to stock, SLOT overwritten
+    assert u["updatedBy"] == "999" and u["ownerName"] == "Akira"
+    assert await repo.get_ship("111", s["shipId"]) == u
+    u = await repo.replace_fitted("111", s["shipId"], {}, updated_by="111")
+    assert u["fitted"] == {} and u["ownerName"] == "Akira"
+
+
+async def test_replace_fitted_missing_ship_is_none(repo):
+    assert await repo.replace_fitted("111", "nope", {}, updated_by="111") is None
+    s = await _add(repo, member="111")
+    assert await repo.replace_fitted("222", s["shipId"], {}, updated_by="222") is None
+
+
+async def test_replace_fitted_stores_a_copy():
+    repo = _memory()
+    s = await _add(repo)
+    new = {SLOT: {"itemUuid": "i", "itemName": "Gun"}}
+    await repo.replace_fitted("111", s["shipId"], new, updated_by="111")
+    new[SLOT]["itemUuid"] = "mutated"
+    assert (await repo.get_ship("111", s["shipId"]))["fitted"][SLOT]["itemUuid"] == "i"
+
+
+async def test_firestore_replace_fitted_writes_the_fitted_field():
+    store = _Store()
+    repo = FirestoreShipRepository(store, clock=Clock())
+    ship = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                                  nickname=None, updated_by="111")
+    new = {SLOT: {"itemUuid": "i", "itemName": "Gun"}}
+    u = await repo.replace_fitted("111", ship["shipId"], new, updated_by="222", owner_name="Aki")
+    _, path, fields = store.calls[1]
+    assert path == ("members", "111", "ships", ship["shipId"])
+    assert fields["fitted"] == new and fields["updatedBy"] == "222" and fields["ownerName"] == "Aki"
+    assert u is not None
+    assert await repo.replace_fitted("111", "missing", {}, updated_by="111") is None

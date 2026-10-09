@@ -155,6 +155,59 @@ describe('/hangar', () => {
       expect(i.followUp).not.toHaveBeenCalled();
     });
 
+    describe('web editor footer', () => {
+      const URL = 'https://hangar.aklabs.io';
+      const FOOTER = `Edit in the browser: ${URL}`;
+
+      test('list ends with the editor link when configured', async () => {
+        cmd = new HangarSlashCommand(client, { editorUrl: URL });
+        client.getHangar.mockResolvedValue({ ok: true, data: { ships: [ship()] } });
+        const i = fakeInteraction();
+        await cmd.execute(i, ctx);
+        const t = replyText(i);
+        expect(t).toContain('Vanguard Harbinger');
+        expect(t.endsWith(`\n${FOOTER}`)).toBe(true);
+      });
+
+      test('an empty hangar also points at the editor', async () => {
+        cmd = new HangarSlashCommand(client, { editorUrl: URL });
+        const i = fakeInteraction();
+        await cmd.execute(i, ctx);
+        expect(replyText(i)).toMatch(/no ships/i);
+        expect(replyText(i).endsWith(`\n${FOOTER}`)).toBe(true);
+      });
+
+      test('omitted when HANGAR_EDITOR_URL is unset', async () => {
+        for (const opts of [undefined, {}, { editorUrl: '' }]) {
+          cmd = new HangarSlashCommand(client, opts);
+          client.getHangar.mockResolvedValue({ ok: true, data: { ships: [ship()] } });
+          const i = fakeInteraction();
+          await cmd.execute(i, ctx);
+          expect(replyText(i)).not.toMatch(/Edit in the browser/);
+        }
+      });
+
+      test('the footer survives truncation and the reply stays within 2000 chars', async () => {
+        cmd = new HangarSlashCommand(client, { editorUrl: URL });
+        const ships = [];
+        for (let n = 0; n < 120; n++) ships.push(ship({ shipId: `s${n}`, nickname: `Ship number ${n} with a long nickname`, vehicleName: 'Anvil Carrack Expedition' }));
+        client.getHangar.mockResolvedValue({ ok: true, data: { ships } });
+        const i = fakeInteraction();
+        await cmd.execute(i, ctx);
+        const t = replyText(i);
+        expect(t.length).toBeLessThanOrEqual(2000);
+        expect(t).toMatch(/and \d+ more\.\n/);
+        expect(t.endsWith(`\n${FOOTER}`)).toBe(true);
+      });
+
+      test('not added to write replies', async () => {
+        cmd = new HangarSlashCommand(client, { editorUrl: URL });
+        const i = fakeInteraction({ sub: 'add', strings: { ship: 'harbinger' } });
+        await cmd.execute(i, ctx);
+        expect(replyText(i)).not.toMatch(/Edit in the browser/);
+      });
+    });
+
     test("anyone may list another member's hangar (reads are not admin-gated)", async () => {
       const i = fakeInteraction({ target: { id: OTHER } });
       client.getHangar.mockResolvedValue({ ok: true, data: { ships: [ship()] } });
