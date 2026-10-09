@@ -1,0 +1,3293 @@
+{
+ "data": [
+  {
+   "uuid": "97648869-5fa5-42da-b804-4d9314289539",
+   "name": "Avenger Stalker",
+   "game_name": "Aegis Avenger Stalker",
+   "slug": "aegs-avenger-stalker",
+   "class_name": "AEGS_Avenger_Stalker",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "0079c5d5-1678-4f8c-85ba-18ca8f642af6",
+   "name": "Avenger Titan",
+   "game_name": "Aegis Avenger Titan",
+   "slug": "aegs-avenger-titan",
+   "class_name": "AEGS_Avenger_Titan",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "d9bc09ce-4c74-4f72-892e-a833c094f4e6",
+   "name": "Avenger Titan Renegade",
+   "game_name": "Aegis Avenger Titan Renegade",
+   "slug": "aegs-avenger-titan-renegade",
+   "class_name": "AEGS_Avenger_Titan_Renegade",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "9474f571-8467-4d83-b1fe-f64103d363f4",
+   "name": "Avenger Warlock",
+   "game_name": "Aegis Avenger Warlock",
+   "slug": "aegs-avenger-warlock",
+   "class_name": "AEGS_Avenger_Warlock",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "c9b3ef78-9c47-4052-bf70-ecf32c55c001",
+   "name": "Eclipse",
+   "game_name": "Aegis Eclipse",
+   "slug": "aegs-eclipse",
+   "class_name": "AEGS_Eclipse",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "57bd0ed2-4360-4205-b35e-a89db92fc491",
+   "name": "Eclipse",
+   "game_name": "Aegis Eclipse",
+   "slug": "aegs-eclipse-bis2950",
+   "class_name": "AEGS_Eclipse_BIS2950",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "b6b59889-7226-458e-a6b0-1c9392128a3c",
+   "name": "Gladius",
+   "game_name": "Aegis Gladius",
+   "slug": "aegs-gladius",
+   "class_name": "AEGS_Gladius",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "b3d87a94-6858-4d3c-ba59-1ef29d727d1a",
+   "name": "Gladius Pirate",
+   "game_name": "Aegis Gladius Pirate",
+   "slug": "aegs-gladius-pir",
+   "class_name": "AEGS_Gladius_PIR",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "d6cb3db3-b1e0-47a5-8c62-a64285dbb675",
+   "name": "Gladius Valiant",
+   "game_name": "Aegis Gladius Valiant",
+   "slug": "aegs-gladius-valiant",
+   "class_name": "AEGS_Gladius_Valiant",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "395f30ae-f930-4929-b881-d711fde7e70f",
+   "name": "Hammerhead",
+   "game_name": "Aegis Hammerhead",
+   "slug": "aegs-hammerhead-gs",
+   "class_name": "AEGS_Hammerhead_GS",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "d46f4de1-8dc1-473b-9739-88c9ba7e75a6",
+   "name": "Hammerhead",
+   "game_name": "Aegis Hammerhead",
+   "slug": "aegs-hammerhead",
+   "class_name": "AEGS_Hammerhead",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "0b17b11f-4ac4-4e04-b973-beb6f299b99b",
+   "name": "Hammerhead 2949 Best In Show Edition",
+   "game_name": "Aegis Hammerhead 2949 Best In Show Edition",
+   "slug": "aegs-hammerhead-showdown",
+   "class_name": "AEGS_Hammerhead_Showdown",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "f0caa993-4c6b-4402-8ef1-d91879060f3b",
+   "name": "Idris-M",
+   "game_name": "Aegis Idris-M",
+   "slug": "aegs-idris-m",
+   "class_name": "AEGS_Idris_M",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "4b0585b0-b60b-4c52-a744-d812e5e9ad58",
+   "name": "Idris-P",
+   "game_name": "Aegis Idris-P",
+   "slug": "aegs-idris-p",
+   "class_name": "AEGS_Idris_P",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "e829391e-d1de-408a-ad23-cfa80003f559",
+   "name": "Idris-P",
+   "game_name": "Aegis Idris-P",
+   "slug": "aegs-idris-p-fw-25",
+   "class_name": "AEGS_Idris_P_FW_25",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "841e3ff7-7e71-4573-82a9-909973ae3c05",
+   "name": "Idris-P",
+   "game_name": "Aegis Idris-P",
+   "slug": "aegs-idris-p-tsg",
+   "class_name": "AEGS_Idris_P_TSG",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "deb6d97e-38ce-48a2-9e12-d63eb01a0207",
+   "name": "Idris-P Wikelo War Special",
+   "game_name": "Aegis Idris-P Wikelo War Special",
+   "slug": "aegs-idris-p-collector-military",
+   "class_name": "AEGS_Idris_P_Collector_Military",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "05a4f566-36a4-495c-99a4-dbedc5105cb6",
+   "name": "Javelin",
+   "game_name": "Aegis Javelin",
+   "slug": "aegs-javelin",
+   "class_name": "AEGS_Javelin",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "f05b74b2-06cf-44d0-8607-c09487359384",
+   "name": "Reclaimer",
+   "game_name": "Aegis Reclaimer",
+   "slug": "aegs-reclaimer",
+   "class_name": "AEGS_Reclaimer",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "94d31d2e-5fa8-460c-9fa4-2942b6f0ce33",
+   "name": "Reclaimer 2949 Best In Show Edition",
+   "game_name": "Aegis Reclaimer 2949 Best In Show Edition",
+   "slug": "aegs-reclaimer-showdown",
+   "class_name": "AEGS_Reclaimer_Showdown",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "9a25d006-5706-4c70-9ac6-df795688fe09",
+   "name": "Redeemer",
+   "game_name": "Aegis Redeemer",
+   "slug": "aegs-redeemer",
+   "class_name": "AEGS_Redeemer",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "93e1a434-f4fa-43ee-a40c-71bcae5073bc",
+   "name": "Retaliator",
+   "game_name": "Aegis Retaliator",
+   "slug": "aegs-retaliator",
+   "class_name": "AEGS_Retaliator",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "17276ad3-7636-40b8-969a-877a2b439b37",
+   "name": "Sabre",
+   "game_name": "Aegis Sabre",
+   "slug": "aegs-sabre",
+   "class_name": "AEGS_Sabre",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "9e4b2b2b-1b5a-4d53-84a2-fe6ed1e43172",
+   "name": "Sabre Comet",
+   "game_name": "Aegis Sabre Comet",
+   "slug": "aegs-sabre-comet",
+   "class_name": "AEGS_Sabre_Comet",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "b9bc6679-81ad-472b-8b98-866c72fe6a89",
+   "name": "Sabre Firebird",
+   "game_name": "Aegis Sabre Firebird",
+   "slug": "aegs-sabre-firebird",
+   "class_name": "AEGS_Sabre_Firebird",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "33ba66d8-da04-432b-80b8-566bf6301659",
+   "name": "Sabre Firebird Wikelo War Special",
+   "game_name": "Aegis Sabre Firebird Wikelo War Special",
+   "slug": "aegs-sabre-firebird-collector-milt",
+   "class_name": "AEGS_Sabre_Firebird_Collector_Milt",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "ac7ec306-b272-432e-8284-491da614419c",
+   "name": "Sabre Peregrine",
+   "game_name": "Aegis Sabre Peregrine",
+   "slug": "aegs-sabre-peregrine",
+   "class_name": "AEGS_Sabre_Peregrine",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "a6952b66-a5c5-4550-9fb3-4432e8612d24",
+   "name": "Sabre Peregrine Wikelo Speedy Special",
+   "game_name": "Aegis Sabre Peregrine Wikelo Speedy Special",
+   "slug": "aegs-sabre-peregrine-collector-competition",
+   "class_name": "AEGS_Sabre_Peregrine_Collector_Competition",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "34615358-6b8e-4c27-b29e-f936e254e2a3",
+   "name": "Sabre Raven",
+   "game_name": "Aegis Sabre Raven",
+   "slug": "aegs-sabre-raven",
+   "class_name": "AEGS_Sabre_Raven",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "0e614cd8-a509-4721-a629-b89e6e83569e",
+   "name": "Sabre Raven EX",
+   "game_name": "Aegis Sabre Raven EX",
+   "slug": "aegs-sabre-raven-ex",
+   "class_name": "AEGS_Sabre_Raven_EX",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "58544d8c-f000-47a4-9ec6-ad663dbd8ff0",
+   "name": "Tiburon",
+   "game_name": "Aegis Tiburon",
+   "slug": "aegs-tiburon",
+   "class_name": "AEGS_Tiburon",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "34295443-da9b-4e6c-9335-69d5f3b29a88",
+   "name": "Vanguard Harbinger",
+   "game_name": "Aegis Vanguard Harbinger",
+   "slug": "aegs-vanguard-harbinger",
+   "class_name": "AEGS_Vanguard_Harbinger",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "f80d39f3-50fc-4fca-ada1-76de4c237e3f",
+   "name": "Vanguard Hoplite",
+   "game_name": "Aegis Vanguard Hoplite",
+   "slug": "aegs-vanguard-hoplite",
+   "class_name": "AEGS_Vanguard_Hoplite",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "8aa6a16e-6c06-4db8-ac6d-165f97bf2565",
+   "name": "Vanguard Sentinel",
+   "game_name": "Aegis Vanguard Sentinel",
+   "slug": "aegs-vanguard-sentinel",
+   "class_name": "AEGS_Vanguard_Sentinel",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "a8208d11-32d4-4a4a-82c4-fd7f498b2ae6",
+   "name": "Vanguard Warden",
+   "game_name": "Aegis Vanguard Warden",
+   "slug": "aegs-vanguard",
+   "class_name": "AEGS_Vanguard",
+   "manufacturer": {
+    "name": "Aegis Dynamics",
+    "code": "AEGS"
+   }
+  },
+  {
+   "uuid": "eaeb562d-d4ac-43bd-a843-e8a6d69fad82",
+   "name": "Arrow",
+   "game_name": "Anvil Arrow",
+   "slug": "anvl-arrow",
+   "class_name": "ANVL_Arrow",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "8ffde65b-ee9b-4a50-b386-3111175736b2",
+   "name": "Asgard",
+   "game_name": "Anvil Asgard",
+   "slug": "anvl-asgard",
+   "class_name": "ANVL_Asgard",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "afae3e97-7f7e-45a3-9f3b-fe268479775b",
+   "name": "Asgard Wikelo War Special",
+   "game_name": "Anvil Asgard Wikelo War Special",
+   "slug": "anvl-asgard-collector-military",
+   "class_name": "ANVL_Asgard_Collector_Military",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "a04a1503-ac5c-4520-bc22-4b1a1a198eff",
+   "name": "Ballista",
+   "game_name": "Anvil Ballista",
+   "slug": "anvl-ballista",
+   "class_name": "ANVL_Ballista",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "50f551e3-3435-4cbe-9ecf-8712855a8e27",
+   "name": "Ballista Dunestalker",
+   "game_name": "Anvil Ballista Dunestalker",
+   "slug": "anvl-ballista-dunestalker",
+   "class_name": "ANVL_Ballista_Dunestalker",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "aaeb976b-7a79-4a9c-91ee-07ed05d4a399",
+   "name": "Ballista Snowblind",
+   "game_name": "Anvil Ballista Snowblind",
+   "slug": "anvl-ballista-snowblind",
+   "class_name": "ANVL_Ballista_Snowblind",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "20d5f617-147a-4530-a753-a7afd1875fd1",
+   "name": "C8 Pisces",
+   "game_name": "Anvil C8 Pisces",
+   "slug": "anvl-c8-pisces",
+   "class_name": "ANVL_C8_Pisces",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "1bed9058-e284-4c0f-b561-6ba57ab4f99d",
+   "name": "C8R Pisces Rescue",
+   "game_name": "Anvil C8R Pisces Rescue",
+   "slug": "anvl-c8r-pisces",
+   "class_name": "ANVL_C8R_Pisces",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "831fdcfc-337a-4350-967d-e693d19efeee",
+   "name": "C8X Pisces Expedition",
+   "game_name": "Anvil C8X Pisces Expedition",
+   "slug": "anvl-c8x-pisces-expedition",
+   "class_name": "ANVL_C8X_Pisces_Expedition",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "f6d606c9-b324-4efa-814f-15a59047a6a5",
+   "name": "Carrack",
+   "game_name": "Anvil Carrack",
+   "slug": "anvl-carrack",
+   "class_name": "ANVL_Carrack",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "1c5ffd9c-92d5-4922-a0dd-826a2bcebf02",
+   "name": "Carrack",
+   "game_name": "Anvil Carrack",
+   "slug": "anvl-carrack-bis2950",
+   "class_name": "ANVL_Carrack_BIS2950",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "f1b224dd-273e-488f-9dee-fbf73f44f462",
+   "name": "Carrack Expedition",
+   "game_name": "Anvil Carrack Expedition",
+   "slug": "anvl-carrack-expedition",
+   "class_name": "ANVL_Carrack_Expedition",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "27515ffd-04df-413f-8533-34612d906c7d",
+   "name": "Centurion",
+   "game_name": "Anvil Centurion",
+   "slug": "anvl-centurion",
+   "class_name": "ANVL_Centurion",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "8b7e0d33-21c1-4057-8e5b-bf391b5091b2",
+   "name": "F7A Hornet Mk I",
+   "game_name": "Anvil F7A Hornet Mk I",
+   "slug": "anvl-hornet-f7a-mk1",
+   "class_name": "ANVL_Hornet_F7A_Mk1",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "6759360c-8b2f-4a89-b7c6-82e94b873c1b",
+   "name": "F7A Hornet Mk II",
+   "game_name": "Anvil F7A Hornet Mk II",
+   "slug": "anvl-hornet-f7a-mk2",
+   "class_name": "ANVL_Hornet_F7A_Mk2",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "933ca746-3c36-470f-8245-a247a3776455",
+   "name": "F7C Hornet Mk I",
+   "game_name": "Anvil F7C Hornet Mk I",
+   "slug": "anvl-hornet-f7c",
+   "class_name": "ANVL_Hornet_F7C",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "fb231ba1-dba1-4c9f-823a-746c772ae92f",
+   "name": "F7C Hornet Mk II",
+   "game_name": "Anvil F7C Hornet Mk II",
+   "slug": "anvl-hornet-f7c-mk2",
+   "class_name": "ANVL_Hornet_F7C_Mk2",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "0af2064a-c02d-4801-a434-09d802ba6573",
+   "name": "F7C Hornet Wildfire Mk I",
+   "game_name": "Anvil F7C Hornet Wildfire Mk I",
+   "slug": "anvl-hornet-f7c-wildfire",
+   "class_name": "ANVL_Hornet_F7C_Wildfire",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "b140e32f-a96b-462f-8c7b-e7243577b2f4",
+   "name": "F7C-M Hornet Heartseeker Mk I",
+   "game_name": "Anvil F7C-M Hornet Heartseeker Mk I",
+   "slug": "anvl-hornet-f7cm-heartseeker",
+   "class_name": "ANVL_Hornet_F7CM_Heartseeker",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "6f8bfcc3-2ade-4976-a8e9-fd07de5c3601",
+   "name": "F7C-M Hornet Heartseeker Mk II",
+   "game_name": "Anvil F7C-M Hornet Heartseeker Mk II",
+   "slug": "anvl-hornet-f7cm-mk2-heartseeker",
+   "class_name": "ANVL_Hornet_F7CM_Mk2_Heartseeker",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "4f83f89d-480b-4d1b-867a-13772742d828",
+   "name": "F7C-M Super Hornet Mk I",
+   "game_name": "Anvil F7C-M Super Hornet Mk I",
+   "slug": "anvl-hornet-f7cm",
+   "class_name": "ANVL_Hornet_F7CM",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "8c2eefb6-d880-47c9-8fd0-1f88865d5511",
+   "name": "F7C-M Super Hornet Mk II",
+   "game_name": "Anvil F7C-M Super Hornet Mk II",
+   "slug": "anvl-hornet-f7cm-mk2",
+   "class_name": "ANVL_Hornet_F7CM_Mk2",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "95b11c76-31ea-4bf3-9894-fb29caecb927",
+   "name": "F7C-R Hornet Tracker Mk I",
+   "game_name": "Anvil F7C-R Hornet Tracker Mk I",
+   "slug": "anvl-hornet-f7cr",
+   "class_name": "ANVL_Hornet_F7CR",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "3fbff8f5-90f0-4c97-93f2-62d180aa8736",
+   "name": "F7C-R Hornet Tracker Mk II",
+   "game_name": "Anvil F7C-R Hornet Tracker Mk II",
+   "slug": "anvl-hornet-f7cr-mk2",
+   "class_name": "ANVL_Hornet_F7CR_Mk2",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "63b90c8d-459c-4a27-8cf6-db706ffc49ae",
+   "name": "F7C-S Hornet Ghost Mk I",
+   "game_name": "Anvil F7C-S Hornet Ghost Mk I",
+   "slug": "anvl-hornet-f7cs",
+   "class_name": "ANVL_Hornet_F7CS",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "6fa37a02-3d65-448c-a989-02d42d9574dc",
+   "name": "F7C-S Hornet Ghost Mk II",
+   "game_name": "Anvil F7C-S Hornet Ghost Mk II",
+   "slug": "anvl-hornet-f7cs-mk2",
+   "class_name": "ANVL_Hornet_F7CS_Mk2",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "41494cbf-8d90-4bb5-abd3-3b20cd694fc9",
+   "name": "F7 Hornet Mk Wikelo",
+   "game_name": "Anvil F7 Hornet Mk Wikelo",
+   "slug": "anvl-hornet-f7-mk2-collector-mod",
+   "class_name": "ANVL_Hornet_F7_Mk2_Collector_Mod",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "1e837261-78d9-4d5b-b17c-90d312d6a3dd",
+   "name": "F8A Lightning",
+   "game_name": "Anvil F8A Lightning",
+   "slug": "anvl-lightning-f8",
+   "class_name": "ANVL_Lightning_F8",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "71ac02d7-7345-4409-9d60-25def73279be",
+   "name": "F8C Lightning",
+   "game_name": "Anvil F8C Lightning",
+   "slug": "anvl-lightning-f8c-plat",
+   "class_name": "ANVL_Lightning_F8C_Plat",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "663b6047-5b06-489c-a906-bc91fb7d6e63",
+   "name": "F8C Lightning",
+   "game_name": "Anvil F8C Lightning",
+   "slug": "anvl-lightning-f8c",
+   "class_name": "ANVL_Lightning_F8C",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "b67123fd-72b3-43e7-bfb3-069d59ba6190",
+   "name": "F8C Lightning Executive Edition",
+   "game_name": "Anvil F8C Lightning Executive Edition",
+   "slug": "anvl-lightning-f8c-exec",
+   "class_name": "ANVL_Lightning_F8C_Exec",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "64f7df97-d423-4360-a25b-176801cb4819",
+   "name": "F8C Lightning Wikelo Sneak Special",
+   "game_name": "Anvil F8C Lightning Wikelo Sneak Special",
+   "slug": "anvl-lightning-f8c-collector-stealth",
+   "class_name": "ANVL_Lightning_F8C_Collector_Stealth",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "71f76583-1061-4215-9d05-839a4fb6cabc",
+   "name": "F8C Lightning Wikelo War Special",
+   "game_name": "Anvil F8C Lightning Wikelo War Special",
+   "slug": "anvl-lightning-f8c-collector-military",
+   "class_name": "ANVL_Lightning_F8C_Collector_Military",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "f3f7b2e8-1e11-4649-82c6-3106ec966655",
+   "name": "Gladiator",
+   "game_name": "Anvil Gladiator",
+   "slug": "anvl-gladiator",
+   "class_name": "ANVL_Gladiator",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "c0f1d217-388c-453a-b6c1-3cb5c2cfc4d8",
+   "name": "Hawk",
+   "game_name": "Anvil Hawk",
+   "slug": "anvl-hawk",
+   "class_name": "ANVL_Hawk",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "3a586d52-4829-4504-8e3a-4ee300bb40cc",
+   "name": "Hurricane",
+   "game_name": "Anvil Hurricane",
+   "slug": "anvl-hurricane",
+   "class_name": "ANVL_Hurricane",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "b617902a-6cab-457b-9eb8-494274f659b8",
+   "name": "Paladin",
+   "game_name": "Anvil Paladin",
+   "slug": "anvl-paladin",
+   "class_name": "ANVL_Paladin",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "9c26b25a-9285-4074-94d1-163db2aa8cbb",
+   "name": "Spartan",
+   "game_name": "Anvil Spartan",
+   "slug": "anvl-spartan",
+   "class_name": "ANVL_Spartan",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "0920e187-515d-466a-9c6a-a7dde9d2b1bc",
+   "name": "Terrapin",
+   "game_name": "Anvil Terrapin",
+   "slug": "anvl-terrapin",
+   "class_name": "ANVL_Terrapin",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "35f6ad71-01c6-4762-a18b-99c7fdde9760",
+   "name": "Terrapin Medic",
+   "game_name": "Anvil Terrapin Medic",
+   "slug": "anvl-terrapin-medic",
+   "class_name": "ANVL_Terrapin_Medic",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "61cc74dc-fff7-4a1f-b0bf-6f092bcdf023",
+   "name": "Terrapin Medic Wikelo Savior Special",
+   "game_name": "Anvil Terrapin Medic Wikelo Savior Special",
+   "slug": "anvl-terrapin-medic-collector-medic",
+   "class_name": "ANVL_Terrapin_Medic_Collector_Medic",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "6f0e14a9-cb6c-4b71-ae92-376867bb1be8",
+   "name": "Valkyrie",
+   "game_name": "Anvil Valkyrie",
+   "slug": "anvl-valkyrie-bis2950",
+   "class_name": "ANVL_Valkyrie_BIS2950",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "881e3879-a186-44da-8b47-1d8f0a846438",
+   "name": "Valkyrie",
+   "game_name": "Anvil Valkyrie",
+   "slug": "anvl-valkyrie",
+   "class_name": "ANVL_Valkyrie",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "8f61dc58-74ca-4dc6-aa95-c3105f10bba4",
+   "name": "Khartu-al",
+   "game_name": "Aopoa Khartu-al",
+   "slug": "xian-scout",
+   "class_name": "XIAN_Scout",
+   "manufacturer": {
+    "name": "Aopoa",
+    "code": "XNAA"
+   }
+  },
+  {
+   "uuid": "daddeefa-fef0-4146-b630-a33d6e8904d3",
+   "name": "Nox",
+   "game_name": "Aopoa Nox",
+   "slug": "xian-nox",
+   "class_name": "XIAN_Nox",
+   "manufacturer": {
+    "name": "Aopoa",
+    "code": "XNAA"
+   }
+  },
+  {
+   "uuid": "204a6ce4-1634-4f87-9955-04c70e44c8af",
+   "name": "Nox Kue",
+   "game_name": "Aopoa Nox Kue",
+   "slug": "xian-nox-kue",
+   "class_name": "XIAN_Nox_Kue",
+   "manufacturer": {
+    "name": "Aopoa",
+    "code": "XNAA"
+   }
+  },
+  {
+   "uuid": "8f262a17-633f-43d8-8689-ff345d723b24",
+   "name": "Nox Wikelo Special",
+   "game_name": "Aopoa Nox Wikelo Special",
+   "slug": "xian-nox-collector-mod",
+   "class_name": "XIAN_Nox_Collector_Mod",
+   "manufacturer": {
+    "name": "Aopoa",
+    "code": "XNAA"
+   }
+  },
+  {
+   "uuid": "9634b4d6-9f5a-4ad2-8574-431c15e3bc5d",
+   "name": "San'tok.y\u0101i",
+   "game_name": "Aopoa San'tok.y\u0101i",
+   "slug": "xnaa-santokyai",
+   "class_name": "XNAA_SanTokYai",
+   "manufacturer": {
+    "name": "Aopoa",
+    "code": "XNAA"
+   }
+  },
+  {
+   "uuid": "09c9fa95-5b5a-4200-9ff8-3b288df9925b",
+   "name": "ATLS",
+   "game_name": "Argo ATLS",
+   "slug": "argo-atls",
+   "class_name": "ARGO_ATLS",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "a10bcff6-7985-431f-b0ea-bdb51e6d3f98",
+   "name": "ATLS GEO",
+   "game_name": "Argo ATLS GEO",
+   "slug": "argo-atls-geo",
+   "class_name": "ARGO_ATLS_GEO",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "d4abc245-9a8d-43fe-a33d-c7988af62d0f",
+   "name": "Argo ATLS GEO IKTI",
+   "game_name": "Argo ATLS GEO IKTI",
+   "slug": "argo-atls-geo-ikti",
+   "class_name": "ARGO_ATLS_GEO_IKTI",
+   "manufacturer": {
+    "name": "Banu Souli",
+    "code": "BANU"
+   }
+  },
+  {
+   "uuid": "4a7a4b9d-ae3c-4375-af63-4100f831f43c",
+   "name": "Argo ATLS IKTI",
+   "game_name": "Argo ATLS IKTI",
+   "slug": "argo-atls-ikti",
+   "class_name": "ARGO_ATLS_IKTI",
+   "manufacturer": {
+    "name": "Banu Souli",
+    "code": "BANU"
+   }
+  },
+  {
+   "uuid": "0fd8f4c0-01e1-4410-85af-31ecb96f0897",
+   "name": "Argo ATLS IKTI Akuma",
+   "game_name": "Argo ATLS IKTI Akuma",
+   "slug": "argo-atls-geo-ikti-ntls",
+   "class_name": "ARGO_ATLS_GEO_IKTI_NTLS",
+   "manufacturer": {
+    "name": "Unknown",
+    "code": "UNKN"
+   }
+  },
+  {
+   "uuid": "a13e7de9-3c22-4981-86ec-6b38394d1b10",
+   "name": "Argo ATLS IKTI Rad",
+   "game_name": "Argo ATLS IKTI Rad",
+   "slug": "argo-atls-ikti-argos",
+   "class_name": "ARGO_ATLS_IKTI_ARGOS",
+   "manufacturer": {
+    "name": "Banu Souli",
+    "code": "BANU"
+   }
+  },
+  {
+   "uuid": "e8efe30c-5a1e-4ca2-a956-424b352f80c2",
+   "name": "CSV-SM",
+   "game_name": "Argo CSV-SM",
+   "slug": "argo-csv-cargo",
+   "class_name": "ARGO_CSV_Cargo",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "ecdfd0df-6c5f-4183-a24b-9e1546e00a4e",
+   "name": "MOLE",
+   "game_name": "Argo MOLE",
+   "slug": "argo-mole",
+   "class_name": "ARGO_MOLE",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "ff19fce8-136b-44b6-98a1-8ec25762acb2",
+   "name": "MOLE Alliance",
+   "game_name": "ARGO MOLE Alliance",
+   "slug": "argo-mole-btala",
+   "class_name": "ARGO_MOLE_BTALA",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "aaa12a00-a1e7-4dfc-8626-3bebb005209f",
+   "name": "MOTH",
+   "game_name": "Argo MOTH",
+   "slug": "argo-moth",
+   "class_name": "ARGO_MOTH",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "e19fc6c3-f5fa-4623-9a17-b00a29b71500",
+   "name": "MPUV Cargo",
+   "game_name": "Argo MPUV Cargo",
+   "slug": "argo-mpuv",
+   "class_name": "ARGO_MPUV",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "e17ccf62-f2d2-4c4e-a132-a3000d40fbde",
+   "name": "MPUV Personnel",
+   "game_name": "Argo MPUV Personnel",
+   "slug": "argo-mpuv-transport",
+   "class_name": "ARGO_MPUV_Transport",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "674e0a52-4469-4b55-ba0d-6aecc44d1728",
+   "name": "MPUV Tractor",
+   "game_name": "Argo MPUV Tractor",
+   "slug": "argo-mpuv-1t",
+   "class_name": "ARGO_MPUV_1T",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "cf9aa91e-15bf-435c-a22d-f2cadc4485ce",
+   "name": "RAFT",
+   "game_name": "Argo RAFT",
+   "slug": "argo-raft",
+   "class_name": "ARGO_RAFT",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "84cfa722-9a24-48f1-87af-637f45b340a0",
+   "name": "RAFT Wikelo Work Special",
+   "game_name": "Argo RAFT Wikelo Work Special",
+   "slug": "argo-raft-collector-indust",
+   "class_name": "ARGO_RAFT_Collector_Indust",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "1810d1a7-61e3-4d95-bafb-0f11758c7683",
+   "name": "SRV",
+   "game_name": "Argo SRV",
+   "slug": "argo-srv",
+   "class_name": "ARGO_SRV",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "48a46604-7786-44f5-9c22-fa298fad141e",
+   "name": "ATLS Cool Metal Color",
+   "game_name": "ATLS Cool Metal Color",
+   "slug": "argo-atls-geo-collector-grad03",
+   "class_name": "ARGO_ATLS_GEO_Collector_Grad03",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "f183c17c-eb46-47d6-8029-24f4189be6f2",
+   "name": "ATLS Orange Line",
+   "game_name": "ATLS Orange Line",
+   "slug": "argo-atls-geo-collector-grad02",
+   "class_name": "ARGO_ATLS_GEO_Collector_Grad02",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "8b2016c5-0eba-4cc7-87a2-24b7cd4b82d8",
+   "name": "ATLS Snowland Color",
+   "game_name": "ATLS Snowland Color",
+   "slug": "argo-atls-geo-collector-grad01",
+   "class_name": "ARGO_ATLS_GEO_Collector_Grad01",
+   "manufacturer": {
+    "name": "Argo Astronautics",
+    "code": "ARGO"
+   }
+  },
+  {
+   "uuid": "081236f5-9549-4a60-9123-6ae21f0cd261",
+   "name": "Defender",
+   "game_name": "Banu Defender",
+   "slug": "banu-defender",
+   "class_name": "BANU_Defender",
+   "manufacturer": {
+    "name": "Banu Souli",
+    "code": "BANU"
+   }
+  },
+  {
+   "uuid": "16ff4365-ac34-4b09-a132-d52d51f688d4",
+   "name": "HoverQuad",
+   "game_name": "C.O. HoverQuad",
+   "slug": "cnou-hoverquad",
+   "class_name": "CNOU_HoverQuad",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "a852bb00-e395-468f-9adc-78b3df9c82f6",
+   "name": "Mustang Alpha",
+   "game_name": "C.O. Mustang Alpha",
+   "slug": "cnou-mustang-alpha",
+   "class_name": "CNOU_Mustang_Alpha",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "973bc147-4422-48a6-99c8-6ff0ead25bdf",
+   "name": "Mustang Beta",
+   "game_name": "C.O. Mustang Beta",
+   "slug": "cnou-mustang-beta",
+   "class_name": "CNOU_Mustang_Beta",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "439c5671-acad-4eb6-9f09-ba54165d1cb5",
+   "name": "Mustang CitizenCon 2948 Edition",
+   "game_name": "C.O. Mustang CitizenCon 2948 Edition",
+   "slug": "cnou-mustang-alpha-citizencon2018",
+   "class_name": "CNOU_Mustang_Alpha_CitizenCon2018",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "f8c8fe5c-1aa3-41d7-86b0-6bb54b249541",
+   "name": "Mustang Delta",
+   "game_name": "C.O. Mustang Delta",
+   "slug": "cnou-mustang-delta",
+   "class_name": "CNOU_Mustang_Delta",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "968249b2-ca7c-4b41-8f58-730673fefc8c",
+   "name": "Mustang Gamma",
+   "game_name": "C.O. Mustang Gamma",
+   "slug": "cnou-mustang-gamma",
+   "class_name": "CNOU_Mustang_Gamma",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "1164be4d-623e-4ef7-bc3d-4cdb45c22ec5",
+   "name": "Mustang Omega",
+   "game_name": "C.O. Mustang Omega",
+   "slug": "cnou-mustang-omega",
+   "class_name": "CNOU_Mustang_Omega",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "34506e83-b7b8-4804-a7bb-f31f11bb9214",
+   "name": "Nomad",
+   "game_name": "C.O. Nomad",
+   "slug": "cnou-nomad",
+   "class_name": "CNOU_Nomad",
+   "manufacturer": {
+    "name": "Consolidated Outland",
+    "code": "CNOU"
+   }
+  },
+  {
+   "uuid": "4ce214f3-16e2-d9ea-2b2c-16d0bf1359ba",
+   "name": "Corsair PYAM Exec",
+   "game_name": "Corsair PYAM Exec",
+   "slug": "drak-corsair-exec-stealthindustrial",
+   "class_name": "DRAK_Corsair_Exec_StealthIndustrial",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "4da0c1b0-cc77-86e4-93d5-759a2e6f7581",
+   "name": "Corsair PYAM Exec",
+   "game_name": "Corsair PYAM Exec",
+   "slug": "drak-corsair-exec-military",
+   "class_name": "DRAK_Corsair_Exec_Military",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "c0b86c69-55ac-4af3-a722-d46282813e91",
+   "name": "A1 Spirit",
+   "game_name": "Crusader A1 Spirit",
+   "slug": "crus-spirit-a1",
+   "class_name": "CRUS_Spirit_A1",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "3bee9f2d-4494-4560-b9f8-463bc90695cb",
+   "name": "A2 Hercules Starlifter",
+   "game_name": "Crusader A2 Hercules Starlifter",
+   "slug": "crus-starlifter-a2",
+   "class_name": "CRUS_Starlifter_A2",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "05d033f3-5628-497c-b1c4-8fb112f079a1",
+   "name": "A2 Hercules Starlifter Wikelo War Special",
+   "game_name": "Crusader A2 Hercules Starlifter Wikelo War Special",
+   "slug": "crus-starlifter-a2-collector-military",
+   "class_name": "CRUS_Starlifter_A2_Collector_Military",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "04571d49-0680-4b84-bdb1-dbebeb22c898",
+   "name": "Ares Star Fighter Inferno",
+   "game_name": "Crusader Ares Star Fighter Inferno",
+   "slug": "crus-starfighter-inferno",
+   "class_name": "CRUS_Starfighter_Inferno",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "a50ce1a2-6178-4988-a05b-72d7df8d65f9",
+   "name": "Ares Star Fighter Inferno Wikelo War Special",
+   "game_name": "Crusader Ares Star Fighter Inferno Wikelo War Special",
+   "slug": "crus-starfighter-inferno-collector-military",
+   "class_name": "CRUS_Starfighter_Inferno_Collector_Military",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "30aab266-9131-4a07-808b-61c868cb404f",
+   "name": "Ares Star Fighter Ion",
+   "game_name": "Crusader Ares Star Fighter Ion",
+   "slug": "crus-starfighter-ion",
+   "class_name": "CRUS_Starfighter_Ion",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "78a6c0c5-b364-430f-8e8c-0389fef66fcc",
+   "name": "Ares Star Fighter Ion Wikelo Sneak Special",
+   "game_name": "Crusader Ares Star Fighter Ion Wikelo Sneak Special",
+   "slug": "crus-starfighter-ion-collector-stealth",
+   "class_name": "CRUS_Starfighter_Ion_Collector_Stealth",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "9611b8ed-cc96-4b5c-aa1e-baefe7d5bb1c",
+   "name": "C1 Spirit",
+   "game_name": "Crusader C1 Spirit",
+   "slug": "crus-spirit-c1",
+   "class_name": "CRUS_Spirit_C1",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "8c23e3f9-b2e6-42a6-92ab-e023f1e0c643",
+   "name": "C1 Spirit Wikelo Special",
+   "game_name": "Crusader C1 Spirit Wikelo Special",
+   "slug": "crus-spirit-c1-civilian",
+   "class_name": "CRUS_Spirit_C1_Civilian",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "7533ff77-836c-4bd2-9171-487d9c63863c",
+   "name": "C2 Hercules Starlifter",
+   "game_name": "Crusader C2 Hercules Starlifter",
+   "slug": "crus-starlifter-c2",
+   "class_name": "CRUS_Starlifter_C2",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "16aa514f-12ac-43a4-b51d-44447252186e",
+   "name": "Intrepid",
+   "game_name": "Crusader Intrepid",
+   "slug": "crus-intrepid",
+   "class_name": "CRUS_Intrepid",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "f203e95e-927c-43b0-947b-e8cb3025d23e",
+   "name": "Intrepid Wikelo Work Special",
+   "game_name": "Crusader Intrepid Wikelo Work Special",
+   "slug": "crus-intrepid-collector-indust",
+   "class_name": "CRUS_Intrepid_Collector_Indust",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "5cf39b3b-41d8-45c1-8ef2-d4678c7a7b85",
+   "name": "M2 Hercules Starlifter",
+   "game_name": "Crusader M2 Hercules Starlifter",
+   "slug": "crus-starlifter-m2",
+   "class_name": "CRUS_Starlifter_M2",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "c8e10f09-38a0-4730-9dd3-eb0a510c9e43",
+   "name": "Mercury Star Runner",
+   "game_name": "Crusader Mercury Star Runner",
+   "slug": "crus-star-runner",
+   "class_name": "CRUS_Star_Runner",
+   "manufacturer": {
+    "name": "Crusader Industries",
+    "code": "CRUS"
+   }
+  },
+  {
+   "uuid": "bf785bee-f393-4904-aaa8-987952570938",
+   "name": "Cutlass Black PYAM Exec",
+   "game_name": "Cutlass Black PYAM Exec",
+   "slug": "drak-cutlass-black-exec-military",
+   "class_name": "DRAK_Cutlass_Black_Exec_Military",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "4484a044-bbd5-e716-736a-2dda30a3efa4",
+   "name": "Cutlass Black PYAM Exec",
+   "game_name": "Cutlass Black PYAM Exec",
+   "slug": "drak-cutlass-black-exec-stealth",
+   "class_name": "DRAK_Cutlass_Black_Exec_Stealth",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "efec4d48-77ab-4cba-9add-a3d96c5be8d8",
+   "name": "Buccaneer",
+   "game_name": "Drake Buccaneer",
+   "slug": "drak-buccaneer",
+   "class_name": "DRAK_Buccaneer",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "dc39ca6b-1d76-4db5-9346-356f49954978",
+   "name": "Caterpillar",
+   "game_name": "Drake Caterpillar",
+   "slug": "drak-caterpillar",
+   "class_name": "DRAK_Caterpillar",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "565d8121-50a9-4920-af50-f176caef0431",
+   "name": "Caterpillar Pirate",
+   "game_name": "Drake Caterpillar Pirate",
+   "slug": "drak-caterpillar-pirate",
+   "class_name": "DRAK_Caterpillar_Pirate",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "c03e7aef-6411-4e85-9c10-e89862884433",
+   "name": "Clipper",
+   "game_name": "Drake Clipper",
+   "slug": "drak-clipper",
+   "class_name": "DRAK_Clipper",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "1b7318af-7607-40b5-ba1b-54134089c284",
+   "name": "Clipper Wikelo War Special",
+   "game_name": "Drake Clipper Wikelo War Special",
+   "slug": "drak-clipper-collector-military",
+   "class_name": "DRAK_Clipper_Collector_Military",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "bdeb88d1-c003-4dfa-942d-5043988e1c68",
+   "name": "Command Module",
+   "game_name": "Drake Command Module",
+   "slug": "drak-command-module",
+   "class_name": "DRAK_Command_Module",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "e1afb014-fe71-4da9-89ae-c30fcf9c0782",
+   "name": "Corsair",
+   "game_name": "Drake Corsair",
+   "slug": "drak-corsair",
+   "class_name": "DRAK_Corsair",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "b58f7735-9454-4a0a-b724-2bc8d61961d7",
+   "name": "Cutlass Black",
+   "game_name": "Drake Cutlass Black",
+   "slug": "drak-cutlass-black",
+   "class_name": "DRAK_Cutlass_Black",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "c926495d-3775-4fbf-88cc-bd243431a82f",
+   "name": "Cutlass Black",
+   "game_name": "Drake Cutlass Black",
+   "slug": "drak-cutlass-black-bis2950",
+   "class_name": "DRAK_Cutlass_Black_BIS2950",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "eefb1595-cb25-409e-997b-db328e28f1e5",
+   "name": "Cutlass Blue",
+   "game_name": "Drake Cutlass Blue",
+   "slug": "drak-cutlass-blue-bis2950",
+   "class_name": "DRAK_Cutlass_Blue_BIS2950",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "13c3f610-7bbd-4464-bd36-d716de49a125",
+   "name": "Cutlass Blue",
+   "game_name": "Drake Cutlass Blue",
+   "slug": "drak-cutlass-blue",
+   "class_name": "DRAK_Cutlass_Blue",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "7780e93d-1cc3-43b4-9b32-9923af19775a",
+   "name": "Cutlass Red",
+   "game_name": "Drake Cutlass Red",
+   "slug": "drak-cutlass-red",
+   "class_name": "DRAK_Cutlass_Red",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "9e381490-082c-4af1-a5b2-51453788e940",
+   "name": "Cutlass Red",
+   "game_name": "Drake Cutlass Red",
+   "slug": "drak-cutlass-red-bis2950",
+   "class_name": "DRAK_Cutlass_Red_BIS2950",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "384d7e27-daec-4554-a8e9-6920a10a86c1",
+   "name": "Cutlass Steel",
+   "game_name": "Drake Cutlass Steel",
+   "slug": "drak-cutlass-steel",
+   "class_name": "DRAK_Cutlass_Steel",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "3ea9bcd8-1ddd-4714-a537-7b2675e8c2d2",
+   "name": "Cutter",
+   "game_name": "Drake Cutter",
+   "slug": "drak-cutter",
+   "class_name": "DRAK_Cutter",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "93b13680-9aa6-4c21-b998-e4f8880f7c12",
+   "name": "Cutter Rambler",
+   "game_name": "Drake Cutter Rambler",
+   "slug": "drak-cutter-rambler",
+   "class_name": "DRAK_Cutter_Rambler",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "887cd720-7337-44ae-9708-828ccf808649",
+   "name": "Cutter Scout",
+   "game_name": "Drake Cutter Scout",
+   "slug": "drak-cutter-scout",
+   "class_name": "DRAK_Cutter_Scout",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "37659ff0-a803-4a4f-97ff-ad59822061ed",
+   "name": "Dragonfly",
+   "game_name": "Drake Dragonfly",
+   "slug": "drak-dragonfly",
+   "class_name": "DRAK_Dragonfly",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "d868dfb9-5bcd-4f7b-a40a-3aa5bbf7d705",
+   "name": "Dragonfly Star Kitten",
+   "game_name": "Drake Dragonfly Star Kitten",
+   "slug": "drak-dragonfly-pink",
+   "class_name": "DRAK_Dragonfly_Pink",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "533b9b62-33eb-4b34-95eb-d43fe3e020ff",
+   "name": "Dragonfly Yellowjacket",
+   "game_name": "Drake Dragonfly Yellowjacket",
+   "slug": "drak-dragonfly-yellow",
+   "class_name": "DRAK_Dragonfly_Yellow",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "b616b3ad-123c-40f2-80bd-b8f4109633aa",
+   "name": "Golem",
+   "game_name": "Drake Golem",
+   "slug": "drak-golem",
+   "class_name": "DRAK_Golem",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "f07430f8-e8d1-4c3d-b07d-b9d08dc4a647",
+   "name": "Golem Alliance",
+   "game_name": "Drake Golem Alliance",
+   "slug": "drak-golem-btala",
+   "class_name": "DRAK_Golem_BTALA",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "ea2c22bc-c2f0-42dc-967d-3300f9232f91",
+   "name": "Golem OX",
+   "game_name": "Drake Golem OX",
+   "slug": "drak-golem-ox",
+   "class_name": "DRAK_Golem_OX",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "310be6d1-ea0f-45d8-87b0-0fc9f8aa1530",
+   "name": "Golem Wikelo Work Special",
+   "game_name": "Drake Golem Wikelo Work Special",
+   "slug": "drak-golem-collector-indust",
+   "class_name": "DRAK_Golem_Collector_Indust",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "36726a9f-7e14-4942-bc4f-1a398b5bef6a",
+   "name": "Herald",
+   "game_name": "Drake Herald",
+   "slug": "drak-herald",
+   "class_name": "DRAK_Herald",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "c42bf65e-f3f2-4234-8c19-8276bfd5de3a",
+   "name": "Ironclad",
+   "game_name": "Drake Ironclad",
+   "slug": "drak-ironclad",
+   "class_name": "DRAK_Ironclad",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "4481572d-66c8-4f7a-90c3-0150052fde10",
+   "name": "Ironclad Assault",
+   "game_name": "Drake Ironclad Assault",
+   "slug": "drak-ironclad-assault",
+   "class_name": "DRAK_Ironclad_Assault",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "fb484074-f33f-4977-a052-2937e8508acc",
+   "name": "Mule",
+   "game_name": "Drake Mule",
+   "slug": "drak-mule",
+   "class_name": "DRAK_Mule",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "6585ae24-738f-42d2-8d3e-eff4a21eaca9",
+   "name": "Pitbull",
+   "game_name": "Drake Pitbull",
+   "slug": "drak-pitbull",
+   "class_name": "DRAK_Pitbull",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "34077e67-5e2c-4903-a17c-2d0e163751c7",
+   "name": "Vulture",
+   "game_name": "Drake Vulture",
+   "slug": "drak-vulture",
+   "class_name": "DRAK_Vulture",
+   "manufacturer": {
+    "name": "Drake Interplanetary",
+    "code": "DRAK"
+   }
+  },
+  {
+   "uuid": "0d4c5000-ffdb-41f5-9de1-d64252dfef21",
+   "name": "Blade",
+   "game_name": "Esperia Blade",
+   "slug": "vncl-blade",
+   "class_name": "VNCL_Blade",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "e379e38c-459a-4705-be7d-49a5f5d7a928",
+   "name": "Glaive",
+   "game_name": "Esperia Glaive",
+   "slug": "vncl-glaive",
+   "class_name": "VNCL_Glaive",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "087b2253-2fc7-4fae-9f9d-97f64b7c43db",
+   "name": "Prowler",
+   "game_name": "Esperia Prowler",
+   "slug": "espr-prowler",
+   "class_name": "ESPR_Prowler",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "528fdddc-c97f-4ae8-a00e-11a59fc3662d",
+   "name": "Prowler Utility",
+   "game_name": "Esperia Prowler Utility",
+   "slug": "espr-prowler-utility",
+   "class_name": "ESPR_Prowler_Utility",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "1b3a41ea-6942-44de-9514-315e81c36bb4",
+   "name": "Prowler Utility Wikelo Work Special",
+   "game_name": "Esperia Prowler Utility Wikelo Work Special",
+   "slug": "espr-prowler-utility-collector-indust",
+   "class_name": "ESPR_Prowler_Utility_Collector_Indust",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "f7b8addd-9253-495c-a278-bdaa236e6cbc",
+   "name": "Stinger",
+   "game_name": "Esperia Stinger",
+   "slug": "vncl-stinger",
+   "class_name": "VNCL_Stinger",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "41a84db8-062b-4359-ad16-611ad540fbdb",
+   "name": "Talon",
+   "game_name": "Esperia Talon",
+   "slug": "espr-talon",
+   "class_name": "ESPR_Talon",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "2000c8d9-f151-4148-babe-6d9e413e2114",
+   "name": "Talon Shrike",
+   "game_name": "Esperia Talon Shrike",
+   "slug": "espr-talon-shrike",
+   "class_name": "ESPR_Talon_Shrike",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  },
+  {
+   "uuid": "e5d9a28d-4fed-4893-a3e0-c8e10999aef0",
+   "name": "F8C Lightning PYAM Exec",
+   "game_name": "F8C Lightning PYAM Exec",
+   "slug": "anvl-lightning-f8c-exec-military",
+   "class_name": "ANVL_Lightning_F8C_Exec_Military",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "49e65480-0ab3-bead-8207-2da32c2e00ab",
+   "name": "F8C Lightning PYAM Exec",
+   "game_name": "F8C Lightning PYAM Exec",
+   "slug": "anvl-lightning-f8c-exec-stealth",
+   "class_name": "ANVL_Lightning_F8C_Exec_Stealth",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "7aed1f98-fa95-4166-b8d2-73c1704346ab",
+   "name": "Railen",
+   "game_name": "Gatac Railen",
+   "slug": "gama-railen",
+   "class_name": "GAMA_Railen",
+   "manufacturer": {
+    "name": "Gatac Manufacture",
+    "code": "GAMA"
+   }
+  },
+  {
+   "uuid": "11ebc47d-4763-4faa-9020-171cf6c2651f",
+   "name": "Syulen",
+   "game_name": "Gatac Syulen",
+   "slug": "gama-syulen",
+   "class_name": "GAMA_Syulen",
+   "manufacturer": {
+    "name": "Gatac Manufacture",
+    "code": "GAMA"
+   }
+  },
+  {
+   "uuid": "8c2730d4-52c1-43fb-9972-d9956fb7ea1f",
+   "name": "Tyilui",
+   "game_name": "Gatac Tyilui",
+   "slug": "gama-tyilui",
+   "class_name": "GAMA_Tyilui",
+   "manufacturer": {
+    "name": "Gatac Manufacture",
+    "code": "GAMA"
+   }
+  },
+  {
+   "uuid": "3e911bb5-1a94-4501-bd63-560557f1b492",
+   "name": "MDC",
+   "game_name": "Greycat MDC",
+   "slug": "grin-mdc",
+   "class_name": "GRIN_MDC",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "91c9418e-6240-4fb1-a18a-1e22ebfb7747",
+   "name": "MTC",
+   "game_name": "Greycat MTC",
+   "slug": "grin-mtc",
+   "class_name": "GRIN_MTC",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "41ff82e7-ce4e-4dbc-ad7c-7ef52fbe569c",
+   "name": "PTV",
+   "game_name": "Greycat PTV",
+   "slug": "grin-ptv",
+   "class_name": "GRIN_PTV",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "62e33393-5d68-4191-aba5-3b81ce4f3bf9",
+   "name": "ROC",
+   "game_name": "Greycat ROC",
+   "slug": "grin-roc",
+   "class_name": "GRIN_ROC",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "14d6ba03-86ad-47f8-b940-e8a82d2d52b6",
+   "name": "ROC-DS",
+   "game_name": "Greycat ROC-DS",
+   "slug": "grin-roc-ds",
+   "class_name": "GRIN_ROC_DS",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "d4662193-10ab-4912-8ca4-d64ead0e6f3b",
+   "name": "STV",
+   "game_name": "Greycat STV",
+   "slug": "grin-stv",
+   "class_name": "GRIN_STV",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "bfdf94df-32fc-497c-b9fa-c98f3fa4c83b",
+   "name": "UTV",
+   "game_name": "Greycat UTV",
+   "slug": "grin-utv",
+   "class_name": "GRIN_UTV",
+   "manufacturer": {
+    "name": "Greycat Industrial",
+    "code": "GRIN"
+   }
+  },
+  {
+   "uuid": "0e11d3df-88cc-4e4a-8ba0-c2e6943a2802",
+   "name": "Basher",
+   "game_name": "Grey's Basher",
+   "slug": "glsn-basher",
+   "class_name": "GLSN_Basher",
+   "manufacturer": {
+    "name": "Grey's Market",
+    "code": "GLSN"
+   }
+  },
+  {
+   "uuid": "3a7bfe4f-7a6c-4818-aba8-0f1019c3a647",
+   "name": "Shiv",
+   "game_name": "Grey's Shiv",
+   "slug": "glsn-shiv",
+   "class_name": "GLSN_Shiv",
+   "manufacturer": {
+    "name": "Grey's Market",
+    "code": "GLSN"
+   }
+  },
+  {
+   "uuid": "474444e0-0c7b-50af-0f2f-d702d7ef9cbe",
+   "name": "Hornet F7A Mk II PYAM Exec",
+   "game_name": "Hornet F7A Mk II PYAM Exec",
+   "slug": "anvl-hornet-f7a-mk2-exec-stealth",
+   "class_name": "ANVL_Hornet_F7A_Mk2_Exec_Stealth",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "4075e1a5-40a8-4444-6e04-8d4c4196618c",
+   "name": "Hornet F7A Mk II PYAM Exec",
+   "game_name": "Hornet F7A Mk II PYAM Exec",
+   "slug": "anvl-hornet-f7a-mk2-exec-military",
+   "class_name": "ANVL_Hornet_F7A_Mk2_Exec_Military",
+   "manufacturer": {
+    "name": "Anvil Aerospace",
+    "code": "ANVL"
+   }
+  },
+  {
+   "uuid": "1b201ef2-b4dd-46c2-978e-47a13e0a7f81",
+   "name": "L-21 Wolf",
+   "game_name": "Kruger L-21 Wolf",
+   "slug": "krig-l21-wolf",
+   "class_name": "KRIG_L21_Wolf",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "305052b9-dfce-4917-a909-48c1a63c6753",
+   "name": "L-21 Wolf Wikelo Sneak Special",
+   "game_name": "Kruger L-21 Wolf Wikelo Sneak Special",
+   "slug": "krig-l21-wolf-collector-stealth",
+   "class_name": "KRIG_L21_Wolf_Collector_Stealth",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "86d0db63-70b6-41eb-be32-a14190ebd57d",
+   "name": "L-21 Wolf Wikelo War Special",
+   "game_name": "Kruger L-21 Wolf Wikelo War Special",
+   "slug": "krig-l21-wolf-collector-military",
+   "class_name": "KRIG_L21_Wolf_Collector_Military",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "df2166dd-70ba-4b10-90ee-bb2ae203b3e8",
+   "name": "L-22 Alpha Wolf",
+   "game_name": "Kruger L-22 Alpha Wolf",
+   "slug": "krig-l22-alphawolf",
+   "class_name": "KRIG_L22_AlphaWolf",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "38d93014-74d8-4ff9-9a2c-edf817590730",
+   "name": "L-22 Alpha Wolf Wikelo War Special",
+   "game_name": "Kruger L-22 Alpha Wolf Wikelo War Special",
+   "slug": "krig-l22-alphawolf-collector-military",
+   "class_name": "KRIG_L22_AlphaWolf_Collector_Military",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "a5a8e4e5-939c-4f7b-ab48-5f7db556d5a4",
+   "name": "P-52 Merlin",
+   "game_name": "Kruger P-52 Merlin",
+   "slug": "krig-p52-merlin",
+   "class_name": "KRIG_P52_Merlin",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "70580bce-2347-4e96-9260-dee6394f483d",
+   "name": "P-72 Archimedes",
+   "game_name": "Kruger P-72 Archimedes",
+   "slug": "krig-p72-archimedes",
+   "class_name": "KRIG_P72_Archimedes",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "ebee8a7f-8e4a-4bed-9e5d-76822724c9f0",
+   "name": "P-72 Archimedes Emerald",
+   "game_name": "Kruger P-72 Archimedes Emerald",
+   "slug": "krig-p72-archimedes-emerald",
+   "class_name": "KRIG_P72_Archimedes_Emerald",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "0932c4f1-d05c-48c4-9ccb-78410b639555",
+   "name": "S-65 Stingray",
+   "game_name": "Kruger S-65 Stingray",
+   "slug": "krig-s65-stingray-ballistic",
+   "class_name": "KRIG_S65_Stingray_BALLISTIC",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "88f279d0-afd2-442f-83e9-d470552364d3",
+   "name": "S-65 Stingray",
+   "game_name": "Kruger S-65 Stingray",
+   "slug": "krig-s65-stingray",
+   "class_name": "KRIG_S65_Stingray",
+   "manufacturer": {
+    "name": "Kruger Intergalactic",
+    "code": "KRIG"
+   }
+  },
+  {
+   "uuid": "96b11061-68ce-4896-9424-fc8804a410ae",
+   "name": "Fury",
+   "game_name": "Mirai Fury",
+   "slug": "misc-fury",
+   "class_name": "MISC_Fury",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "83a450d1-e6b1-437e-9aee-18316ed34c29",
+   "name": "Fury LX",
+   "game_name": "Mirai Fury LX",
+   "slug": "misc-fury-lx",
+   "class_name": "MISC_Fury_LX",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "469d850e-b86b-47fc-9ee2-df81d775ccc8",
+   "name": "Fury MX",
+   "game_name": "Mirai Fury MX",
+   "slug": "misc-fury-miru",
+   "class_name": "MISC_Fury_Miru",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "30e0f7ac-26fc-4d31-a231-af625511e37e",
+   "name": "Guardian",
+   "game_name": "Mirai Guardian",
+   "slug": "mrai-guardian",
+   "class_name": "MRAI_Guardian",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "aaa0cdcd-907c-4533-b3fc-181ede06076d",
+   "name": "Guardian MX",
+   "game_name": "Mirai Guardian MX",
+   "slug": "mrai-guardian-mx",
+   "class_name": "MRAI_Guardian_MX",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "57ea2eaa-c495-43ae-bc96-c6f53a8e46ef",
+   "name": "Guardian MX Wikelo War Special",
+   "game_name": "Mirai Guardian MX Wikelo War Special",
+   "slug": "mrai-guardian-mx-collector-military",
+   "class_name": "MRAI_Guardian_MX_Collector_Military",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "e98521b6-ea2f-4c10-9050-abc29d89d0e8",
+   "name": "Guardian QI",
+   "game_name": "Mirai Guardian QI",
+   "slug": "mrai-guardian-qi",
+   "class_name": "MRAI_Guardian_QI",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "4eea10ca-d254-462b-8a44-7de6852dc1d4",
+   "name": "Guardian QI Wikelo Special",
+   "game_name": "Mirai Guardian QI Wikelo Special",
+   "slug": "mrai-guardian-qi-collector-indust",
+   "class_name": "MRAI_Guardian_QI_Collector_Indust",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "e07d46e4-92cd-462d-8cda-e17b5051a9eb",
+   "name": "Guardian Wikelo War Special",
+   "game_name": "Mirai Guardian Wikelo War Special",
+   "slug": "mrai-guardian-military",
+   "class_name": "MRAI_Guardian_Military",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "48415834-ac12-4c28-ad01-7c210f30c2da",
+   "name": "Pulse",
+   "game_name": "Mirai Pulse",
+   "slug": "mrai-pulse",
+   "class_name": "MRAI_Pulse",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "d1f27f85-90db-4b5d-8ac2-09a9e9ee1315",
+   "name": "Pulse LX",
+   "game_name": "Mirai Pulse LX",
+   "slug": "mrai-pulse-lx",
+   "class_name": "MRAI_Pulse_LX",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "cec2111b-4c71-4968-8035-634de6561cf3",
+   "name": "Razor",
+   "game_name": "Mirai Razor",
+   "slug": "misc-razor",
+   "class_name": "MISC_Razor",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "b17ef3ab-9518-40fd-803f-c2468175ccf6",
+   "name": "Razor EX",
+   "game_name": "Mirai Razor EX",
+   "slug": "misc-razor-ex",
+   "class_name": "MISC_Razor_EX",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "203cb135-4f12-4a23-bd53-30910134bac8",
+   "name": "Razor LX",
+   "game_name": "Mirai Razor LX",
+   "slug": "misc-razor-lx",
+   "class_name": "MISC_Razor_LX",
+   "manufacturer": {
+    "name": "Mirai",
+    "code": "MRAI"
+   }
+  },
+  {
+   "uuid": "3d371fd4-50e2-4b5e-859f-1086e905c946",
+   "name": "MISC Fortune",
+   "game_name": "MISC Fortune",
+   "slug": "misc-fortune",
+   "class_name": "MISC_Fortune",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "b8a2669a-76cb-497c-9090-6ff9a173b220",
+   "name": "MISC Fortune Wikelo Special",
+   "game_name": "MISC Fortune Wikelo Special",
+   "slug": "misc-fortune-collector-industrial",
+   "class_name": "MISC_Fortune_Collector_Industrial",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "b4791030-9d64-4f98-85cb-ca106f868c5e",
+   "name": "MISC Freelancer",
+   "game_name": "MISC Freelancer",
+   "slug": "misc-freelancer",
+   "class_name": "MISC_Freelancer",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "34821163-e32e-42bf-99df-8f42ba66ef34",
+   "name": "MISC Freelancer DUR",
+   "game_name": "MISC Freelancer DUR",
+   "slug": "misc-freelancer-dur",
+   "class_name": "MISC_Freelancer_DUR",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "6c6e9731-3d70-4f1b-84c2-9dbf3c1f97c7",
+   "name": "MISC Freelancer MAX",
+   "game_name": "MISC Freelancer MAX",
+   "slug": "misc-freelancer-max",
+   "class_name": "MISC_Freelancer_MAX",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "4b6700e5-38bd-4d8d-9281-ef82996b135f",
+   "name": "MISC Freelancer MIS",
+   "game_name": "MISC Freelancer MIS",
+   "slug": "misc-freelancer-mis",
+   "class_name": "MISC_Freelancer_MIS",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "6ec72f64-2002-481c-b7c9-b132476ba6aa",
+   "name": "MISC Hull A",
+   "game_name": "MISC Hull A",
+   "slug": "misc-hull-a",
+   "class_name": "MISC_Hull_A",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "0d690d1a-9f57-4976-bff1-ec46bf039e75",
+   "name": "MISC Hull B",
+   "game_name": "MISC Hull B",
+   "slug": "misc-hull-b",
+   "class_name": "MISC_Hull_B",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "c4ceff45-d851-44b1-921b-bfef93a6cd6a",
+   "name": "MISC Hull C",
+   "game_name": "MISC Hull C",
+   "slug": "misc-hull-c",
+   "class_name": "MISC_Hull_C",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "f68ee841-88d1-46f3-a1e2-5dc71d9d5d97",
+   "name": "MISC Prospector",
+   "game_name": "MISC Prospector",
+   "slug": "misc-prospector",
+   "class_name": "MISC_Prospector",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "4b530bea-aab5-475a-a1b4-749989627940",
+   "name": "MISC Prospector Alliance",
+   "game_name": "MISC Prospector Alliance",
+   "slug": "misc-prospector-btala",
+   "class_name": "MISC_Prospector_BTALA",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "4e6f4187-6b7e-4c67-93bf-a41658922ba6",
+   "name": "MISC Prospector Wikelo Work Special",
+   "game_name": "MISC Prospector Wikelo Work Special",
+   "slug": "misc-prospector-collector-indust",
+   "class_name": "MISC_Prospector_Collector_Indust",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "3c9af040-d919-4afc-b768-45821a5b913c",
+   "name": "MISC Reliant Kore",
+   "game_name": "MISC Reliant Kore",
+   "slug": "misc-reliant",
+   "class_name": "MISC_Reliant",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "c6cfa4d9-e794-4bb6-8da9-54cb779ea109",
+   "name": "MISC Reliant Mako",
+   "game_name": "MISC Reliant Mako",
+   "slug": "misc-reliant-mako",
+   "class_name": "MISC_Reliant_Mako",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "e32d125f-a3f8-4bc7-b0e6-cb7edf22b7ac",
+   "name": "MISC Reliant Sen",
+   "game_name": "MISC Reliant Sen",
+   "slug": "misc-reliant-sen",
+   "class_name": "MISC_Reliant_Sen",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "c2956880-b82a-42d0-962b-eb736dac1536",
+   "name": "MISC Reliant Tana",
+   "game_name": "MISC Reliant Tana",
+   "slug": "misc-reliant-tana",
+   "class_name": "MISC_Reliant_Tana",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "13a02a6d-7d67-4d22-8530-d4d2c8443f66",
+   "name": "MISC Starfarer",
+   "game_name": "MISC Starfarer",
+   "slug": "misc-starfarer",
+   "class_name": "MISC_Starfarer",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "c989caf2-84a5-4c01-b99e-5fc9f8d0ce8e",
+   "name": "MISC Starfarer Gemini",
+   "game_name": "MISC Starfarer Gemini",
+   "slug": "misc-starfarer-gemini",
+   "class_name": "MISC_Starfarer_Gemini",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "ff873dda-2b79-4fa3-b3ce-535b8adff5e2",
+   "name": "MISC Starlancer MAX",
+   "game_name": "MISC Starlancer MAX",
+   "slug": "misc-starlancer-max",
+   "class_name": "MISC_Starlancer_Max",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "e20211a3-e615-4103-a099-c00fb4fd1552",
+   "name": "MISC Starlancer MAX Wikelo Work Special",
+   "game_name": "MISC Starlancer MAX Wikelo Work Special",
+   "slug": "misc-starlancer-max-collector-indust",
+   "class_name": "MISC_Starlancer_Max_Collector_Indust",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "14b8caeb-d5e1-4816-9537-86ef19afada8",
+   "name": "MISC Starlancer TAC",
+   "game_name": "MISC Starlancer TAC",
+   "slug": "misc-starlancer-tac",
+   "class_name": "MISC_Starlancer_TAC",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "4369e7f9-f2e5-4b62-969f-8b35e623ff29",
+   "name": "MISC Starlancer TAC Wikelo War Special",
+   "game_name": "MISC Starlancer TAC Wikelo War Special",
+   "slug": "misc-starlancer-tac-collector-military",
+   "class_name": "MISC_Starlancer_TAC_Collector_Military",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "6c44bcd6-d4c4-41c7-8939-a576e3aa9482",
+   "name": "MISC Starlite",
+   "game_name": "MISC Starlite",
+   "slug": "misc-starlite",
+   "class_name": "MISC_Starlite",
+   "manufacturer": {
+    "name": "Musashi Industrial and Starflight Concern",
+    "code": "MISC"
+   }
+  },
+  {
+   "uuid": "6135a874-4cb1-4f49-9f29-5781e5991f2b",
+   "name": "100i",
+   "game_name": "Origin 100i",
+   "slug": "orig-100i",
+   "class_name": "ORIG_100i",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "e7eeba8d-b108-48a1-a332-d9edbab2b9c1",
+   "name": "125a",
+   "game_name": "Origin 125a",
+   "slug": "orig-125a",
+   "class_name": "ORIG_125a",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "2f231daa-95e5-4cb2-a32e-4db8f29a30d6",
+   "name": "135c",
+   "game_name": "Origin 135c",
+   "slug": "orig-135c",
+   "class_name": "ORIG_135c",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "ce937681-caa2-4cfa-ab80-f5bf2a5b9a6c",
+   "name": "300i",
+   "game_name": "Origin 300i",
+   "slug": "orig-300i",
+   "class_name": "ORIG_300i",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "dc537d66-2abb-43aa-9d37-4e963fc6e9e2",
+   "name": "315p",
+   "game_name": "Origin 315p",
+   "slug": "orig-315p",
+   "class_name": "ORIG_315p",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "039a2768-1aff-4969-b2a4-ed8aeb21dae1",
+   "name": "325a",
+   "game_name": "Origin 325a",
+   "slug": "orig-325a",
+   "class_name": "ORIG_325a",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "316c6601-b405-4a3a-abac-394c655718f8",
+   "name": "350r",
+   "game_name": "Origin 350r",
+   "slug": "orig-350r",
+   "class_name": "ORIG_350r",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "718f4435-628b-4436-bb80-bf9cfef9a945",
+   "name": "400i",
+   "game_name": "Origin 400i",
+   "slug": "orig-400i",
+   "class_name": "ORIG_400i",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "f8ac4c26-8f4d-4cb3-9be2-7d867a95a877",
+   "name": "600i",
+   "game_name": "Origin 600i",
+   "slug": "orig-600i",
+   "class_name": "ORIG_600i",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "fdb1e6be-8de7-44a0-8359-ad1c5eb6a9fc",
+   "name": "600i 2951 BIS",
+   "game_name": "Origin 600i 2951 BIS",
+   "slug": "orig-600i-bis2951",
+   "class_name": "ORIG_600i_BIS2951",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "38ae749f-d4fc-4dfd-907b-ed8db61f3d88",
+   "name": "600i Executive Edition",
+   "game_name": "Origin 600i Executive Edition",
+   "slug": "orig-600i-executive-edition",
+   "class_name": "ORIG_600i_Executive_Edition",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "11b660a2-c77c-490b-9e85-ee70400c5cf8",
+   "name": "600i Touring",
+   "game_name": "Origin 600i Touring",
+   "slug": "orig-600i-touring",
+   "class_name": "ORIG_600i_Touring",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "9dc9c257-c413-416a-ab9b-06fbadf18d1e",
+   "name": "85X Limited",
+   "game_name": "Origin 85X Limited",
+   "slug": "orig-85x",
+   "class_name": "ORIG_85X",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "50ddaf5e-a8e3-42fe-a1d3-7267f39b39b0",
+   "name": "890 Jump",
+   "game_name": "Origin 890 Jump",
+   "slug": "orig-890jump",
+   "class_name": "ORIG_890Jump",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "1b57cdac-693b-410b-8343-68fa194c94ae",
+   "name": "M50 Interceptor",
+   "game_name": "Origin M50 Interceptor",
+   "slug": "orig-m50",
+   "class_name": "ORIG_m50",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "01c24704-ae47-4b31-931c-d35655edaa05",
+   "name": "M80",
+   "game_name": "Origin M80",
+   "slug": "orig-m80",
+   "class_name": "ORIG_m80",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "829d0525-e67e-4e57-9f52-b4e572a4f73d",
+   "name": "X1",
+   "game_name": "Origin X1",
+   "slug": "orig-x1",
+   "class_name": "ORIG_X1",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "b416dbbf-53f2-489e-a9dc-456286aa6c70",
+   "name": "X1 Force",
+   "game_name": "Origin X1 Force",
+   "slug": "orig-x1-force",
+   "class_name": "ORIG_X1_Force",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "58e25524-8bd3-450f-8442-7b58fdfc8a50",
+   "name": "X1 Velocity",
+   "game_name": "Origin X1 Velocity",
+   "slug": "orig-x1-velocity",
+   "class_name": "ORIG_X1_Velocity",
+   "manufacturer": {
+    "name": "Origin Jumpworks",
+    "code": "ORIG"
+   }
+  },
+  {
+   "uuid": "4559fbe2-55ab-a5a8-4e77-75106cb96ab7",
+   "name": "Apollo Medivac",
+   "game_name": "RSI Apollo Medivac",
+   "slug": "rsi-apollo-medivac",
+   "class_name": "RSI_Apollo_Medivac",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "478bfc10-9577-ac19-262a-d40a93c3fcb2",
+   "name": "Apollo Triage",
+   "game_name": "RSI Apollo Triage",
+   "slug": "rsi-apollo-triage",
+   "class_name": "RSI_Apollo_Triage",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "752f2ea8-159a-4a58-b4af-fd79054b3e2f",
+   "name": "Apollo Triage Wikelo Sneak Special",
+   "game_name": "RSI Apollo Triage Wikelo Sneak Special",
+   "slug": "rsi-apollo-triage-collector-stealth",
+   "class_name": "RSI_Apollo_Triage_Collector_Stealth",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "c984fac2-06c0-4776-8f93-07ebd2c26ad3",
+   "name": "Aurora Mk I CL",
+   "game_name": "RSI Aurora Mk I CL",
+   "slug": "rsi-aurora-gs-cl",
+   "class_name": "RSI_Aurora_GS_CL",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "d8987dc2-340d-4312-8d4f-aee7e7fac823",
+   "name": "Aurora Mk I ES",
+   "game_name": "RSI Aurora Mk I ES",
+   "slug": "rsi-aurora-gs-es",
+   "class_name": "RSI_Aurora_GS_ES",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "ec956be2-8e3a-460d-b3a8-97df4cb12b78",
+   "name": "Aurora Mk II",
+   "game_name": "RSI Aurora Mk II",
+   "slug": "rsi-aurora-mk2",
+   "class_name": "RSI_Aurora_Mk2",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "d7828052-56fb-41a6-ae7d-bc29b0bdf68c",
+   "name": "Aurora Mk I LN",
+   "game_name": "RSI Aurora Mk I LN",
+   "slug": "rsi-aurora-gs-ln",
+   "class_name": "RSI_Aurora_GS_LN",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "6fa21dc8-c838-4134-a74a-0cd8313bcad8",
+   "name": "Aurora Mk I LX",
+   "game_name": "RSI Aurora Mk I  LX",
+   "slug": "rsi-aurora-gs-lx",
+   "class_name": "RSI_Aurora_GS_LX",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "a6e1bb18-8a11-4bbc-865e-45fd84e7b469",
+   "name": "Aurora Mk I MR",
+   "game_name": "RSI Aurora Mk I MR",
+   "slug": "rsi-aurora-gs-mr",
+   "class_name": "RSI_Aurora_GS_MR",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "8e27d568-f424-4dc9-a10f-ca4c34efab85",
+   "name": "Aurora Mk I SE",
+   "game_name": "RSI Aurora Mk I SE",
+   "slug": "rsi-aurora-gs-se",
+   "class_name": "RSI_Aurora_GS_SE",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "d95fb013-60d5-43ac-ab2d-daa082f45411",
+   "name": "Constellation Andromeda",
+   "game_name": "RSI Constellation Andromeda",
+   "slug": "rsi-constellation-andromeda",
+   "class_name": "RSI_Constellation_Andromeda",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "e7b40f5c-4099-4aa6-b226-b5b08bd68413",
+   "name": "Constellation Aquila",
+   "game_name": "RSI Constellation Aquila",
+   "slug": "rsi-constellation-aquila",
+   "class_name": "RSI_Constellation_Aquila",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "ecadf2b2-a404-4776-9289-04af91538d76",
+   "name": "Constellation Phoenix",
+   "game_name": "RSI Constellation Phoenix",
+   "slug": "rsi-constellation-phoenix",
+   "class_name": "RSI_Constellation_Phoenix",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "daf936a1-689f-4edb-980a-96947e2727c4",
+   "name": "Constellation Phoenix Emerald",
+   "game_name": "RSI Constellation Phoenix Emerald",
+   "slug": "rsi-constellation-phoenix-emerald",
+   "class_name": "RSI_Constellation_Phoenix_Emerald",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "d1c3fa10-b2d9-421e-8301-97dbf4d0c115",
+   "name": "Constellation Taurus",
+   "game_name": "RSI Constellation Taurus",
+   "slug": "rsi-constellation-taurus",
+   "class_name": "RSI_Constellation_Taurus",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "80c96371-9c46-44f2-bee8-627a66b37dca",
+   "name": "Constellation Taurus Wikelo War Special",
+   "game_name": "RSI Constellation Taurus Wikelo War Special",
+   "slug": "rsi-constellation-taurus-military",
+   "class_name": "RSI_Constellation_Taurus_Military",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "4ed10b1c-df4f-4ab0-430e-b5b9f33b0f94",
+   "name": "Hermes",
+   "game_name": "RSI Hermes",
+   "slug": "rsi-hermes",
+   "class_name": "RSI_Hermes",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "4c034eef-329c-4336-850e-49bfb1f06a15",
+   "name": "Lynx",
+   "game_name": "RSI Lynx",
+   "slug": "rsi-lynx",
+   "class_name": "RSI_Lynx",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "43f4f9c3-70ad-4549-8a10-0045afbbda10",
+   "name": "Mantis",
+   "game_name": "RSI Mantis",
+   "slug": "rsi-mantis",
+   "class_name": "RSI_Mantis",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "3155e6fd-e1c8-4c15-9bd1-f8e3c2c7174f",
+   "name": "Meteor",
+   "game_name": "RSI Meteor",
+   "slug": "rsi-meteor",
+   "class_name": "RSI_Meteor",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "2e14be84-643f-404c-9df8-e38351fa1f99",
+   "name": "Meteor PYAM Exec",
+   "game_name": "RSI Meteor PYAM Exec",
+   "slug": "rsi-meteor-collector-military",
+   "class_name": "RSI_Meteor_Collector_Military",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "656d529f-ea3c-4bb4-8ca0-883071734e87",
+   "name": "Meteor Wikelo Sneak Special",
+   "game_name": "RSI Meteor Wikelo Sneak Special",
+   "slug": "rsi-meteor-collector-stealth",
+   "class_name": "RSI_Meteor_Collector_Stealth",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "40a1f83b-3623-49e6-8168-ab8223998aa2",
+   "name": "Perseus",
+   "game_name": "RSI Perseus",
+   "slug": "rsi-perseus",
+   "class_name": "RSI_Perseus",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "a5a5b055-c5d7-4384-9951-f15d47b88789",
+   "name": "Polaris",
+   "game_name": "RSI Polaris",
+   "slug": "rsi-polaris",
+   "class_name": "RSI_Polaris",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "bc4aa5c5-2e9b-40d6-aa95-0757a763efff",
+   "name": "Polaris",
+   "game_name": "RSI Polaris",
+   "slug": "rsi-polaris-collector-military",
+   "class_name": "RSI_Polaris_Collector_Military",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "83318d44-b6c1-42d8-bcd1-284318718b42",
+   "name": "Salvation",
+   "game_name": "RSI Salvation",
+   "slug": "rsi-salvation",
+   "class_name": "RSI_Salvation",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "edc1421b-59ee-4233-b292-abc2c3ea0a1a",
+   "name": "Scorpius",
+   "game_name": "RSI Scorpius",
+   "slug": "rsi-scorpius",
+   "class_name": "RSI_Scorpius",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "2f88be37-7825-4fe1-afae-2ca9d2b01114",
+   "name": "Scorpius Antares",
+   "game_name": "RSI Scorpius Antares",
+   "slug": "rsi-scorpius-antares",
+   "class_name": "RSI_Scorpius_Antares",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "81586add-ea18-4a95-bf0e-d102ab78d46b",
+   "name": "Scorpius Wikelo Sneak Special",
+   "game_name": "RSI Scorpius Wikelo Sneak Special",
+   "slug": "rsi-scorpius-stealth",
+   "class_name": "RSI_Scorpius_Stealth",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "8c375d7e-0e44-42e8-b84b-c8d6b2e1256c",
+   "name": "Ursa",
+   "game_name": "RSI Ursa",
+   "slug": "rsi-ursa-rover",
+   "class_name": "RSI_Ursa_Rover",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "953f8277-43a5-4f88-b139-ee997ee5c482",
+   "name": "Ursa Fortuna",
+   "game_name": "RSI Ursa Fortuna",
+   "slug": "rsi-ursa-rover-emerald",
+   "class_name": "RSI_Ursa_Rover_Emerald",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "ebf015be-7bf9-44e9-ad9c-b5c65f00c530",
+   "name": "Ursa Medivac",
+   "game_name": "RSI Ursa Medivac",
+   "slug": "rsi-ursa-medivac",
+   "class_name": "RSI_Ursa_Medivac",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "6b621d46-86d6-4f5a-835f-b98242c51876",
+   "name": "Ursa Medivac Wikelo Special",
+   "game_name": "RSI Ursa Medivac Wikelo Special",
+   "slug": "rsi-ursa-medivac-stealth",
+   "class_name": "RSI_Ursa_Medivac_Stealth",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "f8ee95ed-cc18-4d65-a9d2-2d14d26d106d",
+   "name": "Zeus Mk II CL",
+   "game_name": "RSI Zeus Mk II CL",
+   "slug": "rsi-zeus-cl-collector-indust",
+   "class_name": "RSI_Zeus_CL_Collector_Indust",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "02fe3279-3598-4ce6-96dc-0bc5cb90dfdc",
+   "name": "Zeus Mk II CL",
+   "game_name": "RSI Zeus Mk II CL",
+   "slug": "rsi-zeus-cl",
+   "class_name": "RSI_Zeus_CL",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "e4770804-b43a-4c2d-a4e4-fedd410e50fb",
+   "name": "Zeus Mk II ES",
+   "game_name": "RSI Zeus Mk II ES",
+   "slug": "rsi-zeus-es",
+   "class_name": "RSI_Zeus_ES",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "4b0436fc-32cb-4ce8-804b-11ed8677aa48",
+   "name": "Zeus Mk II ES Wikelo Work Special",
+   "game_name": "RSI Zeus Mk II ES Wikelo Work Special",
+   "slug": "rsi-zeus-es-collector-indust",
+   "class_name": "RSI_Zeus_ES_Collector_Indust",
+   "manufacturer": {
+    "name": "Roberts Space Industries",
+    "code": "RSI"
+   }
+  },
+  {
+   "uuid": "48fa3c7c-1f29-2045-cd29-b5c8ab9aeabc",
+   "name": "Syulen PYAM Exec",
+   "game_name": "Syulen PYAM Exec",
+   "slug": "gama-syulen-exec-military",
+   "class_name": "GAMA_Syulen_Exec_Military",
+   "manufacturer": {
+    "name": "Gatac Manufacture",
+    "code": "GAMA"
+   }
+  },
+  {
+   "uuid": "40e7a0a7-4a31-a952-fd27-5eadd534a2ae",
+   "name": "Syulen PYAM Exec",
+   "game_name": "Syulen PYAM Exec",
+   "slug": "gama-syulen-exec-stealth",
+   "class_name": "GAMA_Syulen_Exec_Stealth",
+   "manufacturer": {
+    "name": "Gatac Manufacture",
+    "code": "GAMA"
+   }
+  },
+  {
+   "uuid": "8dbb42e4-e127-4153-9694-2845142c3e51",
+   "name": "Cyclone",
+   "game_name": "Tumbril Cyclone",
+   "slug": "tmbl-cyclone",
+   "class_name": "TMBL_Cyclone",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "0194943d-1164-4b5f-a85e-79ebc0ebe621",
+   "name": "Cyclone AA",
+   "game_name": "Tumbril Cyclone AA",
+   "slug": "tmbl-cyclone-aa",
+   "class_name": "TMBL_Cyclone_AA",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "bda93768-c01f-40b4-a92e-f31876cd33d0",
+   "name": "Cyclone MT",
+   "game_name": "Tumbril Cyclone MT",
+   "slug": "tmbl-cyclone-mt",
+   "class_name": "TMBL_Cyclone_MT",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "064951d7-3dd0-49c2-8b88-d2d7f809633e",
+   "name": "Cyclone RC",
+   "game_name": "Tumbril Cyclone RC",
+   "slug": "tmbl-cyclone-rc",
+   "class_name": "TMBL_Cyclone_RC",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "b389839d-fdf9-4c41-850a-4e7461250304",
+   "name": "Cyclone RN",
+   "game_name": "Tumbril Cyclone RN",
+   "slug": "tmbl-cyclone-rn",
+   "class_name": "TMBL_Cyclone_RN",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "f80914cf-643e-4b7e-b715-eaf9aa572954",
+   "name": "Cyclone TR",
+   "game_name": "Tumbril Cyclone TR",
+   "slug": "tmbl-cyclone-tr",
+   "class_name": "TMBL_Cyclone_TR",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "b8a352bb-74a8-415b-9e08-77f684ac91b8",
+   "name": "Nova",
+   "game_name": "Tumbril Nova",
+   "slug": "tmbl-nova",
+   "class_name": "TMBL_Nova",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "515269d2-fea4-473f-b416-5f6677a54b55",
+   "name": "Storm",
+   "game_name": "Tumbril Storm",
+   "slug": "tmbl-storm",
+   "class_name": "TMBL_Storm",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "8bbcd2cd-1e4b-4b0b-a65c-385bb2a02c32",
+   "name": "Storm AA",
+   "game_name": "Tumbril Storm AA",
+   "slug": "tmbl-storm-aa",
+   "class_name": "TMBL_Storm_AA",
+   "manufacturer": {
+    "name": "Tumbril Land Systems",
+    "code": "TMBL"
+   }
+  },
+  {
+   "uuid": "5d2bf0b6-d9be-4738-8717-0f455c461d8a",
+   "name": "Mauler Destroyer",
+   "game_name": "Vanduul Mauler Destroyer",
+   "slug": "vncl-mauler",
+   "class_name": "VNCL_Mauler",
+   "manufacturer": {
+    "name": "Vanduul Clans",
+    "code": "VNCL"
+   }
+  },
+  {
+   "uuid": "28f22bb8-9f1c-4a46-9a39-20bcb1e5000e",
+   "name": "Vanduul Scythe",
+   "game_name": "Vanduul Scythe",
+   "slug": "vncl-scythe",
+   "class_name": "VNCL_Scythe",
+   "manufacturer": {
+    "name": "Esperia",
+    "code": "ESPR"
+   }
+  }
+ ]
+}
