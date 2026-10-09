@@ -52,6 +52,8 @@ _ITEM_TIMEOUT_S = 3.0
 _LOOKUP_TIMEOUT_S = 2.0
 
 # Component types hangar-service tracks as slots (its catalog SLOT_TYPES).
+# KEEP IN SYNC with SLOT_TYPES in hangar-service/src/catalog.py: if they drift,
+# fit-check silently reports not_tracked/no_slot for types the hangar does hold.
 # Missiles (ordnance on racks) are not tracked -- a known limitation.
 TRACKED_TYPES = frozenset({"QuantumDrive", "Shield", "PowerPlant", "Cooler", "Radar", "WeaponGun",
                            "Turret", "MissileLauncher", "WeaponMining", "TractorBeam"})
