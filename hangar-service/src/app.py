@@ -706,8 +706,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         # Read-only (nothing is stored), so no CSRF / write check: any
         # authenticated caller may preview against any member's ships.
         target = _import_member(principal, member)
+        # Body first (capped), THEN the slot: a slow upload must not hold one.
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
         async with import_slot():
-            rows = _export_rows(await _capped_json_object(request, IMPORT_BODY_MAX))
+            rows = _export_rows(body)
             results = await _analyze(rows, range(len(rows)))
         ships = await app.state.repository.list_ships(target)
         out = []
@@ -729,8 +731,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         target = _import_member(principal, member)
         authorize_browser_write(request, principal)
         authorize_write(principal, target, config.admin_ids)
+        # Body first (capped), THEN the slot: a slow upload must not hold one.
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
         async with import_slot():
-            return await _apply(principal, target, await _capped_json_object(request, IMPORT_BODY_MAX))
+            return await _apply(principal, target, body)
 
     async def _apply(principal: Principal, target: str, body: dict) -> dict:
         rows = _export_rows(body)
@@ -767,8 +771,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         errors, plan = [], []
         for r in reqs:
             res = results[r["rowIndex"]]
-            if res.error is not None:
-                errors.append({"rowIndex": r["rowIndex"], "error": res.error, "message": res.error_message})
+            # Apply is authoritative: an incompletely analysed row (row-level
+            # failure, over the lookup budget, unknown selection category)
+            # would reset its unresolved slots to stock -- never write it.
+            blocked = res.blocking()
+            if blocked is not None:
+                errors.append({"rowIndex": r["rowIndex"], "error": blocked[0], "message": blocked[1]})
                 continue
             if r["mode"] == "existing":
                 ship = owned.get(r["shipId"])

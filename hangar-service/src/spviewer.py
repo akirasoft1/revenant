@@ -86,8 +86,9 @@ SKIP_REASONS = (UNTRACKED_SLOT, UNKNOWN_ITEM, INCOMPATIBLE, UNKNOWN_VEHICLE, UNR
 MAX_PORTS_PER_ROW = 500
 # Distinct Wiki item lookups per request. The Wiki client shares ONE 60/min
 # rate limiter with every hangar read (bot, sc-knowledge, editor), so an upload
-# must never be able to queue thousands of lookups behind it.
-MAX_ITEM_LOOKUPS = 64
+# must never be able to queue thousands of lookups behind it -- 32 keeps a
+# maximal import to about half a minute of that shared budget.
+MAX_ITEM_LOOKUPS = 32
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _SELECTED_KEY_RE = re.compile(r"^([0-9]+)-(.+)$", re.S)
@@ -248,6 +249,17 @@ def walk_ports(loadout: dict, *, max_ports: int = MAX_PORTS_PER_ROW) -> list[Por
     return ports
 
 
+def unpaired_selections(loadout: dict) -> list[str]:
+    """Non-empty ``selectedX`` maps with no ``xPorts`` array to pair with: a
+    selection the import cannot place (an export shape this code does not
+    know), so the row is not trustworthy enough to apply authoritatively."""
+    port_categories = {_category(k, suffix="Ports") for k, v in loadout.items()
+                       if isinstance(k, str) and k.endswith("Ports") and isinstance(v, list)}
+    return sorted(k for k, v in loadout.items()
+                  if isinstance(k, str) and k.startswith("selected") and len(k) > len("selected")
+                  and isinstance(v, dict) and v and _category(k, prefix="selected") not in port_categories)
+
+
 @dataclass
 class RowResult:
     row_index: int
@@ -265,6 +277,23 @@ class RowResult:
                 "vehicle": ({"uuid": self.vehicle["uuid"], "name": self.vehicle["name"]}
                             if self.vehicle else None),
                 "patch": self.patch, "changes": self.changes, "skipped": self.skipped}
+
+    def blocking(self) -> tuple[str, str] | None:
+        """Why this row must NOT be applied, as (error code, message), or None.
+
+        Apply is authoritative (every slot not in ``fitted`` is reset to
+        stock), so a row whose analysis is incomplete would silently wipe the
+        ship's existing fittings: a row-level failure, a slot that was never
+        looked up (``too_many_lookups``) or a row-level skip (no ``slot``,
+        e.g. an unknown ``selected*`` category) blocks the whole row."""
+        if self.error is not None:
+            return self.error, self.error_message or self.error
+        if any(s.get("reason") == TOO_MANY_LOOKUPS for s in self.skipped):
+            return TOO_MANY_LOOKUPS, "Too many different items across this import — apply fewer loadouts at once"
+        for s in self.skipped:
+            if not s.get("slot"):
+                return s["reason"], s["detail"]
+        return None
 
     def fail(self, reason: str, detail: str) -> "RowResult":
         self.skipped.append({"reason": reason, "detail": detail})
@@ -344,6 +373,12 @@ async def analyze_row(catalog, row_index: int, row: Any, *, budget: DecodeBudget
         ports = walk_ports(loadout)
     except FormatError as e:
         return res.fail(e.reason, e.detail)
+
+    for name in unpaired_selections(loadout):
+        log.warning("hangar: spviewer row %d (%s): selection map %s has no matching *Ports array -- "
+                    "row reported unrecognized_format and will not be applied", row_index,
+                    res.loadout_name, name)
+        res.skipped.append({"reason": UNRECOGNIZED_FORMAT, "detail": f"unknown selection category {name}"})
 
     by_slot: dict[str, Slot] = {s.name: s for s in slots}
     for port in ports:

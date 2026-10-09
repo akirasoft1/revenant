@@ -395,3 +395,16 @@ def test_selected_entries_are_scoped_to_their_category_and_index():
     assert not ports["hardpoint_shield_generator_001"].has_selected
     assert not ports["hardpoint_shield_generator_002"].has_selected
     assert ports["hardpoint_radar"].selected_ref == V801
+
+
+async def test_unknown_selection_category_is_a_row_level_unrecognized_format_skip(caplog):
+    lo = stock_loadout()
+    lo["selectedWarpCores"] = {"0-hardpoint_warp": {"className": "X", "reference": YEAGER}}
+    lo["selectedEmptyThing"] = {}                      # empty maps are harmless
+    res = await analyze_row(make_catalog(), 0, row_with(lo), budget=DecodeBudget())
+    assert res.vehicle is not None and res.error is None   # still previewed
+    assert {"reason": UNRECOGNIZED_FORMAT,
+            "detail": "unknown selection category selectedWarpCores"} in res.skipped
+    assert not any("EmptyThing" in s["detail"] for s in res.skipped)
+    assert res.blocking() == (UNRECOGNIZED_FORMAT, "unknown selection category selectedWarpCores")
+    assert "selectedWarpCores" in caplog.text

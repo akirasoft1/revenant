@@ -405,6 +405,14 @@ def _counting_client(repo, calls):
                                  warm=False, clock=Clock()), base_url=ORIGIN)
 
 
+def test_item_lookup_budget_fits_inside_the_shared_wiki_rate_limit():
+    """The Wiki client's ONE 60/min limiter is shared with every hangar read
+    (bot, sc-knowledge, editor): a maximal import must leave headroom, so the
+    per-request budget is 32 (about half a minute of the limiter)."""
+    from src.spviewer import MAX_ITEM_LOOKUPS
+    assert MAX_ITEM_LOOKUPS == 32
+
+
 def test_upload_cannot_amplify_wiki_item_lookups(repo):
     """100 rows x 12 tracked slots, every one a different random uuid, plus a
     row of 3000 duplicate ports: at most MAX_ITEM_LOOKUPS distinct item calls."""
@@ -462,3 +470,83 @@ def test_deeply_nested_body_is_400(client):
     deep = b'{"file": ' + b"[" * 100_000 + b"]" * 100_000 + b"}"
     r = client.post("/api/v1/import/spviewer/preview", content=deep, headers={"Content-Type": "application/json"})
     assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+
+
+# ---------- security re-review: never write a partially analysed row ----------
+
+def _random_tracked(n0: int) -> tuple[dict, int]:
+    """A stock loadout whose 7 tracked ports each hold a distinct random uuid."""
+    lo, n = stock_loadout(), n0
+    for cat, path in [("quantumdrivePorts", QD), ("shieldPorts", SHIELD1), ("radarPorts", RADAR),
+                      *[("pilotWeaponsPorts", p) for p in NOSE_S2]]:
+        _port(lo, cat, path)["Loadout"] = f"20000000-0000-4000-8000-{n:012d}"
+        n += 1
+    return lo, n
+
+
+def test_apply_row_over_the_lookup_budget_is_not_written(client):
+    """Authoritative replace_fitted would reset the un-looked-up slots to stock
+    and wipe the ship's existing fittings: such a row is an error instead."""
+    from src.spviewer import MAX_ITEM_LOOKUPS
+    ship = add_ship(client)
+    sid = ship["shipId"]
+    client.put(f"/v1/members/{SELF}/ships/{sid}/slots/{HQD}", json={"item": HEMERA_UUID}, headers=H())
+    before = fitted_of(client, SELF, sid)
+    assert HQD in before
+    file, n = [], 0
+    while n <= MAX_ITEM_LOOKUPS:            # enough rows to spend the budget before the last one
+        lo, n = _random_tracked(n)
+        file.append(row_with(lo))
+    file.append(real_file()[0])            # needs 3 more lookups -> over budget
+    as_user(client)
+    rows = [{"rowIndex": i, "mode": "new"} for i in range(len(file) - 1)]
+    rows.append({"rowIndex": len(file) - 1, "mode": "existing", "shipId": sid})
+    r = _apply(client, rows, file=file)
+    assert r.status_code == 200, r.text
+    errs = {e["rowIndex"]: e for e in r.json()["errors"]}
+    last = errs[len(file) - 1]
+    assert last == {"rowIndex": len(file) - 1, "error": "too_many_lookups",
+                    "message": "Too many different items across this import — apply fewer loadouts at once"}
+    assert fitted_of(client, SELF, sid) == before            # existing fittings intact
+    assert sid not in {s["shipId"] for s in r.json()["ships"]}
+
+
+def test_apply_row_with_an_unknown_selection_category_is_not_written(client):
+    ship = add_ship(client)
+    sid = ship["shipId"]
+    client.put(f"/v1/members/{SELF}/ships/{sid}/slots/{HQD}", json={"item": HEMERA_UUID}, headers=H())
+    before = fitted_of(client, SELF, sid)
+    lo = stock_loadout()
+    lo["selectedWarpCores"] = {"0-hardpoint_warp": {"className": "X", "reference": YEAGER}}
+    as_user(client)
+    pv = client.post("/api/v1/import/spviewer/preview", json={"file": [row_with(lo)]}).json()["rows"][0]
+    assert {"reason": "unrecognized_format",
+            "detail": "unknown selection category selectedWarpCores"} in pv["skipped"]
+    r = _apply(client, [{"rowIndex": 0, "mode": "existing", "shipId": sid}], file=[row_with(lo)])
+    assert r.status_code == 200, r.text
+    assert r.json()["ships"] == []
+    assert r.json()["errors"][0]["error"] == "unrecognized_format"
+    assert fitted_of(client, SELF, sid) == before
+
+
+def test_import_body_is_read_before_taking_a_concurrency_slot(client):
+    """A slow upload must not hold an import slot: the body is read (and
+    capped) first, so with every slot taken an oversized or malformed body
+    gets its own error rather than ``busy``."""
+    sem = client.app.state.import_slots
+    taken = 0
+    while not sem.locked():
+        sem._value -= 1
+        taken += 1
+    try:
+        as_user(client)
+        big = b'{"file": "' + b"x" * (MAX_UPLOAD_BYTES + 128 * 1024) + b'"}'
+        r = client.post("/api/v1/import/spviewer/preview", content=big,
+                        headers={"Content-Type": "application/json"})
+        assert r.status_code == 413
+        r = client.post("/api/v1/import/spviewer/apply", content=b"{nope", headers={**WRITE,
+                        "Content-Type": "application/json"})
+        assert r.status_code == 400
+        assert client.post("/api/v1/import/spviewer/preview", json={"file": []}).json()["error"] == "busy"
+    finally:
+        sem._value += taken

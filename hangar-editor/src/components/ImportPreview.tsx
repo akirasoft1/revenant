@@ -11,15 +11,26 @@ export interface RowSelection {
 export type Selections = Record<number, RowSelection>;
 
 /**
- * Row-level skips (no `slot`) that make the whole row unusable. The server
- * resolves the vehicle BEFORE decoding, so `vehicle` can be set on a row whose
- * loadout could not be read at all; such a row must not be importable.
+ * Why a row will not be applied, or null. The server's apply is authoritative
+ * (every slot it did not resolve goes back to stock), so it refuses any row
+ * whose analysis is incomplete and the UI mirrors that:
+ * - a `too_many_lookups` skip: some slots were never looked up (the request's
+ *   Wiki budget ran out) -- importing fewer loadouts at once fixes it;
+ * - any row-level skip (no `slot`): the loadout could not be read, or carries a
+ *   selection the importer does not understand. The server resolves the vehicle
+ *   BEFORE decoding, so `vehicle` can be set on such a row.
  */
-const ROW_BLOCKING_REASONS = new Set(['unrecognized_format', 'too_large', 'unknown_vehicle']);
+export const TOO_MANY_LOOKUPS_NOTE = "won't be applied — import fewer at once";
+
+export function blockedReason(row: ImportPreviewRow): string | null {
+  if (row.vehicle == null) return 'cannot be imported';
+  if (row.skipped.some((s) => s.reason === 'too_many_lookups')) return TOO_MANY_LOOKUPS_NOTE;
+  if (row.skipped.some((s) => !s.slot)) return 'cannot be imported';
+  return null;
+}
 
 export function importable(row: ImportPreviewRow): boolean {
-  if (row.vehicle == null) return false;
-  return !row.skipped.some((s) => !s.slot && ROW_BLOCKING_REASONS.has(s.reason));
+  return blockedReason(row) === null;
 }
 
 /** shipId -> number of fitted (non-stock) slots on that existing ship. */
@@ -76,7 +87,8 @@ export function ImportPreview({ rows, selections, fittedCounts = {}, onChange, d
       {rows.map((row) => {
         const sel = selections[row.rowIndex] ?? defaultSelection(row, fittedCounts);
         const set = (patch: Partial<RowSelection>) => onChange(row.rowIndex, { ...sel, ...patch });
-        const ok = importable(row);
+        const blocked = blockedReason(row);
+        const ok = blocked === null;
         return (
           <li key={row.rowIndex} className={ok ? 'import-row' : 'import-row import-row-bad'} data-testid="import-row">
             <div className="import-row-head">
@@ -92,7 +104,7 @@ export function ImportPreview({ rows, selections, fittedCounts = {}, onChange, d
               </label>
               <span className="muted">
                 {row.vehicle ? row.vehicle.name : 'ship not recognized'}
-                {row.vehicle && !ok && ' · cannot be imported'}
+                {row.vehicle && blocked && ` · ${blocked}`}
                 {row.patch && ` · ${row.patch}`}
               </span>
             </div>

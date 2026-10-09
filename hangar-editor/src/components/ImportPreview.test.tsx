@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import type { ImportPreviewRow } from '../api/types';
 import {
   ImportPreview,
+  blockedReason,
   defaultSelections,
   importable,
   toApplyRows,
@@ -183,6 +184,33 @@ describe('ImportPreview', () => {
   it('per-slot skips (with a slot) do not block the row', () => {
     expect(importable(ROWS[0])).toBe(true);
     expect(importable({ ...ROWS[2], skipped: [{ slot: 'a', reason: 'too_large' }] })).toBe(true);
+  });
+
+  it("marks a row with a too_many_lookups skip as won't be applied and leaves it out of apply", () => {
+    const row: ImportPreviewRow = {
+      ...ROWS[0],
+      rowIndex: 6,
+      loadoutName: 'Over budget',
+      skipped: [{ slot: 'hardpoint_radar', reason: 'too_many_lookups', detail: 'not looked up' }],
+    };
+    expect(importable(row)).toBe(false);
+    expect(blockedReason(row)).toBe("won't be applied — import fewer at once");
+    render(<Harness rows={[row]} />);
+    expect(screen.getByLabelText('Import Over budget')).toBeDisabled();
+    expect(screen.getByText(/won't be applied — import fewer at once/)).toBeInTheDocument();
+    expect(toApplyRows([row], { 6: { include: true, mode: 'new', shipId: '', nickname: '' } })).toEqual([]);
+  });
+
+  it('any slot-less skip blocks the row (the server refuses to write it)', () => {
+    const row: ImportPreviewRow = {
+      ...ROWS[2],
+      skipped: [{ reason: 'unrecognized_format', detail: 'unknown selection category selectedWarpCores' }],
+    };
+    expect(blockedReason(row)).toBe('cannot be imported');
+    expect(blockedReason({ ...ROWS[2], skipped: [{ reason: 'something_new', detail: 'x' }] })).toBe(
+      'cannot be imported',
+    );
+    expect(blockedReason(ROWS[0])).toBeNull();
   });
 
   it('labels the server skip reasons', () => {

@@ -159,14 +159,14 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   `loadoutData` not LZ-string, not JSON, or without `*Ports`), `too_large`
   (decoded `loadoutData` over 2 MB, or over the 16 MB per-request budget),
   `empty_slot` (a tracked slot emptied in spviewer — the hangar can't store
-  "empty", so it stays stock), `too_many_lookups` (the request's budget of 64
+  "empty", so it stays stock), `too_many_lookups` (the request's budget of 32
   DISTINCT Wiki item lookups is spent). A duplicate slot path in a row makes the
   whole row `unrecognized_format`; more than 500 ports makes it `too_large`. An untracked port whose current item is only a
   bare uuid (no `selected*` entry) is not resolved — it can't affect the
   import and would cost a Wiki lookup per mount.
 - Caps: body ≤ 2 MB (+64 KiB envelope; 413 `too_large`, checked on
   `Content-Length` and while streaming), ≤ 100 rows (413 `too_large`), ≤ 500
-  ports and ≤ 2 MB decoded per row, 16 MB decoded per request, and **64
+  ports and ≤ 2 MB decoded per row, 16 MB decoded per request, and **32
   distinct Wiki item lookups per request** — the Wiki client's 60/min rate
   limiter is shared with every hangar read (bot, sc-knowledge, editor), so an
   upload must not be able to queue thousands of lookups. Only a uuid or a
@@ -189,7 +189,16 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   (`replace_fitted`): slots the loadout doesn't change go back to stock.
   Per-row failures don't block other rows and come back in `errors[]` with
   `error` ∈ `unknown_vehicle`, `unrecognized_format`, `too_large`,
-  `not_found` (no such ship), `vehicle_mismatch`.
+  `not_found` (no such ship), `vehicle_mismatch`, `too_many_lookups`.
+  **A row whose analysis is incomplete is never written** — because apply is
+  authoritative, writing it would reset the unresolved slots to stock and wipe
+  the ship's existing fittings. That covers a row-level failure, any slot
+  skipped with `too_many_lookups` (error `too_many_lookups`, "apply fewer
+  loadouts at once"), and any row-level skip such as a non-empty `selected*`
+  map with no matching `*Ports` array (`unrecognized_format`, detail
+  `unknown selection category <name>`, logged at WARNING).
+- The request body is read (and capped) **before** an import slot is taken,
+  so a slow upload never holds one of the 2 slots.
 
 ## Auth
 
