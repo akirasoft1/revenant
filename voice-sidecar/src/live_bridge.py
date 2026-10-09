@@ -188,7 +188,8 @@ HANGAR_EDIT_NOTE = (
     "hangar_add_ship or hangar_reset -- never for \"should I...\" or other questions or "
     "hypotheticals; on choose_slot or ambiguous ask a short follow-up naming at most three "
     "options; after a write say briefly what changed, using the item name the tool returned; "
-    "these edit only the speaker's own hangar, never anyone else's."
+    "these edit only the speaker's own hangar -- if asked to change someone else's ships, say "
+    "chat edits only apply to your own hangar."
 )
 # Whole hangar tool call (token mint + POST), on top of the client's own 5s.
 HANGAR_CALL_TIMEOUT_S = 6.0
@@ -362,7 +363,8 @@ class _SessionStats:
         self.search_turns = 0
         self.search_queries = 0
         self.turn_search_queries = {}
-        # Hangar chat edits answered without an error (writes and no-ops).
+        # Hangar chat edits that wrote something (no error, not `unchanged`);
+        # same meaning as the agent sidecar's `hangar.edits` span attribute.
         self.hangar_edits = 0
 
 
@@ -1257,7 +1259,7 @@ class LiveBridge:
         if not isinstance(result, dict):
             result = {"error": "unavailable", "message": "unexpected hangar-service response"}
         code = result.get("error")
-        if not code:
+        if not code and not result.get("unchanged"):
             stats.hangar_edits += 1
         ms = int((time.monotonic() - started) * 1000)
         changes = result.get("changes") if isinstance(result.get("changes"), list) else []

@@ -325,6 +325,19 @@ async def test_error_result_passes_through_and_is_not_counted():
     assert stats.hangar_edits == 0
 
 
+async def test_unchanged_noop_is_not_counted():
+    noop = {"ship": {"shipId": "s1"}, "changes": [], "unchanged": True}
+    session = ToolSession([_tool_call_msg(FC("h1", "hangar_fit", {"ship": "s", "item": "i"}))])
+    stats = await _run_pump(_bridge(session, editor=FakeEditor(result=noop)), session,
+                            _ref(session, opener="111"))
+    assert session.responses()[0].response == noop
+    assert stats.hangar_edits == 0
+
+
+def test_note_covers_other_members_request():
+    assert "someone else's" in HANGAR_EDIT_NOTE and "own hangar" in HANGAR_EDIT_NOTE
+
+
 async def test_info_log_per_edit_call(caplog):
     session = ToolSession([_tool_call_msg(FC("h1", "hangar_fit",
                                              {"ship": "my Connie", "item": "Hemera",
