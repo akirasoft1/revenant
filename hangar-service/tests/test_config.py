@@ -76,7 +76,9 @@ def test_browser_auth_defaults_disabled():
 
 def test_browser_auth_enabled_when_all_set():
     c = load({"DISCORD_CLIENT_ID": " 1558216042151419935 ", "DISCORD_CLIENT_SECRET": "sec",
-              "HANGAR_SESSION_KEY": KEY, "HANGAR_PUBLIC_ORIGIN": "http://localhost:5173/"})
+              "HANGAR_SESSION_KEY": KEY, "HANGAR_PUBLIC_ORIGIN": "http://localhost:5173/",
+              "HANGAR_ALLOWED_GUILD_IDS": " 323349603976216577 , 42,"})
+    assert c.allowed_guild_ids == frozenset({"323349603976216577", "42"})
     assert c.discord_client_id == "1558216042151419935"
     assert c.public_origin == "http://localhost:5173"          # trailing slash dropped
     assert c.redirect_uri == "http://localhost:5173/api/auth/callback"
@@ -87,9 +89,10 @@ def test_browser_auth_enabled_when_all_set():
 import pytest  # noqa: E402
 
 
-@pytest.mark.parametrize("missing", ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET", "HANGAR_SESSION_KEY"])
+@pytest.mark.parametrize("missing", ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET", "HANGAR_SESSION_KEY",
+                                     "HANGAR_ALLOWED_GUILD_IDS"])
 def test_browser_auth_disabled_when_any_missing(missing):
-    env = {"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "sec", "HANGAR_SESSION_KEY": KEY}
+    env = {"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "sec", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7"}
     env.pop(missing)
     c = load(env)
     assert c.browser_auth_enabled is False
@@ -97,21 +100,22 @@ def test_browser_auth_disabled_when_any_missing(missing):
 
 
 def test_short_session_key_disables_browser_auth():
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "sec", "HANGAR_SESSION_KEY": "short"})
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "sec", "HANGAR_SESSION_KEY": "short",
+              "HANGAR_ALLOWED_GUILD_IDS": "7"})
     assert c.browser_auth_enabled is False
     assert "HANGAR_SESSION_KEY" in c.browser_auth_problem()
 
 
 @pytest.mark.parametrize("origin", ["hangar.aklabs.io", "https://hangar.aklabs.io/path", "ftp://x"])
 def test_bad_public_origin_disables_browser_auth(origin):
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "sec", "HANGAR_SESSION_KEY": KEY,
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "sec", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_PUBLIC_ORIGIN": origin})
     assert c.browser_auth_enabled is False
     assert "HANGAR_PUBLIC_ORIGIN" in c.browser_auth_problem()
 
 
 def test_secrets_not_in_repr():
-    c = load({"DISCORD_CLIENT_SECRET": "very-secret-value", "HANGAR_SESSION_KEY": KEY})
+    c = load({"DISCORD_CLIENT_SECRET": "very-secret-value", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7"})
     assert "very-secret-value" not in repr(c)
     assert KEY not in repr(c)
 
@@ -127,7 +131,7 @@ def test_secrets_not_in_repr():
     ("https://hangar.aklabs.io:8443", "https://hangar.aklabs.io:8443"),
 ])
 def test_public_origin_normalized(raw, expected):
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_PUBLIC_ORIGIN": raw})
     assert c.public_origin == expected
     assert c.browser_auth_enabled
@@ -137,7 +141,7 @@ def test_public_origin_normalized(raw, expected):
                                  "https://hangar.aklabs.io#f", "https://u@hangar.aklabs.io",
                                  "https://hangar.aklabs.io:notaport", "https://", "hangar.aklabs.io"])
 def test_public_origin_junk_rejected(raw):
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_PUBLIC_ORIGIN": raw})
     assert not c.browser_auth_enabled
     assert "HANGAR_PUBLIC_ORIGIN" in c.browser_auth_problem()
@@ -152,7 +156,7 @@ def test_max_ships_per_member():
 
 
 def test_session_rotation_settings():
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_SESSION_KEY_PREVIOUS": "p" * 40, "HANGAR_SESSION_NOT_BEFORE": "1800000000"})
     assert c.session_key_previous == "p" * 40 and "p" * 40 not in repr(c)
     assert c.session_not_before == 1800000000
@@ -162,12 +166,19 @@ def test_session_rotation_settings():
 
 @pytest.mark.parametrize("bad", ["soon", "-5", "1.5"])
 def test_bad_session_not_before_disables_browser_auth(bad):
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_SESSION_NOT_BEFORE": bad})
     assert not c.browser_auth_enabled and "HANGAR_SESSION_NOT_BEFORE" in c.browser_auth_problem()
 
 
 def test_short_previous_key_disables_browser_auth():
-    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_SESSION_KEY_PREVIOUS": "short"})
     assert not c.browser_auth_enabled and "HANGAR_SESSION_KEY_PREVIOUS" in c.browser_auth_problem()
+
+
+def test_allowed_guilds_must_be_snowflakes():
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_ALLOWED_GUILD_IDS": "323349603976216577,my-server"})
+    assert not c.browser_auth_enabled and "HANGAR_ALLOWED_GUILD_IDS" in c.browser_auth_problem()
+    assert load({}).allowed_guild_ids == frozenset()

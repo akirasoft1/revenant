@@ -39,7 +39,7 @@ def test_session_payload_carries_iat_and_profile_fields():
     codec = SessionCodec(KEY, clock=clock)
     payload = codec._session.loads(codec.sign_session(USER))
     assert payload == {"discordId": USER.discord_id, "username": "akira", "globalName": "Akira",
-                       "avatar": "abc123", "iat": int(clock.t)}
+                       "avatar": "abc123", "guildId": None, "nick": None, "iat": int(clock.t)}
 
 
 def test_session_tamper_rejected():
@@ -142,3 +142,20 @@ def test_not_before_rejects_older_iat():
     no_iat = SessionCodec(KEY, clock=clock)._session.dumps({"discordId": "1", "username": "u"})
     with pytest.raises(InvalidSession):
         SessionCodec(KEY, clock=clock, not_before=1).verify_session(no_iat)
+
+
+def test_guild_and_nick_round_trip():
+    u = SessionUser("1", "u", None, None, guild_id="323349603976216577", nick="Cap")
+    back = SessionCodec(KEY, clock=Clock()).verify_session(SessionCodec(KEY, clock=Clock()).sign_session(u))
+    assert back.guild_id == "323349603976216577" and back.nick == "Cap"
+
+
+def test_allowed_guilds_enforced_on_verify():
+    codec = SessionCodec(KEY, clock=Clock())
+    tok = codec.sign_session(SessionUser("1", "u", None, None, guild_id="10"))
+    assert SessionCodec(KEY, clock=Clock(), allowed_guild_ids=frozenset({"10"})).verify_session(tok).guild_id == "10"
+    with pytest.raises(InvalidSession):
+        SessionCodec(KEY, clock=Clock(), allowed_guild_ids=frozenset({"20"})).verify_session(tok)
+    no_guild = codec.sign_session(USER)
+    with pytest.raises(InvalidSession):
+        SessionCodec(KEY, clock=Clock(), allowed_guild_ids=frozenset({"10"})).verify_session(no_guild)

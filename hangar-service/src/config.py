@@ -63,6 +63,9 @@ class Config:
     session_key_previous: str = field(default="", repr=False)   # still verifies, never signs
     session_not_before_raw: str = ""     # unix seconds; sessions with an older iat are rejected
     max_ships_per_member: int = DEFAULT_MAX_SHIPS_PER_MEMBER
+    # Only members of these Discord servers may sign in. Empty = browser login
+    # OFF (fail closed) -- never "allow everyone".
+    allowed_guild_ids: frozenset[str] = frozenset()
 
     @property
     def session_not_before(self) -> int | None:
@@ -77,9 +80,14 @@ class Config:
         """Why browser (Discord) login is disabled, or None when it is enabled."""
         missing = [name for name, value in (("DISCORD_CLIENT_ID", self.discord_client_id),
                                             ("DISCORD_CLIENT_SECRET", self.discord_client_secret),
-                                            ("HANGAR_SESSION_KEY", self.session_key)) if not value]
+                                            ("HANGAR_SESSION_KEY", self.session_key),
+                                            ("HANGAR_ALLOWED_GUILD_IDS", self.allowed_guild_ids))
+                   if not value]
         if missing:
             return f"{', '.join(missing)} not set"
+        bad_guilds = sorted(g for g in self.allowed_guild_ids if not g.isdigit() or len(g) > 32)
+        if bad_guilds:
+            return f"HANGAR_ALLOWED_GUILD_IDS has non-snowflake entries {bad_guilds}"
         if len(self.session_key) < SESSION_KEY_MIN_LEN:
             return f"HANGAR_SESSION_KEY is shorter than {SESSION_KEY_MIN_LEN} characters"
         if self.session_key_previous and len(self.session_key_previous) < SESSION_KEY_MIN_LEN:
@@ -120,6 +128,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         session_key=(env.get("HANGAR_SESSION_KEY") or "").strip(),
         session_key_previous=(env.get("HANGAR_SESSION_KEY_PREVIOUS") or "").strip(),
         session_not_before_raw=(env.get("HANGAR_SESSION_NOT_BEFORE") or "").strip(),
+        allowed_guild_ids=_csv(env.get("HANGAR_ALLOWED_GUILD_IDS")),
         max_ships_per_member=_positive_int(env, "HANGAR_MAX_SHIPS_PER_MEMBER", DEFAULT_MAX_SHIPS_PER_MEMBER),
     )
 

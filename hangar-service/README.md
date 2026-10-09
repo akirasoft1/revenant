@@ -48,8 +48,8 @@ auth). Service callers use `/v1` on the `run.app` URL; the browser editor uses
 
 | Method | Path | Success | Failure |
 |---|---|---|---|
-| GET | `/api/auth/login?next=/path` | 302 → `https://discord.com/oauth2/authorize?...` (scope `identify`); sets `__Host-hangar_oauth_state` (signed, 10 min) | 503 `unavailable` if browser login unconfigured |
-| GET | `/api/auth/callback?code&state` | 302 → `next` (same-origin path, default `/`); sets `__Host-hangar_session`; clears the state cookie | 302 → `/?login_error=<code>`, code ∈ `state_mismatch`, `denied`, `missing_code`, `token_error`, `user_error`, `server_error`; 503 if unconfigured |
+| GET | `/api/auth/login?next=/path` | 302 → `https://discord.com/oauth2/authorize?...` (scope `identify guilds.members.read`); sets `__Host-hangar_oauth_state` (signed, 10 min) | 503 `unavailable` if browser login unconfigured |
+| GET | `/api/auth/callback?code&state` | 302 → `next` (same-origin path, default `/`); sets `__Host-hangar_session`; clears the state cookie | 302 → `/?login_error=<code>`, code ∈ `state_mismatch`, `denied`, `missing_code`, `token_error`, `user_error`, `not_member` (in no allowed Discord server; no cookie set), `discord_unavailable` (membership lookup got 429/5xx/network error), `server_error`; 503 if unconfigured |
 | POST | `/api/auth/logout` | 204, clears `__Host-hangar_session` | 403 `forbidden` unless same-origin (`Origin`/`Referer`) |
 | GET | `/api/me` | `{discordId, username, globalName, avatarUrl, isAdmin}` | 401 `unauthenticated` (no / bad / expired session); 503 if unconfigured |
 
@@ -58,7 +58,8 @@ All four send `Cache-Control: no-store`. `next` must be a same-origin path
 
 `Ship` = `{shipId, vehicleUuid, vehicleName, vehicleClassName, nickname, fitted,
 createdAt, updatedAt, updatedBy, ownerName, loadout, loadoutError}` where
-`ownerName` is the owner's Discord global name (else username), stored when the
+`ownerName` is the owner's Discord global name (else their nickname in the
+allowed server they logged in through, else username), stored when the
 owner edits that ship through a browser session (null otherwise — service
 writes and admins editing someone else's ship leave it unchanged), and `loadout` is
 `[{slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}], item: {uuid, name} | null, source: "stock"|"fitted"}]`,
@@ -128,10 +129,23 @@ Two layers:
   behaviour — including `X-Acting-Member` — is unchanged; a bad Bearer token is
   401 even if a valid cookie is present.
 - **Browser sessions (web editor).** Discord OAuth2 authorization-code flow
-  (scope `identify`, redirect `HANGAR_PUBLIC_ORIGIN` + `/api/auth/callback`).
-  On success the service sets `__Host-hangar_session`: an itsdangerous-signed (HMAC,
+  (scope `identify guilds.members.read`, redirect `HANGAR_PUBLIC_ORIGIN` +
+  `/api/auth/callback`).
+- **Login gate — server members only.** After fetching the user, the callback
+  calls `GET https://discord.com/api/users/@me/guilds/{guild_id}/member` (the
+  user's own token) for each guild in `HANGAR_ALLOWED_GUILD_IDS` (sorted; first
+  hit wins). 200 = member: the guild id and server nickname are recorded in the
+  session. 404/403 = not a member. No membership anywhere → `/?login_error=not_member`
+  and **no session cookie**. If no guild confirmed membership and a lookup hit
+  429/5xx/a network error → `/?login_error=discord_unavailable` (try again).
+  **Membership is checked only at login.** A member who leaves the server keeps
+  a working session until it expires (30 days) — revoke sooner with
+  `HANGAR_SESSION_NOT_BEFORE` (everyone re-logs in; the leaver is then refused).
+  Removing a guild from `HANGAR_ALLOWED_GUILD_IDS` immediately invalidates every
+  session that logged in through it (the session resolver checks `guildId`).
+- On success the service sets `__Host-hangar_session`: an itsdangerous-signed (HMAC,
   key `HANGAR_SESSION_KEY`, not encrypted) cookie carrying only public profile
-  fields `{discordId, username, globalName, avatar, iat}`;
+  fields `{discordId, username, globalName, avatar, guildId, nick, iat}`;
   `HttpOnly; Secure; SameSite=Lax; Path=/`, 30-day max age, no server-side
   store (logout clears the cookie; a leaked cookie is valid until it expires,
   the key rotates, or `HANGAR_SESSION_NOT_BEFORE` passes its `iat` — see
@@ -142,8 +156,9 @@ Two layers:
   admin). **CSRF:** session writes additionally need `Origin` (or, without
   one, `Referer`) on `HANGAR_PUBLIC_ORIGIN`, else 403 `forbidden`. Session
   cookies work on both `/v1` and `/api/v1`.
-- If `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` or `HANGAR_SESSION_KEY` is
-  missing (or the key is < 32 chars, or the origin is malformed), browser login
+- If `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `HANGAR_SESSION_KEY` or
+  `HANGAR_ALLOWED_GUILD_IDS` is missing/empty (or the key is < 32 chars, a guild
+  id isn't a snowflake, or the origin is malformed), browser login
   is off: the login routes and `/api/me` answer 503 and cookies are not a
   credential. Service callers keep working (fail closed for browsers only).
 - **Response headers:** every response carries
@@ -182,6 +197,7 @@ Two layers:
 | `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** (refused when `K_SERVICE` is set, i.e. on Cloud Run) |
 | `HANGAR_PUBLIC_ORIGIN` | `https://hangar.aklabs.io` | Web editor origin: CSRF check + OAuth redirect URI (`<origin>/api/auth/callback`). Trailing slash dropped |
 | `DISCORD_CLIENT_ID` | *(empty → browser login off)* | Discord application client ID (`1558216042151419935`) |
+| `HANGAR_ALLOWED_GUILD_IDS` | *(empty → browser login off)* | Comma-separated Discord server IDs whose members may sign in (production `323349603976216577`). Empty never means "everyone" |
 | `DISCORD_CLIENT_SECRET` | *(empty → browser login off)* | From Secret Manager `hangar-discord-client-secret` (`--set-secrets`) |
 | `HANGAR_SESSION_KEY` | *(empty → browser login off)* | Cookie-signing key, ≥ 32 chars; Secret Manager `hangar-session-key`. Signs every new session |
 | `HANGAR_SESSION_KEY_PREVIOUS` | *(none)* | Previous signing key (≥ 32 chars), still accepted for verification during a rotation; never signs |

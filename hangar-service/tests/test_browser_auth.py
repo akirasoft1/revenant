@@ -19,8 +19,10 @@ KEY = "test-session-key-" + "k" * 40
 SECRET = "discord-client-secret-value"
 CODE = "the-oauth-code-value"
 ACCESS = "discord-access-token-value"
+GUILD = "323349603976216577"
+GUILD2 = "555000000000000001"
 BROWSER_ENV = {"DISCORD_CLIENT_ID": "1558216042151419935", "DISCORD_CLIENT_SECRET": SECRET,
-               "HANGAR_SESSION_KEY": KEY}
+               "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": GUILD}
 
 
 class Clock:
@@ -37,6 +39,8 @@ class FakeDiscord:
         self.token_status = 200
         self.user_status = 200
         self.user = {"id": SELF, "username": "akira", "global_name": "Akira", "avatar": "abc"}
+        # guild id -> (status, body) for GET /users/@me/guilds/{id}/member; unlisted -> 404
+        self.guilds = {GUILD: (200, {"nick": None, "roles": []})}
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         self.calls.append(req)
@@ -52,6 +56,13 @@ class FakeDiscord:
                 return httpx.Response(self.user_status if self.user_status != 200 else 401,
                                       json={"message": "401: Unauthorized"})
             return httpx.Response(200, json=self.user)
+        prefix = "https://discord.com/api/users/@me/guilds/"
+        if url.startswith(prefix) and url.endswith("/member"):
+            if req.headers.get("authorization") != f"Bearer {ACCESS}":
+                return httpx.Response(401, json={"message": "401: Unauthorized"})
+            gid = url[len(prefix):-len("/member")]
+            status, body = self.guilds.get(gid, (404, {"message": "Unknown Guild", "code": 10004}))
+            return httpx.Response(status, json=body)
         return httpx.Response(404)
 
 
@@ -86,8 +97,8 @@ def session_cookie(user: SessionUser, clock=None) -> str:
     return SessionCodec(KEY, clock=clock or Clock()).sign_session(user)
 
 
-ME = SessionUser(SELF, "akira", "Akira", "abc")
-ADMIN_USER = SessionUser(ADMIN, "boss", None, None)
+ME = SessionUser(SELF, "akira", "Akira", "abc", guild_id=GUILD)
+ADMIN_USER = SessionUser(ADMIN, "boss", None, None, guild_id=GUILD)
 
 
 def as_user(client, user=ME, clock=None):
@@ -119,7 +130,7 @@ def test_login_redirects_to_discord_with_state_cookie(client):
     q = {k: v[0] for k, v in parse_qs(loc.query).items()}
     assert q["client_id"] == "1558216042151419935"
     assert q["redirect_uri"] == "https://hangar.aklabs.io/api/auth/callback"
-    assert q["scope"] == "identify" and q["response_type"] == "code"
+    assert q["scope"] == "identify guilds.members.read" and q["response_type"] == "code"
     assert len(state) >= 32
     h = cookie_header(r, "__Host-hangar_oauth_state").lower()
     assert "httponly" in h and "secure" in h and "samesite=lax" in h and "max-age=600" in h
@@ -294,7 +305,7 @@ def test_session_write_same_origin_sets_owner_name(client):
 
 
 def test_session_write_owner_name_falls_back_to_username(client):
-    as_user(client, SessionUser(SELF, "akira", None, None))
+    as_user(client, SessionUser(SELF, "akira", None, None, guild_id=GUILD))
     r = client.post(f"/api/v1/members/{SELF}/ships", json={"vehicle": "harbinger"},
                     headers={"Referer": ORIGIN + "/"})
     assert r.status_code == 201 and r.json()["ship"]["ownerName"] == "akira"
@@ -606,3 +617,102 @@ def test_login_gate_hook_runs_after_user_fetch(repo, discord, clock):
         _assert_login_error(r, "not_member")
         assert seen == [(SELF, ACCESS)]
         assert c.get("/api/me").status_code == 401
+
+
+# ---------- guild-membership login gate (finding 1) ----------
+
+def _callback(c):
+    _, state = login(c)
+    return c.get("/api/auth/callback", params={"code": CODE, "state": state})
+
+
+def test_guild_member_gets_session_with_guild(client, discord, clock):
+    r = _callback(client)
+    assert r.status_code == 302 and r.headers["location"] == "/"
+    token = client.cookies.get("__Host-hangar_session")
+    user = SessionCodec(KEY, clock=clock).verify_session(token)
+    assert user.guild_id == GUILD
+    member_calls = [q for q in discord.calls if q.url.path.endswith("/member")]
+    assert [q.url.path for q in member_calls] == [f"/api/users/@me/guilds/{GUILD}/member"]
+    assert client.get("/api/me").status_code == 200
+
+
+def test_non_member_is_refused_without_cookie(client, discord):
+    discord.guilds = {}
+    r = _callback(client)
+    _assert_login_error(r, "not_member")
+    assert not any(h.startswith("__Host-hangar_session=") for h in set_cookie_headers(r))
+    assert client.get("/api/me").status_code == 401
+
+
+def test_forbidden_guild_lookup_is_not_member(client, discord):
+    discord.guilds = {GUILD: (403, {"message": "Missing Access"})}
+    _assert_login_error(_callback(client), "not_member")
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+def test_discord_guild_lookup_failure_is_discord_unavailable(client, discord, status):
+    discord.guilds = {GUILD: (status, {"message": "slow down", "retry_after": 1.0})}
+    r = _callback(client)
+    _assert_login_error(r, "discord_unavailable")
+    assert not any(h.startswith("__Host-hangar_session=") for h in set_cookie_headers(r))
+
+
+def test_member_of_second_allowed_guild_and_nick_as_display_candidate(repo, discord, clock):
+    discord.user = {"id": SELF, "username": "akira", "global_name": None, "avatar": None}
+    discord.guilds = {GUILD2: (200, {"nick": "Captain A", "roles": []})}
+    app = _app(repo, discord, clock, HANGAR_ALLOWED_GUILD_IDS=f"{GUILD},{GUILD2}")
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        assert _callback(c).headers["location"] == "/"
+        r = c.post(f"/api/v1/members/{SELF}/ships", json={"vehicle": "harbinger"}, headers={"Origin": ORIGIN})
+        assert r.json()["ship"]["ownerName"] == "Captain A"          # globalName absent -> guild nick
+        assert SessionCodec(KEY, clock=clock).verify_session(
+            c.cookies.get("__Host-hangar_session")).guild_id == GUILD2
+
+
+def test_global_name_beats_nick():
+    assert SessionUser("1", "u", "Global", None, guild_id="2", nick="Nick").display_name == "Global"
+    assert SessionUser("1", "u", None, None, guild_id="2", nick="Nick").display_name == "Nick"
+
+
+def test_one_guild_down_other_guild_member_still_logs_in(repo, discord, clock):
+    discord.guilds = {GUILD: (503, {}), GUILD2: (200, {"roles": []})}
+    app = _app(repo, discord, clock, HANGAR_ALLOWED_GUILD_IDS=f"{GUILD},{GUILD2}")
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        assert _callback(c).headers["location"] == "/"
+
+
+def test_session_for_removed_guild_is_rejected(repo, discord, clock):
+    app = _app(repo, discord, clock, HANGAR_ALLOWED_GUILD_IDS=GUILD2)   # GUILD no longer allowed
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        as_user(c, ME)                                   # session carries guildId=GUILD
+        assert c.get("/api/me").status_code == 401
+        r = c.get(f"/api/v1/members/{SELF}/hangar")
+        assert r.status_code == 401 and r.json()["error"] == "unauthenticated"
+
+
+def test_session_without_guild_is_rejected(client):
+    as_user(client, SessionUser(SELF, "akira", "Akira", None))   # pre-gate cookie shape
+    assert client.get("/api/me").status_code == 401
+
+
+@pytest.mark.parametrize("value", ["", "  ", " , "])
+def test_empty_allowed_guilds_disables_browser_login(repo, discord, clock, value):
+    app = _app(repo, discord, clock, HANGAR_ALLOWED_GUILD_IDS=value)
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        r = c.get("/api/auth/login")
+        assert r.status_code == 503 and "HANGAR_ALLOWED_GUILD_IDS" in r.json()["message"]
+        assert c.get("/api/me").status_code == 503
+        assert c.post(f"/v1/members/{SELF}/ships", json={"vehicle": "harbinger"},
+                      headers=H()).status_code == 201
+
+
+def test_guild_gate_never_logs_access_token(client, discord, caplog):
+    caplog.set_level(logging.DEBUG)
+    discord.guilds = {GUILD: (500, {})}
+    _callback(client)
+    discord.guilds = {}
+    _callback(client)
+    text = "\n".join(r.getMessage() for r in caplog.records if not r.name.startswith("httpx2"))
+    assert ACCESS not in text and CODE not in text
+    assert "discord_unavailable" in text and "not_member" in text

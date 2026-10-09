@@ -2,7 +2,7 @@
 
 The HTTP transport is injectable so tests run against a fake Discord.
 Errors are ``DiscordOAuthError`` with a stable ``code`` (``token_error`` /
-``user_error``) that the callback turns into ``/?login_error=<code>``. Error
+``user_error`` / ``discord_unavailable``) that the callback turns into ``/?login_error=<code>``. Error
 messages carry only HTTP status / Discord's ``error`` field / the exception
 type -- never the authorization code, access token or client secret.
 """
@@ -19,7 +19,10 @@ log = logging.getLogger(__name__)
 AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
 TOKEN_URL = "https://discord.com/api/oauth2/token"
 USER_URL = "https://discord.com/api/users/@me"
-SCOPE = "identify"
+GUILD_MEMBER_URL = "https://discord.com/api/users/@me/guilds/{guild_id}/member"
+# identify: who they are; guilds.members.read: their membership (and nick) in a
+# given server, for the login gate.
+SCOPE = "identify guilds.members.read"
 _SNOWFLAKE = re.compile(r"^[0-9]{1,32}$")
 
 
@@ -103,3 +106,32 @@ class DiscordOAuth:
         gname, avatar = body.get("global_name"), body.get("avatar")
         return SessionUser(did, username, gname if isinstance(gname, str) and gname else None,
                            avatar if isinstance(avatar, str) and avatar else None)
+
+    async def guild_member(self, access_token: str, guild_id: str) -> dict | None:
+        """The user's member object in ``guild_id`` (200), or None when they are
+        not a member (404 / 403). 429, 5xx or a network error ->
+        ``discord_unavailable``; any other status (e.g. 401) -> ``user_error``."""
+        url = GUILD_MEMBER_URL.format(guild_id=guild_id)
+        try:
+            async with self._client() as c:
+                resp = await c.get(url, headers={"Authorization": f"Bearer {access_token}",
+                                                 "Accept": "application/json"})
+        except httpx.HTTPError as e:
+            raise DiscordOAuthError("discord_unavailable", f"Discord guild-member lookup for guild "
+                                    f"{guild_id} unreachable ({type(e).__name__})") from None
+        if resp.status_code in (403, 404):
+            return None
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise DiscordOAuthError("discord_unavailable", f"Discord guild-member lookup for guild "
+                                    f"{guild_id} returned HTTP {resp.status_code}{_discord_error_field(resp)}")
+        if resp.status_code != 200:
+            raise DiscordOAuthError("user_error", f"Discord guild-member lookup for guild {guild_id} "
+                                    f"returned HTTP {resp.status_code}{_discord_error_field(resp)}")
+        try:
+            body = resp.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            raise DiscordOAuthError("discord_unavailable",
+                                    f"Discord guild-member response for guild {guild_id} is not a JSON object")
+        return body

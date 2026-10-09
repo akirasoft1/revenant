@@ -7,7 +7,11 @@ and vice versa. There is no server-side session store: a cookie is valid
 while its signature verifies and it is younger than its max age.
 
 The session carries only public Discord profile fields
-(``{discordId, username, globalName, avatar, iat}``).
+(``{discordId, username, globalName, avatar, guildId, nick, iat}``). ``guildId``
+is the allowed Discord server whose membership was checked at login; a codec
+built with ``allowed_guild_ids`` rejects sessions whose guild is no longer
+allowed (removing a guild from ``HANGAR_ALLOWED_GUILD_IDS`` revokes them).
+Membership itself is only checked at login.
 
 Rotation / revocation: ``previous_keys`` (``HANGAR_SESSION_KEY_PREVIOUS``) are
 accepted for verification while the current key signs everything new;
@@ -47,10 +51,12 @@ class SessionUser:
     global_name: str | None
     avatar: str | None
     iat: int | None = field(default=None, compare=False)
+    guild_id: str | None = None      # allowed guild the user was a member of at login
+    nick: str | None = None          # their server nickname there, if any
 
     @property
     def display_name(self) -> str:
-        return self.global_name or self.username
+        return self.global_name or self.nick or self.username
 
     @property
     def avatar_url(self) -> str:
@@ -83,12 +89,14 @@ def safe_next_path(raw: str | None) -> str:
 
 class SessionCodec:
     def __init__(self, key: str, clock: Callable[[], float] = time.time, *,
-                 previous_keys: list[str] | tuple[str, ...] = (), not_before: int | None = None) -> None:
+                 previous_keys: list[str] | tuple[str, ...] = (), not_before: int | None = None,
+                 allowed_guild_ids: frozenset[str] | None = None) -> None:
         if not key:
             raise ValueError("session key is required")
         signer = _signer_with_clock(clock)
         self._clock = clock
         self._not_before = not_before
+        self._allowed_guilds = allowed_guild_ids     # None = no guild check (unit use only)
         # itsdangerous: with a key list, the LAST key signs and all keys verify.
         keys = [k for k in previous_keys if k] + [key]
         self._session = URLSafeTimedSerializer(keys, salt=_SESSION_SALT, signer=signer)
@@ -99,6 +107,7 @@ class SessionCodec:
     def sign_session(self, user: SessionUser) -> str:
         return self._session.dumps({"discordId": user.discord_id, "username": user.username,
                                     "globalName": user.global_name, "avatar": user.avatar,
+                                    "guildId": user.guild_id, "nick": user.nick,
                                     "iat": int(self._clock())})
 
     def verify_session(self, token: str | None) -> SessionUser:
@@ -119,9 +128,14 @@ class SessionCodec:
         gname, avatar, iat = data.get("globalName"), data.get("avatar"), data.get("iat")
         if self._not_before is not None and (not isinstance(iat, int) or iat < self._not_before):
             raise InvalidSession("session issued before HANGAR_SESSION_NOT_BEFORE")
+        guild, nick = data.get("guildId"), data.get("nick")
+        guild = guild if isinstance(guild, str) else None
+        if self._allowed_guilds is not None and guild not in self._allowed_guilds:
+            raise InvalidSession("session guild is not in HANGAR_ALLOWED_GUILD_IDS")
         return SessionUser(did, username, gname if isinstance(gname, str) else None,
                            avatar if isinstance(avatar, str) else None,
-                           iat if isinstance(iat, int) else None)
+                           iat if isinstance(iat, int) else None,
+                           guild_id=guild, nick=nick if isinstance(nick, str) and nick else None)
 
     # ----- OAuth state -----
 

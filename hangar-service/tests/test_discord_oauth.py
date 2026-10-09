@@ -47,7 +47,7 @@ def test_authorize_url():
     parts = urlsplit(url)
     assert f"{parts.scheme}://{parts.netloc}{parts.path}" == AUTHORIZE_URL
     q = {k: v[0] for k, v in parse_qs(parts.query).items()}
-    assert q == {"response_type": "code", "client_id": CLIENT_ID, "scope": "identify",
+    assert q == {"response_type": "code", "client_id": CLIENT_ID, "scope": "identify guilds.members.read",
                  "redirect_uri": REDIRECT, "state": "the-state"}
     assert SECRET not in url
 
@@ -93,3 +93,39 @@ async def test_user_errors(kwargs):
         await oauth(fake_discord(**kwargs)).fetch_user("AT-1")
     assert ei.value.code == "user_error"
     assert "AT-1" not in str(ei.value)
+
+
+def guild_handler(status, body=None, raise_exc=False, calls=None):
+    def handler(req):
+        if calls is not None:
+            calls.append(req)
+        if raise_exc:
+            raise httpx.ReadTimeout("slow", request=req)
+        return httpx.Response(status, json=body if body is not None else {})
+    return handler
+
+
+async def test_guild_member_found():
+    calls = []
+    m = await oauth(guild_handler(200, {"nick": "Cap", "roles": []}, calls=calls)).guild_member("AT-1", "42")
+    assert m == {"nick": "Cap", "roles": []}
+    assert str(calls[0].url) == "https://discord.com/api/users/@me/guilds/42/member"
+    assert calls[0].headers["authorization"] == "Bearer AT-1"
+
+
+@pytest.mark.parametrize("status", [403, 404])
+async def test_guild_not_member(status):
+    assert await oauth(guild_handler(status, {"message": "Unknown Guild"})).guild_member("AT-1", "42") is None
+
+
+@pytest.mark.parametrize("status,raise_exc", [(429, False), (500, False), (503, False), (0, True)])
+async def test_guild_lookup_unavailable(status, raise_exc):
+    with pytest.raises(DiscordOAuthError) as ei:
+        await oauth(guild_handler(status, raise_exc=raise_exc)).guild_member("AT-1", "42")
+    assert ei.value.code == "discord_unavailable" and "AT-1" not in str(ei.value)
+
+
+async def test_guild_lookup_token_rejected_is_user_error():
+    with pytest.raises(DiscordOAuthError) as ei:
+        await oauth(guild_handler(401, {"message": "401: Unauthorized"})).guild_member("AT-1", "42")
+    assert ei.value.code == "user_error"

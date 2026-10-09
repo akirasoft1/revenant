@@ -37,6 +37,7 @@ Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 """
 import asyncio
 import contextlib
+import dataclasses
 import hmac
 import logging
 import re
@@ -88,9 +89,38 @@ SECURITY_HEADERS = {
 API_PATH_PREFIXES = ("/v1/", "/api/")
 
 # A login gate decides, after Discord has identified the user, whether they may
-# sign in: returns None (allowed) or a login_error code. Receives the user's
-# Discord access token for membership lookups (never log it).
-LoginGate = Callable[[SessionUser, str], Awaitable[str | None]]
+# sign in: returns a login_error code (refused), a SessionUser (allowed, possibly
+# enriched -- e.g. with guildId/nick) or None (allowed unchanged). Receives the
+# user's Discord access token for membership lookups (never log it). May raise
+# DiscordOAuthError (its code becomes the login_error).
+LoginGate = Callable[[SessionUser, str], Awaitable["SessionUser | str | None"]]
+
+
+def guild_login_gate(oauth: DiscordOAuth, allowed_guild_ids: frozenset[str]) -> LoginGate:
+    """Only members of an allowed Discord server may sign in. Guilds are tried
+    in sorted order; the first membership wins (recorded as ``guildId``, with
+    the server nickname as a display-name candidate after globalName). If no
+    guild confirms membership and any lookup was unavailable (429/5xx/network)
+    -> ``discord_unavailable``; otherwise ``not_member``."""
+    async def gate(user: SessionUser, access_token: str):
+        unavailable: DiscordOAuthError | None = None
+        for gid in sorted(allowed_guild_ids):
+            try:
+                member = await oauth.guild_member(access_token, gid)
+            except DiscordOAuthError as e:
+                if e.code != "discord_unavailable":
+                    raise
+                log.warning("hangar: guild membership check for member %s: %s", user.discord_id, e)
+                unavailable = e
+                continue
+            if member is not None:
+                nick = member.get("nick")
+                return dataclasses.replace(user, guild_id=gid,
+                                           nick=nick if isinstance(nick, str) and nick else None)
+        if unavailable is not None:
+            raise unavailable
+        return "not_member"
+    return gate
 
 
 class ApiError(Exception):
@@ -311,9 +341,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     if browser_problem is None:
         codec = SessionCodec(config.session_key, clock=clock or time.time,
                              previous_keys=[config.session_key_previous] if config.session_key_previous else [],
-                             not_before=config.session_not_before)
+                             not_before=config.session_not_before,
+                             allowed_guild_ids=config.allowed_guild_ids)
         oauth = DiscordOAuth(config.discord_client_id, config.discord_client_secret,
                              config.redirect_uri, transport=discord_transport)
+        if login_gate is None:
+            login_gate = guild_login_gate(oauth, config.allowed_guild_ids)
     if resolvers is None:
         resolvers = [GoogleIdTokenResolver(config.audience, config.allowed_callers,
                                            verifier or GoogleIdTokenVerifier())]
@@ -638,9 +671,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             # Who may sign in at all (e.g. guild membership) is decided here,
             # after Discord identified the user and before any session exists.
             if login_gate is not None:
-                refusal = await login_gate(user, access_token)
-                if refusal is not None:
-                    return fail(refusal, f"member {user.discord_id} ({user.username}) refused by login gate")
+                verdict = await login_gate(user, access_token)
+                if isinstance(verdict, str):
+                    return fail(verdict, f"member {user.discord_id} ({user.username}) refused by login gate")
+                if isinstance(verdict, SessionUser):
+                    user = verdict
         except DiscordOAuthError as e:
             return fail(e.code, str(e))
         except Exception as e:     # never a stack trace to the browser
@@ -650,7 +685,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         resp.set_cookie(SESSION_COOKIE, c.sign_session(user), max_age=SESSION_MAX_AGE_S,
                         **COOKIE_KWARGS)
         resp.delete_cookie(OAUTH_STATE_COOKIE, **COOKIE_KWARGS)
-        log.info("hangar: member %s (%s) logged in to the web editor", user.discord_id, user.username)
+        log.info("hangar: member %s (%s) logged in to the web editor (guild %s)",
+                 user.discord_id, user.username, user.guild_id)
         return no_store(resp)
 
     @app.post("/api/auth/logout", status_code=204)
