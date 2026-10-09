@@ -43,5 +43,8 @@ module.exports = {
   VoiceSlashCommand: require('./voice'),
 
   // Identity
-  WhoisSlashCommand: require('./WhoisCommand')
+  WhoisSlashCommand: require('./WhoisCommand'),
+
+  // Star Citizen member hangar
+  HangarSlashCommand: require('./HangarCommand')
 };

@@ -477,6 +477,13 @@ module.exports = {
       requireNsfw: process.env.UNCENSORED_REQUIRE_NSFW === 'true'
     }
   },
+  // Member hangar (hangar-service on Cloud Run). /hangar is registered only
+  // when HANGAR_API_URL is set. The URL is also the ID-token audience: it must
+  // equal the service's HANGAR_AUDIENCE exactly (no trailing slash).
+  hangar: {
+    apiUrl: (process.env.HANGAR_API_URL || '').trim(),
+    saKeyPath: process.env.HANGAR_SA_KEY_PATH || '/var/secrets/hangar/key.json',
+  },
   // Health check server configuration for Kubernetes probes
   health: {
     // Enable/disable health check server

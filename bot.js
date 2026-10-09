@@ -646,6 +646,15 @@ class DiscordBot {
     const WhoisSlashCommand = require('./commands/slash/WhoisCommand');
     this.slashCommandHandler.register(new WhoisSlashCommand(this.memberIdentity, this.speakerNames));
 
+    // Member hangar (/hangar) -- only when hangar-service is configured
+    if (config.hangar?.apiUrl) {
+      const HangarClient = require('./services/HangarClient');
+      const HangarSlashCommand = require('./commands/slash/HangarCommand');
+      this.hangarClient = new HangarClient({ apiUrl: config.hangar.apiUrl, saKeyPath: config.hangar.saKeyPath });
+      this.slashCommandHandler.register(new HangarSlashCommand(this.hangarClient));
+      logger.info(`Hangar slash command registered (${config.hangar.apiUrl})`);
+    }
+
     // Register voice slash command (only if voice is enabled and initialized)
     if (config.voice.enabled && this.voiceService) {
       const VoiceSlashCommand = require('./commands/slash/voice');

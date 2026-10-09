@@ -32,7 +32,8 @@ const {
   ChannelTrackSlashCommand,
   ObserveSlashCommand,
   VoiceSlashCommand,
-  WhoisSlashCommand
+  WhoisSlashCommand,
+  HangarSlashCommand
 } = require('../commands/slash');
 
 async function registerCommands() {
@@ -102,6 +103,11 @@ async function registerCommands() {
   }
 
   commands.push(new WhoisSlashCommand(null, null));
+
+  if (config.hangar?.apiUrl) {
+    commands.push(new HangarSlashCommand(null));
+    console.log('Including /hangar command (HANGAR_API_URL set)');
+  }
 
   if (config.voice?.enabled) {
     commands.push(new VoiceSlashCommand(null));
