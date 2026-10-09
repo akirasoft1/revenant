@@ -214,7 +214,8 @@ def test_hangar_lists_ships_with_effective_loadout(client):
     assert harby["loadoutError"] is None
     shields = [s for s in harby["loadout"] if s["type"] == "Shield"]
     assert len(shields) == 2 and all(s["source"] == "stock" for s in shields)
-    assert set(shields[0]) == {"slot", "type", "sizeMin", "sizeMax", "item", "source"}
+    assert set(shields[0]) == {"slot", "type", "sizeMin", "sizeMax", "compatibleTypes", "item", "source"}
+    assert shields[0]["compatibleTypes"] == [{"type": "Shield", "subTypes": []}]
     assert len(ships[1]["loadout"]) == 17
 
 

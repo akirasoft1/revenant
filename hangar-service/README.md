@@ -40,7 +40,7 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 
 `Ship` = `{shipId, vehicleUuid, vehicleName, vehicleClassName, nickname, fitted,
 createdAt, updatedAt, updatedBy, loadout, loadoutError}` where `loadout` is
-`[{slot, type, sizeMin, sizeMax, item: {uuid, name} | null, source: "stock"|"fitted"}]`,
+`[{slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}], item: {uuid, name} | null, source: "stock"|"fitted"}]`,
 or `null` with `loadoutError` `"unavailable"` / `"not_found"` when the
 catalog can't supply that ship's slots (the rest of the response still works).
 Slot ids contain `/` for nested slots

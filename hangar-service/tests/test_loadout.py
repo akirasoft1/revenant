@@ -19,10 +19,21 @@ def _index():
 
 # ---------- effective_loadout ----------
 
+def test_loadout_entries_carry_compatible_types():
+    """Callers (sc-knowledge's fit-check) apply the same compatibility rule
+    as check_compatible, so every entry carries the slot's compatibleTypes."""
+    lo = effective_loadout(_taurus_slots(), {})
+    gimbal = next(e for e in lo if e["slot"] == "hardpoint_gun_laser_top_left")
+    assert gimbal["compatibleTypes"] == [{"type": "Turret", "subTypes": ["GunTurret"]},
+                                         {"type": "WeaponGun", "subTypes": ["Gun"]}]
+    shield = next(e for e in lo if e["slot"] == "hardpoint_shield_generator")
+    assert shield["compatibleTypes"] == [{"type": "Shield", "subTypes": []}]
+
 def test_all_stock_when_nothing_fitted():
     lo = effective_loadout(_taurus_slots(), {})
     qd = next(e for e in lo if e["slot"] == "hardpoint_quantum_drive")
     assert qd == {"slot": "hardpoint_quantum_drive", "type": "QuantumDrive", "sizeMin": 2, "sizeMax": 2,
+                  "compatibleTypes": [{"type": "QuantumDrive", "subTypes": ["QDrive"]}],
                   "item": {"uuid": "74cc0d0b-1bf5-436c-a38c-1baf93962b89", "name": "Bolon"},
                   "source": "stock"}
     assert all(e["source"] == "stock" for e in lo)

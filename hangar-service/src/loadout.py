@@ -24,7 +24,11 @@ def effective_loadout(slots: list[Slot], fitted: dict | None) -> list[dict]:
     ``fitted`` is the Firestore map ``{slotName: {itemUuid, itemName}}`` (only
     changes from stock). Returns one entry per slot, in catalog order::
 
-        {slot, type, sizeMin, sizeMax, item: {uuid, name} | None, source: "stock"|"fitted"}
+        {slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}],
+         item: {uuid, name} | None, source: "stock"|"fitted"}
+
+    ``compatibleTypes`` lets callers apply the same rule as ``check_compatible``
+    without a second catalog call (sc-knowledge's fit-check does).
 
     A refitted slot's STOCK descendants are dropped (the stock gun belonged to
     the stock gimbal; what the new item carries is unknown); descendants the
@@ -50,6 +54,8 @@ def effective_loadout(slots: list[Slot], fitted: dict | None) -> list[dict]:
                     if s.stock_item else None)
             source = "stock"
         out.append({"slot": s.name, "type": s.type, "sizeMin": s.size_min, "sizeMax": s.size_max,
+                    "compatibleTypes": [{"type": c["type"], "subTypes": list(c.get("sub_types") or [])}
+                                        for c in s.compatible_types],
                     "item": item, "source": source})
     return out
 
