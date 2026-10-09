@@ -117,6 +117,12 @@ class ShipRepository(abc.ABC):
         """Reset ``slot`` to stock (no-op success if it already is)."""
 
     @abc.abstractmethod
+    async def replace_fitted(self, member_id: str, ship_id: str, fitted: dict, *,
+                             updated_by: str, owner_name: str | None = None) -> dict | None:
+        """Replace the WHOLE ``fitted`` map (slots not in ``fitted`` go back to
+        stock) in one write -- the spviewer import is authoritative per ship."""
+
+    @abc.abstractmethod
     async def delete_ship(self, member_id: str, ship_id: str) -> bool: ...
 
     @abc.abstractmethod
@@ -188,6 +194,11 @@ class InMemoryShipRepository(ShipRepository):
     async def clear_slot(self, member_id, ship_id, slot, *, updated_by, owner_name=None):
         return await self._mutate(member_id, ship_id, updated_by, owner_name,
                                   lambda d: d["fitted"].pop(slot, None))
+
+    async def replace_fitted(self, member_id, ship_id, fitted, *, updated_by, owner_name=None):
+        new = copy.deepcopy(fitted)
+        return await self._mutate(member_id, ship_id, updated_by, owner_name,
+                                  lambda d: d.__setitem__("fitted", new))
 
     async def delete_ship(self, member_id, ship_id) -> bool:
         self._check()
@@ -277,6 +288,12 @@ class FirestoreShipRepository(ShipRepository):
         from google.cloud import firestore
         return await self._update(member_id, ship_id, {self._slot_path(slot): firestore.DELETE_FIELD},
                                   updated_by, owner_name)
+
+    async def replace_fitted(self, member_id, ship_id, fitted, *, updated_by, owner_name=None):
+        # Top-level "fitted" path: the update mask replaces the whole map; the
+        # nested slot keys (which contain "/") are map keys, not field paths.
+        return await self._update(member_id, ship_id, {"fitted": copy.deepcopy(fitted)}, updated_by,
+                                  owner_name)
 
     async def delete_ship(self, member_id, ship_id) -> bool:
         async def run():

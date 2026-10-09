@@ -25,6 +25,7 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
 | `limit` | 409 | adding the ship would exceed `HANGAR_MAX_SHIPS_PER_MEMBER` (body carries `limit`, `shipCount`) |
 | `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
+| `too_large` | 413 | spviewer import body over 2 MB (+64 KiB envelope) |
 | `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable; browser login not configured (`/api/auth/*`, `/api/me`) |
 | `unavailable` | 500 | unexpected server error (full stack logged) |
 
@@ -41,6 +42,9 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary, slots: [SlotDef]}` |
 | GET | `/v1/catalog/items?type=&size=&q=` | – | `{items: [ItemSummary]}` |
 | GET | `/v1/members` | – | `{members: [{discordId, shipCount, displayName?}]}` — members with ≥1 ship, sorted by name/ID; `displayName` only when known (see `ownerName`) |
+| GET | `/v1/catalog/slot-options?vehicle=<uuid>&slot=<slotId>` | – | `{items: [{uuid, name, type, size, grade, class, keyStat: {name, value, lowerIsBetter} \| null, cheapestPrice?: {price, shop, location}}]}` — see "Item picker" |
+| POST | `/v1/import/spviewer/preview[?member=]` | `{file: <spviewer export array>}` | `{rows: [{rowIndex, loadoutName, vehicle: {uuid, name} \| null, patch, changes: [{slot, from: {uuid, name} \| null, to: {uuid, name}}], skipped: [{slot?, reason, detail}], matchingShips: [{shipId, label}]}]}` — nothing stored |
+| POST | `/v1/import/spviewer/apply[?member=]` | `{rows: [{rowIndex, mode: "new"\|"existing", shipId?, nickname?}], file}` | `{ships: [Ship], errors: [{rowIndex, error, message}]}` — see "spviewer import" |
 
 **Every `/v1/...` route is also served at `/api/v1/...`** (same handler, same
 auth). Service callers use `/v1` on the `run.app` URL; the browser editor uses
@@ -96,6 +100,78 @@ ever reaches the container. `/healthz` is kept for local and in-cluster parity.
   applies the same compatibility rule as `check_compatible` here (type in
   `compatibleTypes`, sub-types only when the slot lists some and the item's
   isn't `UNDEFINED`, size within range) — change both together.
+
+## Item picker (`/catalog/slot-options`)
+
+- Items = every Wiki item of the slot's compatible types (filtered to
+  `SLOT_TYPES`) and sizes that `check_compatible` accepts (same rule as
+  fitting: type, sub-type, size). Required tags (e.g. spviewer's
+  `VanguardNose`) are not modelled, same as fitting.
+- `keyStat` = the per-type stat sc-knowledge's `sc_compare_components` ranks
+  by (`src/keystats.py`, **keep in sync** with `COMPONENT_TYPES` in
+  `sc-knowledge/src/tools_items.py`): Shield `max_health`, PowerPlant
+  `power_segment_generation`, Cooler `coolant_segment_generation`,
+  QuantumDrive `speed`, Radar `assignment_range_max`, WeaponGun `dps` (burst).
+  Other types (Turret, MissileLauncher, WeaponMining, TractorBeam) → `null`.
+  Sorted best first (`lowerIsBetter` respected), no value last, name tiebreak.
+- `cheapestPrice` = the cheapest UEX player-reported buy price the Wiki embeds
+  in each `v2/items` record (`uex_prices.purchase`, the same data
+  sc-knowledge's `_shops` reads) — no UEX item-id mapping, bearer or extra
+  call. Cached with the item list (12h). Omitted when unknown / not sold /
+  malformed; the picker still works.
+
+## spviewer import (`/import/spviewer/*`)
+
+The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
+`vehiclesLoadout` (JSON array). Per row: `vehicleClassName` (= Wiki vehicle
+`class_name`), `loadoutName`, `patch`, and `loadoutData` = LZ-string
+`compressToEncodedURIComponent` JSON (decoded by the vendored
+`src/lzstring.py`; the PyPI `lzstring` is unmaintained and uncapped).
+
+- **The member's choices are in the `selected*` maps, not in `*Ports[].Loadout`.**
+  On the real export (`tests/fixtures/spviewer_harbinger.json`) every port's
+  `Loadout` is stock, while `selectedShields` / `selectedRadar` /
+  `selectedPilotWeapons` / … (keyed `"<index>-<PortName><childPortName>"`,
+  names concatenated without a separator) hold the actual loadout — spviewer's
+  own `loadoutPerfs` match the `selected*` items (shield pool 20000 = 2 × 7MA
+  'Lorica', pilot alpha 1166 = Deadbolt V + 4 × BRVS Repeater). A port with
+  no `selected*` entry falls back to its `Loadout` (uuid or class name).
+- Slot ids = `PortName`s joined with `/` (identical to hangar slot ids). A
+  port is **changed** when its current item matches neither spviewer's stock
+  (`BaseLoadout.ClassName`, and `Loadout` when a `selected*` entry exists) nor
+  the Wiki's stock item, by class name or uuid (a uuid naming the stock item is
+  not a change). Changed tracked slots resolve the item through the Wiki
+  (`v2/items/{uuid|ClassName}`) and must pass `check_compatible`.
+- `skipped[].reason` codes: `untracked_slot` (changed port the hangar does not
+  track — missiles/torpedoes, gimbal mounts, turrets, paint, flair, flight
+  controller, life support, jump drive…), `unknown_item` (Wiki has no such
+  item), `incompatible` (`detail` says why), `unknown_vehicle`
+  (`vehicleClassName` not in the catalog; `vehicle: null`),
+  `unrecognized_format` (row not an object / no `vehicleClassName` /
+  `loadoutData` not LZ-string, not JSON, or without `*Ports`), `too_large`
+  (decoded `loadoutData` over 2 MB, or over the 16 MB per-request budget),
+  `empty_slot` (a tracked slot emptied in spviewer — the hangar can't store
+  "empty", so it stays stock). An untracked port whose current item is only a
+  bare uuid (no `selected*` entry) is not resolved — it can't affect the
+  import and would cost a Wiki lookup per mount.
+- Caps: body ≤ 2 MB (+64 KiB envelope; 413 `too_large`, checked on
+  `Content-Length` and while streaming), ≤ 100 rows, ≤ 2 MB decoded per row,
+  16 MB decoded per request. Decoding runs in a worker thread.
+- **preview** stores nothing; `matchingShips` = the target member's ships of
+  that vehicle (`label` = `nickname (vehicle)` or the vehicle name). Target =
+  `?member=` else the acting member (session user / `X-Acting-Member`); any
+  authenticated caller may preview.
+- **apply** re-decodes the file server side (client-sent changes are ignored)
+  and needs the write rule (own hangar, or admin with `?member=`) plus, for
+  browser sessions, same-origin. `mode: "new"` creates a ship (nickname
+  defaults to `loadoutName`, cut to 64 chars) after `ensure_ship_capacity`
+  for all new rows (409 `limit`, nothing written); `mode: "existing"` targets
+  one of the member's ships of the same vehicle. Either way the ship's whole
+  `fitted` map is **replaced** with the computed changes in one write
+  (`replace_fitted`): slots the loadout doesn't change go back to stock.
+  Per-row failures don't block other rows and come back in `errors[]` with
+  `error` ∈ `unknown_vehicle`, `unrecognized_format`, `too_large`,
+  `not_found` (no such ship), `vehicle_mismatch`.
 
 ## Auth
 

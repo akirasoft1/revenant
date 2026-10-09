@@ -554,6 +554,9 @@ def test_catalog_items(client):
     r = client.get("/v1/catalog/items", params={"type": "quantumdrive", "size": 2}, headers=H())
     assert r.status_code == 200
     assert len(r.json()["items"]) == 20
+    # picker extras (keyStat / cheapestPrice) stay out of this route's shape
+    assert set(r.json()["items"][0]) == {"uuid", "name", "className", "type", "subType", "size", "grade",
+                                         "class", "manufacturer"}
     r = client.get("/v1/catalog/items", params={"type": "QuantumDrive", "size": 2, "q": "hem"}, headers=H())
     assert [i["name"] for i in r.json()["items"]] == ["Hemera"]
 

@@ -14,6 +14,10 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     GET    /v1/catalog/vehicles/{uuid}/slots
     GET    /v1/catalog/items?type=&size=&q=
     GET    /v1/members                                      member directory (>= 1 ship)
+    GET    /v1/catalog/slot-options?vehicle=<uuid>&slot=<id> compatible items for one slot
+                                                             (+ keyStat, cheapestPrice?)
+    POST   /v1/import/spviewer/preview[?member=]            {file: <spviewer export array>}
+    POST   /v1/import/spviewer/apply[?member=]              {rows: [{rowIndex, mode, shipId?, nickname?}], file}
 
 Every ``/v1/...`` route is ALSO served at ``/api/v1/...`` (same handler): service
 callers use ``/v1`` on the run.app URL, the browser editor uses ``/api/v1``
@@ -33,12 +37,14 @@ HANGAR_PUBLIC_ORIGIN) and ignore X-Acting-Member.
 Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 ``unauthenticated`` 401, ``forbidden`` 403, ``not_found`` 404, ``ambiguous``
 409 (+ ``candidates``), ``incompatible`` 422, ``invalid_request`` 400,
-``unavailable`` 503 (Wiki / Firestore / Google certs down).
+``unavailable`` 503 (Wiki / Firestore / Google certs down), ``limit`` 409
+(ship cap), ``too_large`` 413 (import upload over 2 MB).
 """
 import asyncio
 import contextlib
 import dataclasses
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -63,7 +69,9 @@ from .catalog import UnknownItemType, build_catalog
 from .config import Config
 from .http import UpstreamError
 from .loadout import check_compatible, effective_loadout
+from .options import slot_options
 from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
+from .spviewer import MAX_ROWS, MAX_UPLOAD_BYTES, DecodeBudget, RowResult, analyze_row
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +82,9 @@ SLOT_MAX = 300
 FREE_TEXT_MAX = 200
 API_PREFIXES = ("/v1", "/api/v1")     # service callers, browser editor
 MEMBER_DIRECTORY_TTL_S = 60.0
+# The spviewer file is capped at 2 MB; the JSON envelope ({file, rows}) may add a little.
+IMPORT_BODY_MAX = MAX_UPLOAD_BYTES + 64 * 1024
+IMPORT_MODES = ("new", "existing")
 
 # On EVERY response (incl. errors and 500s). Task 4's static SPA serving adds
 # its own Cache-Control for assets; these stay.
@@ -159,6 +170,49 @@ async def _json_object(request: Request) -> dict:
     if not isinstance(body, dict):
         raise _bad("request body must be a JSON object")
     return body
+
+
+async def _capped_json_object(request: Request, limit: int) -> dict:
+    """The JSON object body, refused with 413 ``too_large`` past ``limit``
+    bytes (checked on Content-Length AND while streaming)."""
+    declared = request.headers.get("content-length") or ""
+    if re.fullmatch(r"[0-9]+", declared) and int(declared) > limit:
+        raise ApiError(413, "too_large", f"request body is over the {limit // 1024} KiB import limit")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise ApiError(413, "too_large", f"request body is over the {limit // 1024} KiB import limit")
+        chunks.append(chunk)
+    try:
+        body = json.loads(b"".join(chunks))
+    except ValueError:
+        raise _bad("request body must be valid JSON") from None
+    if not isinstance(body, dict):
+        raise _bad("request body must be a JSON object")
+    return body
+
+
+def _export_rows(body: dict) -> list:
+    rows = body.get("file")
+    if not isinstance(rows, list):
+        raise _bad("'file' must be the spviewer export: a JSON array of saved loadouts")
+    if len(rows) > MAX_ROWS:
+        raise _bad(f"the export has {len(rows)} loadouts; at most {MAX_ROWS} can be imported at once")
+    return rows
+
+
+def _import_member(principal: Principal, member: str | None) -> str:
+    """Target hangar: ``?member=`` (admins: someone else's) or the acting member."""
+    target = member if member not in (None, "") else principal.acting_member
+    if not target:
+        raise _bad("no target member: pass ?member=<discordId> (or X-Acting-Member as a service caller)")
+    return _check_member(target)
+
+
+def _ship_label(ship: dict) -> str:
+    nick, name = ship.get("nickname"), ship.get("vehicleName") or "ship"
+    return f"{nick} ({name})" if nick else name
 
 
 def _nickname(value: Any) -> str | None:
@@ -603,6 +657,141 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                 raise _bad("size must be a non-negative integer")
         items = await app.state.catalog.items(type, size=size_n, q=(q or "")[:FREE_TEXT_MAX] or None)
         return {"items": items}
+
+    @router.get("/catalog/slot-options")
+    async def catalog_slot_options(vehicle: str | None = None, slot: str | None = None,
+                                   principal: Principal = Depends(get_principal)):
+        if not vehicle or not slot:
+            raise _bad("'vehicle' (uuid) and 'slot' (slot id) are required")
+        catalog = app.state.catalog
+        slots = await catalog.slots(vehicle) if len(vehicle) <= FREE_TEXT_MAX else None
+        if slots is None:
+            raise _not_found(f"no vehicle {vehicle!r}")
+        target = next((s for s in slots if s.name == slot), None) if len(slot) <= SLOT_MAX else None
+        if target is None:
+            raise _not_found(f"vehicle {vehicle} has no component slot {slot!r}")
+        return {"items": await slot_options(catalog, target)}
+
+    # ----- spviewer import -----
+
+    async def _analyze(rows: list, indexes) -> dict[int, RowResult]:
+        budget = DecodeBudget()
+        out: dict[int, RowResult] = {}
+        for i in indexes:
+            out[i] = await analyze_row(app.state.catalog, i, rows[i], budget=budget)
+        return out
+
+    @router.post("/import/spviewer/preview")
+    async def import_preview(request: Request, member: str | None = None,
+                             principal: Principal = Depends(get_principal)):
+        # Read-only (nothing is stored), so no CSRF / write check: any
+        # authenticated caller may preview against any member's ships.
+        target = _import_member(principal, member)
+        rows = _export_rows(await _capped_json_object(request, IMPORT_BODY_MAX))
+        results = await _analyze(rows, range(len(rows)))
+        ships = await app.state.repository.list_ships(target)
+        out = []
+        for i in range(len(rows)):
+            r = results[i]
+            view = r.to_preview()
+            vuuid = r.vehicle["uuid"] if r.vehicle else None
+            view["matchingShips"] = [{"shipId": s["shipId"], "label": _ship_label(s)}
+                                     for s in ships if vuuid and s.get("vehicleUuid") == vuuid]
+            out.append(view)
+        log.info("hangar: spviewer preview for member %s by %s: %d rows, %d changes, %d skipped",
+                 target, principal.acting_member or principal.subject, len(out),
+                 sum(len(v["changes"]) for v in out), sum(len(v["skipped"]) for v in out))
+        return {"rows": out}
+
+    @router.post("/import/spviewer/apply")
+    async def import_apply(request: Request, member: str | None = None,
+                           principal: Principal = Depends(get_principal)):
+        target = _import_member(principal, member)
+        authorize_browser_write(request, principal)
+        authorize_write(principal, target, config.admin_ids)
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
+        rows = _export_rows(body)
+        wanted = body.get("rows")
+        if not isinstance(wanted, list) or not wanted:
+            raise _bad("'rows' must be a non-empty array of {rowIndex, mode, shipId?, nickname?}")
+        if len(wanted) > MAX_ROWS:
+            raise _bad(f"at most {MAX_ROWS} rows can be applied at once")
+        reqs, seen = [], set()
+        for w in wanted:
+            if not isinstance(w, dict):
+                raise _bad("each entry of 'rows' must be an object")
+            idx = w.get("rowIndex")
+            if not isinstance(idx, int) or isinstance(idx, bool) or not 0 <= idx < len(rows):
+                raise _bad(f"rowIndex {idx!r} is not a row of the uploaded file (0..{len(rows) - 1})")
+            if idx in seen:
+                raise _bad(f"rowIndex {idx} is listed twice")
+            seen.add(idx)
+            mode = w.get("mode")
+            if mode not in IMPORT_MODES:
+                raise _bad(f"row {idx}: mode must be one of {list(IMPORT_MODES)}")
+            ship_id = None
+            if mode == "existing":
+                ship_id = w.get("shipId")
+                if not isinstance(ship_id, str) or not SHIP_ID_RE.match(ship_id):
+                    raise _bad(f"row {idx}: mode 'existing' needs a valid shipId")
+            nickname = _nickname(w.get("nickname")) if mode == "new" else None
+            reqs.append({"rowIndex": idx, "mode": mode, "shipId": ship_id, "nickname": nickname})
+
+        # Re-decode server side: client-sent changes are never trusted.
+        results = await _analyze(rows, [r["rowIndex"] for r in reqs])
+        repo = app.state.repository
+        owned = {s["shipId"]: s for s in await repo.list_ships(target)}
+        errors, plan = [], []
+        for r in reqs:
+            res = results[r["rowIndex"]]
+            if res.error is not None:
+                errors.append({"rowIndex": r["rowIndex"], "error": res.error, "message": res.error_message})
+                continue
+            if r["mode"] == "existing":
+                ship = owned.get(r["shipId"])
+                if ship is None:
+                    errors.append({"rowIndex": r["rowIndex"], "error": "not_found",
+                                   "message": f"member {target} has no ship {r['shipId']}"})
+                    continue
+                if ship.get("vehicleUuid") != res.vehicle["uuid"]:
+                    errors.append({"rowIndex": r["rowIndex"], "error": "vehicle_mismatch",
+                                   "message": f"ship {r['shipId']} is a {ship.get('vehicleName')}, but the "
+                                              f"loadout is for a {res.vehicle['name']}"})
+                    continue
+            plan.append((r, res))
+        adding = sum(1 for r, _ in plan if r["mode"] == "new")
+        if adding:
+            await ensure_ship_capacity(repo, target, adding=adding, limit=config.max_ships_per_member)
+        owner_name = owner_name_for(principal, target)
+        by = principal.acting_member or principal.subject
+        updated_ships = []
+        for r, res in plan:
+            ship_id = r["shipId"]
+            if r["mode"] == "new":
+                nickname = r["nickname"] or ((res.loadout_name or "").strip()[:NICKNAME_MAX].strip() or None)
+                v = res.vehicle
+                created = await repo.create_ship(target, vehicle_uuid=v["uuid"], vehicle_name=v["name"],
+                                                 vehicle_class_name=v.get("className"), nickname=nickname,
+                                                 updated_by=by, owner_name=owner_name)
+                ship_id = created["shipId"]
+            updated = await repo.replace_fitted(target, ship_id, res.fitted, updated_by=by,
+                                                owner_name=owner_name)
+            if updated is None:          # deleted concurrently
+                errors.append({"rowIndex": r["rowIndex"], "error": "not_found",
+                               "message": f"member {target} has no ship {ship_id}"})
+                continue
+            log.info("hangar: member %s ship %s %s from spviewer loadout %r (row %d): %d fitted, "
+                     "%d skipped (by %s)", target, ship_id,
+                     "created" if r["mode"] == "new" else "replaced", res.loadout_name, r["rowIndex"],
+                     len(res.fitted), len(res.skipped), by)
+            updated_ships.append(updated)
+        if adding:
+            invalidate_member_directory(app)
+        for e in errors:
+            log.warning("hangar: spviewer import row %s for member %s not applied: %s: %s",
+                        e["rowIndex"], target, e["error"], e["message"])
+        views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in updated_ships))
+        return {"ships": list(views), "errors": errors}
 
     # ----- member directory -----
 

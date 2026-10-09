@@ -1,0 +1,70 @@
+{
+ "_note": "Trimmed live Wiki v2/items records (2026-10-09) for the items the real spviewer Harbinger export selects.",
+ "data": [
+  {
+   "uuid": "fb145cc4-2e30-44a0-865d-b9ea0e40fae1",
+   "name": "7MA 'Lorica'",
+   "class_name": "SHLD_BEHR_S02_7MA_SCItem",
+   "type": "Shield",
+   "sub_type": "UNDEFINED",
+   "size": 2,
+   "grade": "A",
+   "class": "Civilian",
+   "version": "4.10.1-LIVE.12660092",
+   "manufacturer": {
+    "name": "Behring Applied Technology"
+   },
+   "shield": {
+    "max_health": 10000,
+    "regen_rate": 2200,
+    "regen_delay": {
+     "downed": 9.17,
+     "damage": 4.58
+    }
+   }
+  },
+  {
+   "uuid": "69b8ba78-889f-4547-97eb-1d477002fedc",
+   "name": "V801-12",
+   "class_name": "RADR_GRNP_S02_VB80112",
+   "type": "Radar",
+   "sub_type": "MidRangeRadar",
+   "size": 2,
+   "grade": "A",
+   "class": "Military",
+   "version": "4.10.1-LIVE.12660092",
+   "manufacturer": {
+    "name": "Groupe Nouveau Paradigme"
+   },
+   "radar": {
+    "aim_assist": {
+     "distance_min_assignment": 1300,
+     "distance_max_assignment": 2184,
+     "outside_range_buffer_distance": 90
+    },
+    "detection_lifetime": null
+   }
+  },
+  {
+   "uuid": "a4f4afa6-aa15-46e4-9327-c27250c3ea83",
+   "name": "BRVS Repeater",
+   "class_name": "BEHR_BallisticRepeater_VNG_S2",
+   "type": "WeaponGun",
+   "sub_type": "Gun",
+   "size": 2,
+   "grade": "A",
+   "class": null,
+   "version": "4.10.1-LIVE.12660092",
+   "manufacturer": {
+    "name": "Behring Applied Technology"
+   },
+   "vehicle_weapon": {
+    "damage": {
+     "burst": 450,
+     "sustained_60s": 410
+    },
+    "range": 2153
+   }
+  }
+ ]
+}

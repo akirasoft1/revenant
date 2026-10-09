@@ -305,3 +305,48 @@ async def test_firestore_update_writes_owner_name_only_when_given():
     assert "ownerName" not in store.calls[1][2]
     await repo.set_nickname("111", ship["shipId"], "x", updated_by="111", owner_name="Aki")
     assert store.calls[2][2]["ownerName"] == "Aki"
+
+
+# ---------- replace_fitted (spviewer import: authoritative per ship) ----------
+
+async def test_replace_fitted_replaces_the_whole_map(repo):
+    s = await _add(repo)
+    await repo.set_slot("111", s["shipId"], SLOT, item_uuid="old", item_name="Old", updated_by="111")
+    await repo.set_slot("111", s["shipId"], "hardpoint_radar", item_uuid="r", item_name="R", updated_by="111")
+    new = {SLOT: {"itemUuid": "i", "itemName": "Gun"},
+           "hardpoint_quantum_drive": {"itemUuid": "h", "itemName": "Hemera"}}
+    u = await repo.replace_fitted("111", s["shipId"], new, updated_by="999", owner_name="Akira")
+    assert u["fitted"] == new                      # hardpoint_radar reset to stock, SLOT overwritten
+    assert u["updatedBy"] == "999" and u["ownerName"] == "Akira"
+    assert await repo.get_ship("111", s["shipId"]) == u
+    u = await repo.replace_fitted("111", s["shipId"], {}, updated_by="111")
+    assert u["fitted"] == {} and u["ownerName"] == "Akira"
+
+
+async def test_replace_fitted_missing_ship_is_none(repo):
+    assert await repo.replace_fitted("111", "nope", {}, updated_by="111") is None
+    s = await _add(repo, member="111")
+    assert await repo.replace_fitted("222", s["shipId"], {}, updated_by="222") is None
+
+
+async def test_replace_fitted_stores_a_copy():
+    repo = _memory()
+    s = await _add(repo)
+    new = {SLOT: {"itemUuid": "i", "itemName": "Gun"}}
+    await repo.replace_fitted("111", s["shipId"], new, updated_by="111")
+    new[SLOT]["itemUuid"] = "mutated"
+    assert (await repo.get_ship("111", s["shipId"]))["fitted"][SLOT]["itemUuid"] == "i"
+
+
+async def test_firestore_replace_fitted_writes_the_fitted_field():
+    store = _Store()
+    repo = FirestoreShipRepository(store, clock=Clock())
+    ship = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                                  nickname=None, updated_by="111")
+    new = {SLOT: {"itemUuid": "i", "itemName": "Gun"}}
+    u = await repo.replace_fitted("111", ship["shipId"], new, updated_by="222", owner_name="Aki")
+    _, path, fields = store.calls[1]
+    assert path == ("members", "111", "ships", ship["shipId"])
+    assert fields["fitted"] == new and fields["updatedBy"] == "222" and fields["ownerName"] == "Aki"
+    assert u is not None
+    assert await repo.replace_fitted("111", "missing", {}, updated_by="111") is None
