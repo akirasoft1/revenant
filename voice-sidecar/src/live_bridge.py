@@ -68,6 +68,15 @@ SC_VOICE_NOTE = (
     "results beat memory. For game mechanics the tools don't cover (flight modes, quantum "
     "travel, how ship systems behave), use Google Search, not memory. "
     + _SC_DISPUTE_LEAD + "look it up again (tool or search) " + SC_DISPUTE_TAIL + " "
+    # Member hangar (2026-10-09 spec), mirrors agent-sidecar SC_HANGAR_RULE.
+    # Live audio has no per-turn [Name · id] labels: the session opener is the
+    # roster's current speaker, and [SPEAKER: name] markers name later ones.
+    "Only when someone asks about a member's own ships or loadouts -- never bring up anyone's "
+    "ships unprompted -- use sc_member_hangar (what they own and what's fitted; for a buyable "
+    "upgrade, find the current part there, then sc_compare_components with purchasable_only) or "
+    "sc_member_fit_check (does an item fit and upgrade any of their ships); member_id is the "
+    "numeric Discord ID from the \"People in this conversation\" roster, and \"my\" means the "
+    "person speaking. "
     "Before a lookup, say a very short natural filler like \"let me check\". "
     "When answering, speak only the top two or three results in plain sentences and offer the "
     "rest; never read tables or long number lists aloud."

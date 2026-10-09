@@ -317,6 +317,29 @@ def _sc_dispute_rule(*, web_search: bool, tools_attached: bool = True) -> str:
         "their observation."
     )
 
+# Member hangar (2026-10-09 member-hangar spec): per-member ship loadouts via
+# sc-knowledge's sc_member_hangar / sc_member_fit_check. Tool-called only —
+# ship data is never prompt-injected, and the model must not volunteer it.
+# member_id comes from the bot's identity plumbing: every history message is
+# labelled `[Name · Discord ID]` and the system prompt carries a "People in
+# this conversation" roster. Mirrored (short, spoken) in voice-sidecar
+# SC_VOICE_NOTE.
+SC_HANGAR_RULE = (
+    "Only when a question is about a member's own ships or loadouts (never bring up anyone's ships "
+    "unprompted): sc_member_hangar shows what a member owns and what's fitted — for a purchasable "
+    "upgrade to a ship's part, find the current component there, then call sc_compare_components "
+    "with purchasable_only=True — and sc_member_fit_check says whether an item fits and upgrades "
+    "any of a member's ships; member_id is the numeric Discord ID from the [Name · id] message "
+    "labels or the \"People in this conversation\" roster, and \"my\" means the labelled speaker."
+)
+
+# sc-knowledge down = hangar tools down too; names no sc_* tool (the
+# unavailable note never promises a tool that isn't attached).
+SC_HANGAR_UNAVAILABLE = (
+    "Member hangars (which ships a member owns and what's fitted) can't be looked up either — "
+    "never guess what anyone owns or has fitted."
+)
+
 _SC_UNCOVERED = "vehicle loadouts, crafting/blueprints, lore, patch news, location facilities"
 
 _SC_MEMORY_FALLBACK = (
@@ -347,6 +370,7 @@ def sc_tools_preamble(*, web_search: bool) -> str:
         "sc_trade_routes (profitable commodity routes from a location, profit already computed for the cargo/budget), sc_commodity_prices, "
         "sc_location_shops (what the shops at a place sell, and which items are unique to that place), "
         "and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). "
+        f"{SC_HANGAR_RULE} "
         f"For ANY Star Citizen question, in order: {policy} "
         f"{_sc_memory_rule(web_search=web_search)} "
         f"{_sc_dispute_rule(web_search=web_search)} "
@@ -366,6 +390,7 @@ def sc_tools_unavailable_note(*, web_search: bool) -> str:
     return (
         "Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen, "
         f"say live data is unavailable right now and {fallback} — do not use run_in_sandbox to fetch Star Citizen data. "
+        f"{SC_HANGAR_UNAVAILABLE} "
         f"{_sc_memory_rule(web_search=web_search)} "
         f"{_sc_dispute_rule(web_search=web_search, tools_attached=False)}"
     )
@@ -392,6 +417,10 @@ class AgentChatResult:
     # (e.g. ["sc_find_item"]). Empty when sc tools were off/unavailable or the
     # model didn't call any.
     sc_tool_names: list[str] = field(default_factory=list)
+    # The same calls with their arguments, in order: [{"name", "args"}]. The
+    # SC eval scores member-hangar cases on the `member_id` argument (a fit
+    # check on the speaker when the question named another member is a miss).
+    sc_tool_calls: list[dict] = field(default_factory=list)
     # How many times run_in_sandbox was called this turn: RunInSandboxTool's
     # `attempts` counter, incremented first thing on EVERY call -- including
     # SC-data-host refusals (exit_code -4 / use_sc_tools, no pod spawned) and
@@ -579,6 +608,7 @@ class ChannelVoiceAgent:
         new_message = types.Content(role="user", parts=[types.Part(text=text)])
         message_text = ""
         sc_tool_names: list[str] = []
+        sc_tool_calls: list[dict] = []
         web_search_queries = 0
         try:
             async for event in runner.run_async(
@@ -609,6 +639,7 @@ class ChannelVoiceAgent:
                     fc_name = getattr(fc, "name", None) if fc else None
                     if fc_name and fc_name.startswith("sc_"):
                         sc_tool_names.append(fc_name)
+                        sc_tool_calls.append({"name": fc_name, "args": dict(getattr(fc, "args", None) or {})})
         except Exception as e:  # noqa: BLE001
             # Translate model API errors (404 model not found, 400 bad
             # tool schema, 403 quota, 5xx upstream, etc.) into a single
@@ -635,6 +666,7 @@ class ChannelVoiceAgent:
             any_failed=any_failed,
             fallback_occurred=self._uses_base_prompt(system_prompt),
             sc_tool_names=sc_tool_names,
+            sc_tool_calls=sc_tool_calls,
             sandbox_attempts=tool.attempts,
             sc_state=sc_state,
             web_search_queries=web_search_queries,

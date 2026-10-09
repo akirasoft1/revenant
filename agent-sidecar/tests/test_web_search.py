@@ -355,3 +355,40 @@ def test_legacy_constants_carry_the_no_search_dispute_rule():
     for text in (SC_TOOLS_PREAMBLE, SC_TOOLS_UNAVAILABLE_NOTE):
         assert SC_DISPUTE_RULE_NO_SEARCH in text
         assert "google_search" not in text
+
+
+# --- member hangar (2026-10-09 member-hangar spec) -------------------------
+
+SC_HANGAR_RULE = (
+    "Only when a question is about a member's own ships or loadouts (never bring up anyone's ships "
+    "unprompted): sc_member_hangar shows what a member owns and what's fitted — for a purchasable "
+    "upgrade to a ship's part, find the current component there, then call sc_compare_components "
+    "with purchasable_only=True — and sc_member_fit_check says whether an item fits and upgrades "
+    "any of a member's ships; member_id is the numeric Discord ID from the [Name · id] message "
+    "labels or the \"People in this conversation\" roster, and \"my\" means the labelled speaker."
+)
+
+SC_HANGAR_UNAVAILABLE = (
+    "Member hangars (which ships a member owns and what's fitted) can't be looked up either — "
+    "never guess what anyone owns or has fitted."
+)
+
+
+@pytest.mark.parametrize("web", [True, False])
+def test_sc_preamble_carries_the_hangar_rule_verbatim_once(web):
+    p = sc_tools_preamble(web_search=web)
+    assert p.count(SC_HANGAR_RULE) == 1
+    # listed after the tool inventory, before the ordered fallback policy
+    assert p.index("sc_org_guides") < p.index(SC_HANGAR_RULE) < p.index("For ANY Star Citizen question")
+
+
+@pytest.mark.parametrize("web", [True, False])
+def test_sc_unavailable_note_says_hangars_are_down_without_naming_tools(web):
+    n = sc_tools_unavailable_note(web_search=web)
+    assert n.count(SC_HANGAR_UNAVAILABLE) == 1
+    assert "sc_member" not in n and SC_HANGAR_RULE not in n
+
+
+def test_legacy_constants_carry_the_hangar_text():
+    assert SC_HANGAR_RULE in SC_TOOLS_PREAMBLE
+    assert SC_HANGAR_UNAVAILABLE in SC_TOOLS_UNAVAILABLE_NOTE
