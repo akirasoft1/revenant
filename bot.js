@@ -54,6 +54,7 @@ const QdrantService = require('./services/QdrantService');
 const NickMappingService = require('./services/NickMappingService');
 const ChannelContextService = require('./services/ChannelContextService');
 const { createSpeakerNames } = require('./services/SpeakerNames');
+const MemberIdentityService = require('./services/MemberIdentityService');
 const { buildUserMessageDoc, recordBotReply } = require('./utils/channelMessageRecorder');
 const ImagePromptAnalyzerService = require('./services/ImagePromptAnalyzerService');
 const CatchMeUpService = require('./services/CatchMeUpService');
@@ -168,7 +169,17 @@ class DiscordBot {
     // native-dependent bits, which stay lazily required behind VOICE_ENABLED
     // below). One instance is reused by ChannelContextService (chat/recall)
     // and by VoiceService (voice) so both paths resolve the same names.
-    this.speakerNames = createSpeakerNames({ overrides: config.voice.speakerNames });
+    //
+    // The member identity registry (Mongo `member_identities`, managed via
+    // /whois) is its first layer: a member's chosen address name wins over the
+    // VOICE_SPEAKER_NAMES table and Discord's own names. Its reads are sync
+    // from an in-memory cache, loaded/refreshed from the ready handler; until
+    // Mongo connects it is simply empty and resolution behaves as before.
+    this.memberIdentity = new MemberIdentityService({ mongoService: this.mongoService });
+    this.speakerNames = createSpeakerNames({
+      overrides: config.voice.speakerNames,
+      identity: this.memberIdentity,
+    });
 
     // Initialize Channel Context service for passive conversation awareness
     this.channelContextService = null;
@@ -677,6 +688,12 @@ class DiscordBot {
         logger.info('Starting Voice Profile service...');
         await this.voiceProfileService.start();
       }
+
+      // Member identity registry: start() loads now and refreshes every 60s.
+      // Mongo connects asynchronously, so if it isn't up yet the registry
+      // stays empty (names fall back to VOICE_SPEAKER_NAMES / Discord) and the
+      // next refresh loads it. Never blocks startup.
+      if (this.memberIdentity) this.memberIdentity.start();
 
       // Periodically prune expired recall_ledger rows (best-effort, non-blocking)
       this.mongoService.pruneRecallLedger().catch(() => {});

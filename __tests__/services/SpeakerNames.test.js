@@ -94,3 +94,59 @@ test('strips dingbats and variation selectors', () => {
   expect(sanitize('Mike ❤️')).toBe('Mike');
   expect(sanitize('Mike️')).toBe('Mike'); // bare VS16 with no preceding base glyph
 });
+
+describe('member identity registry layer', () => {
+  const identityWith = (map) => ({ get: jest.fn((id) => map[id] || null) });
+
+  test('registry addressName wins over the override table and every Discord source', () => {
+    const r = createSpeakerNames({
+      overrides: { u1: 'Mike' },
+      identity: identityWith({ u1: { discordId: 'u1', addressName: 'Akira', aliases: [] } }),
+    });
+    expect(r.resolve(U({ globalName: 'inc' }), { nickname: 'Joke' })).toBe('Akira');
+  });
+
+  test('registry name is sanitised like every other candidate', () => {
+    const r = createSpeakerNames({ identity: identityWith({ u1: { addressName: '[CLAN] Akira ™' } }) });
+    expect(r.resolve(U())).toBe('Akira');
+  });
+
+  test('no registry record / null addressName falls through to the existing order', () => {
+    const r = createSpeakerNames({
+      overrides: { u2: 'Mike' },
+      identity: identityWith({ u1: { addressName: null, aliases: ['x'] } }),
+    });
+    expect(r.resolve(U({ globalName: 'inc' }))).toBe('inc');
+    expect(r.resolve({ id: 'u2', username: 'zz', globalName: null })).toBe('Mike');
+  });
+
+  test('a registry that throws falls back to the existing order', () => {
+    const identity = { get: jest.fn(() => { throw new Error('registry down'); }) };
+    const r = createSpeakerNames({ overrides: { u1: 'Mike' }, identity });
+    expect(r.resolve(U({ globalName: 'inc' }))).toBe('Mike');
+  });
+
+  test('a malformed identity dependency is ignored', () => {
+    const r = createSpeakerNames({ identity: {} });
+    expect(r.resolve(U({ globalName: 'inc' }))).toBe('inc');
+  });
+});
+
+describe('parseSpeakerNames (VOICE_SPEAKER_NAMES parsing shared with config + seed script)', () => {
+  const { parseSpeakerNames } = require('../../services/SpeakerNames');
+
+  test('parses a JSON object', () => {
+    expect(parseSpeakerNames('{"1":"Mike"}')).toEqual({ 1: 'Mike' });
+  });
+
+  test('empty / undefined is an empty table', () => {
+    expect(parseSpeakerNames(undefined)).toEqual({});
+    expect(parseSpeakerNames('')).toEqual({});
+  });
+
+  test('malformed JSON warns and falls back to an empty table', () => {
+    const warn = jest.fn();
+    expect(parseSpeakerNames('{nope', warn)).toEqual({});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('VOICE_SPEAKER_NAMES is not valid JSON'));
+  });
+});
