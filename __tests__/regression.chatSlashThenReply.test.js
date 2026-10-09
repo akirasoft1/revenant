@@ -21,6 +21,9 @@ const ChatSlashCommand = require('../commands/slash/ChatCommand');
 const Q = 'what would be the best place to mine high quality Aluminum in star citizen?';
 const A = 'Aaron Halo quantanium belt — look for high-quality Aluminum deposits there.';
 const FOLLOW_UP = 'and where would it be best to refine it?';
+// Member identity grounding: user turns carry `[Name · Discord ID]: ` labels
+// (name from the stored authorName, which ChatCommand resolved as 'Mike').
+const MIKE = (text) => `[Mike · user-1]: ${text}`;
 
 function makeStore() {
   const rows = [];
@@ -110,8 +113,8 @@ describe('regression: /chat Q&A then a Discord reply follow-up keeps the context
 
     // The /chat turn itself did not see its own prompt twice.
     const firstCall = chatService.agentClient.chat.mock.calls[0][0];
-    expect(firstCall.userMessage).toBe(Q);
-    expect(firstCall.history.filter((t) => t.content === Q)).toHaveLength(0);
+    expect(firstCall.userMessage).toBe(MIKE(Q));
+    expect(firstCall.history.filter((t) => t.content.includes(Q))).toHaveLength(0);
 
     // Both sides are in channel_messages.
     expect(store.rows.map((r) => [!!r.isBot, r.content])).toEqual([[false, Q], [true, A]]);
@@ -122,9 +125,9 @@ describe('regression: /chat Q&A then a Discord reply follow-up keeps the context
     const second = chatService.agentClient.chat.mock.calls[1][0];
     // The reply target is named explicitly on the current turn (Discord shows
     // the /chat reply with its prompt header), even though it is in the window.
-    expect(second.userMessage).toBe(`[Replying to your earlier message: "**Prompt:** ${Q}\n\n${A}"]\n${FOLLOW_UP}`);
+    expect(second.userMessage).toBe(`[Replying to your earlier message: "**Prompt:** ${Q}\n\n${A}"]\n${MIKE(FOLLOW_UP)}`);
     expect(second.history).toEqual([
-      { role: 'user', content: Q },
+      { role: 'user', content: MIKE(Q) },
       { role: 'assistant', content: A },
     ]);
   });
@@ -145,7 +148,7 @@ describe('regression: /chat Q&A then a Discord reply follow-up keeps the context
     // reply as Discord shows it, prompt header included) rides on the current
     // turn as a `[Replying to …]` prefix instead.
     expect(history.some((t) => t.content.includes(A))).toBe(false);
-    expect(second.userMessage).toBe(`[Replying to your earlier message: "**Prompt:** ${Q}\n\n${A}"]\n${FOLLOW_UP}`);
-    expect(history.filter((t) => t.content === FOLLOW_UP)).toHaveLength(0);
+    expect(second.userMessage).toBe(`[Replying to your earlier message: "**Prompt:** ${Q}\n\n${A}"]\n${MIKE(FOLLOW_UP)}`);
+    expect(history.filter((t) => t.content.includes(FOLLOW_UP))).toHaveLength(0);
   });
 });

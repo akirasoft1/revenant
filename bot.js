@@ -260,7 +260,10 @@ class DiscordBot {
     this.chatService = new ChatService(
       this.openaiClient, config, this.mongoService, this.mem0Service,
       this.channelContextService, this.voiceProfileService, this.qdrantService,
-      this.agentClient, this.recallService
+      this.agentClient, this.recallService,
+      // Member identity grounding: speaker labels + "People in this
+      // conversation" roster in buildTurnContext (text and voice).
+      { memberIdentity: this.memberIdentity, speakerNames: this.speakerNames }
     );
 
     // VoiceClient/VoiceService - live Discord voice channel presence via the

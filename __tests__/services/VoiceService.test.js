@@ -295,6 +295,28 @@ test('on wake, builds context via the shared builder and opens a converse sessio
   expect(session.sendStart).toHaveBeenCalledWith(expect.objectContaining({ recallContext: 'past context' }));
 });
 
+test('context build passes the session opener as userId and their cached Discord user as speaker (roster/labels)', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const opener = { id: 'user1', username: 'akirasoft', globalName: 'Akirasoft' };
+  const deps = makeDeps({ makeWakeGate: () => gate, lookupUser: jest.fn(() => opener) });
+  const contextBuilder = jest.fn().mockResolvedValue({ systemPrompt: 'S', memoryBlock: '', historyTurns: [] });
+  const { svc } = makeService(deps, {}, contextBuilder);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+  expect(contextBuilder).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user1', userMessage: '', speaker: opener }));
+});
+
+test('context build tolerates a throwing lookupUser (speaker: null)', async () => {
+  const gate = { push: jest.fn(() => true), reset: jest.fn() };
+  const deps = makeDeps({ makeWakeGate: () => gate, lookupUser: jest.fn(() => { throw new Error('no cache'); }) });
+  const contextBuilder = jest.fn().mockResolvedValue({ systemPrompt: 'S', memoryBlock: '', historyTurns: [] });
+  const { svc, voiceClient } = makeService(deps, {}, contextBuilder);
+  await svc.join({ channel: { id: 'c1', guild: { id: 'g1', voiceAdapterCreator: {} } }, guildId: 'g1' });
+  await svc._handleUserPcm('g1', 'user1', Buffer.alloc(1024));
+  expect(contextBuilder).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user1', speaker: null }));
+  expect(voiceClient.converse).toHaveBeenCalled();
+});
+
 test('voice start uses the shared context builder', async () => {
   const contextBuilder = jest.fn().mockResolvedValue({
     systemPrompt: 'DYN', memoryBlock: 'MEM', historyTurns: [{ role: 'user', content: 'a' }] });

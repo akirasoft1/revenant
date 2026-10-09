@@ -7,6 +7,8 @@ const { countTokens, wouldExceedLimit } = require('../utils/tokenCounter');
 const { withSpan } = require('../tracing');
 const localLlmService = require('./LocalLlmService');
 const { DEFAULT_OPENAI_MODEL, DEFAULT_CHAT_REASONING_EFFORT, reasoningParams } = require('../utils/openaiModels');
+const { sanitize: sanitizeName, usable: usableName } = require('./SpeakerNames');
+const { labelFor, selectRosterMembers, formatRoster } = require('./identity/roster');
 
 // Conversation limits
 const LIMITS = {
@@ -16,7 +18,7 @@ const LIMITS = {
 };
 
 class ChatService {
-  constructor(openaiClient, config, mongoService, mem0Service = null, channelContextService = null, voiceProfileService = null, qdrantService = null, agentClient = null, recallService = null) {
+  constructor(openaiClient, config, mongoService, mem0Service = null, channelContextService = null, voiceProfileService = null, qdrantService = null, agentClient = null, recallService = null, { memberIdentity = null, speakerNames = null } = {}) {
     this.openaiClient = openaiClient;
     this.config = config;
     this.mongoService = mongoService;
@@ -27,6 +29,11 @@ class ChatService {
     this.agentClient = agentClient;
     // v2 centralized ranked recall (RecallService); null disables the v2 path.
     this.recallService = recallService;
+    // Member identity grounding (both optional): the registry supplies the
+    // roster's aliases/address names, SpeakerNames resolves the label names.
+    // Absent -> labels fall back to stored authorName / userTag.
+    this.memberIdentity = memberIdentity;
+    this.speakerNames = speakerNames;
   }
 
   /**
@@ -292,12 +299,15 @@ ${context}`;
    * @param {{id: string, content: string, authorId?: string|null}|null} [params.referencedMessage]
    *   The bot message a Discord reply points at. Named explicitly on the
    *   returned `currentTurn` (see _annotateReplyTarget); history is untouched.
+   * @param {Object|null} [params.speaker] - Optional Discord user-like object
+   *   for the current speaker (`{id, username?, globalName?}`), used only to
+   *   resolve the current speaker's label name.
    * @returns {Promise<{systemPrompt: string, memoryBlock: string, historyTurns: Array<{role: 'user'|'assistant', content: string}>, currentTurn: string}>}
    *   `currentTurn` is the user turn to send to the model: `userMessage`
    *   prefixed with the reply target when there is a usable referencedMessage,
    *   otherwise `userMessage` unchanged. Recall and dedupe use the raw text.
    */
-  async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice', referencedMessage = null }) {
+  async buildTurnContext({ userId, userTag = '', channelId, guildId = null, userMessage, personalityId = 'channel-voice', referencedMessage = null, speaker = null }) {
     void guildId; // reserved for future per-guild scoping; not used yet
     const personality = personalityManager.get(personalityId);
     const user = { id: userId, tag: userTag, username: userTag || userId };
@@ -306,7 +316,7 @@ ${context}`;
       await this._composeRecallContexts(channelId, userMessage, user, personalityId, personality);
 
     // systemPrompt WITHOUT the memory block: memory travels separately as memoryBlock.
-    const systemPrompt = this._buildGroupSystemPrompt(personality, '', channelContext, sharedContext, voiceContext);
+    const baseSystemPrompt = this._buildGroupSystemPrompt(personality, '', channelContext, sharedContext, voiceContext);
 
     // History MUST carry both sides of the conversation (user turns AND the
     // bot's own prior replies mapped to 'assistant') so the model has real
@@ -323,6 +333,7 @@ ${context}`;
     // getRecentChannelMessages(channelId, limit) already returns the most
     // recent `limit` docs sorted oldest->newest, matching the contract.
     let historyTurns = [];
+    let historyDocs = [];
     try {
       const docs = this.mongoService?.getRecentChannelMessages
         ? await this.mongoService.getRecentChannelMessages(
@@ -330,11 +341,12 @@ ${context}`;
             this.config?.channelContext?.promptRecentCount || 10
           )
         : [];
-      historyTurns = (docs || []).filter((m) => m && m.content)
-        .map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
+      historyDocs = (docs || []).filter((m) => m && m.content);
+      historyTurns = historyDocs.map((m) => ({ role: m.isBot ? 'assistant' : 'user', content: m.content }));
     } catch (error) {
       logger.debug(`buildTurnContext: history lookup failed, degrading to []: ${error.message}`);
       historyTurns = [];
+      historyDocs = [];
     }
 
     // bot.js persists the incoming user message to channel_messages
@@ -345,13 +357,41 @@ ${context}`;
     // Drop it defensively; no-op if the write hasn't landed yet (the race's
     // other branch) since there's simply nothing to match.
     historyTurns = this._dropDuplicatedCurrentTurn(historyTurns, userMessage);
+    // The dedupe only ever removes the LAST turn, so truncating keeps docs and
+    // turns index-aligned. The full list is kept for name fallbacks (the
+    // dropped row is the current speaker's own message, with their authorName).
+    const allDocs = historyDocs;
+    historyDocs = historyDocs.slice(0, historyTurns.length);
+
+    // Who said what: label user turns `[Name · ID]: …`, label the current
+    // turn, and build the scoped roster. AFTER the dedupe (raw-text compare).
+    // Never throws into the turn: on any failure the turn goes out unlabelled.
+    let labelledMessage = userMessage;
+    let roster = '';
+    try {
+      const ident = this._buildIdentityContext({
+        userId, userTag, speaker, historyDocs, allDocs, userMessage,
+      });
+      historyTurns = historyTurns.map((t, i) => {
+        const doc = historyDocs[i];
+        if (!doc || doc.isBot || !doc.authorId) return t;
+        return { role: t.role, content: `${labelFor({ discordId: doc.authorId, name: ident.nameFor(doc.authorId) })}: ${t.content}` };
+      });
+      if (userMessage && userId) {
+        labelledMessage = `${labelFor({ discordId: userId, name: ident.nameFor(userId) })}: ${userMessage}`;
+      }
+      roster = ident.roster;
+    } catch (error) {
+      logger.warn(`buildTurnContext: speaker labelling failed, sending unlabelled turns: ${error && error.stack ? error.stack : error}`);
+    }
+    const systemPrompt = roster ? `${baseSystemPrompt}\n\n${roster}` : baseSystemPrompt;
 
     // A Discord reply names its target explicitly, so say so on the current
     // turn — on EVERY reply, not only when the target has left the window.
     // Applied AFTER the dedupe above, which must compare against the raw text.
     // History stays chronological: moving the target next to the current turn
     // would read as the answer to whatever newer question sat in between.
-    const currentTurn = this._annotateReplyTarget(userMessage, referencedMessage);
+    const currentTurn = this._annotateReplyTarget(labelledMessage, referencedMessage);
 
     // Deliberate: memoryBlock/historyTurns are returned as-is, WITHOUT the
     // legacy `config.recall.promptMaxTokens` trim that `_buildGroupSystemPrompt`
@@ -362,6 +402,85 @@ ${context}`;
     // the `channelContext.promptRecentCount` history cap above. Not DRY debt —
     // see CLAUDE.md's Agentic Sandbox section for the split rationale.
     return { systemPrompt, memoryBlock: memoryContext || '', historyTurns, currentTurn };
+  }
+
+  /**
+   * Resolve label names and the "People in this conversation" roster for one
+   * turn. Name order per Discord ID: SpeakerNames (registry address name →
+   * VOICE_SPEAKER_NAMES → Discord names) → most recent stored authorName →
+   * (current speaker only) the passed Discord user's globalName/username and
+   * userTag → 'Unknown'. Registry reads are wrapped: a throwing or unloaded
+   * registry just contributes nothing.
+   * @returns {{nameFor: (id: string) => string, roster: string}}
+   * @private
+   */
+  _buildIdentityContext({ userId, userTag = '', speaker = null, historyDocs = [], allDocs = [], userMessage = '' }) {
+    const identity = this.memberIdentity;
+    const speakerNames = this.speakerNames;
+    const safeGet = (id) => {
+      if (!identity || typeof identity.get !== 'function') return null;
+      try { return identity.get(id) || null; } catch (_) { return null; }
+    };
+    let records = [];
+    if (identity && typeof identity.all === 'function') {
+      try { records = identity.all() || []; } catch (_) { records = []; }
+    }
+
+    const storedName = new Map();
+    for (const d of allDocs) {
+      if (d && !d.isBot && d.authorId && d.authorName) storedName.set(String(d.authorId), d.authorName);
+    }
+    const pick = (candidates) => {
+      for (const c of candidates) {
+        const s = sanitizeName(c);
+        if (usableName(s)) return s;
+      }
+      return null;
+    };
+    const cache = new Map();
+    const nameFor = (rawId) => {
+      const id = String(rawId);
+      if (cache.has(id)) return cache.get(id);
+      const isCurrent = userId && id === String(userId);
+      let name = null;
+      if (speakerNames && typeof speakerNames.resolve === 'function') {
+        try {
+          const userLike = isCurrent && speaker ? speaker : { id };
+          name = pick([speakerNames.resolve(userLike, null)]);
+        } catch (_) { name = null; }
+      }
+      if (!name) {
+        const rec = safeGet(id);
+        name = pick([
+          storedName.get(id),
+          isCurrent && speaker ? (speaker.globalName || speaker.global_name) : null,
+          isCurrent && speaker ? speaker.username : null,
+          isCurrent ? userTag : null,
+          rec && rec.addressName,
+          ...(rec && Array.isArray(rec.aliases) ? rec.aliases : []),
+        ]);
+      }
+      name = name || 'Unknown';
+      cache.set(id, name);
+      return name;
+    };
+
+    const ids = selectRosterMembers({
+      currentSpeakerId: userId || null,
+      historyDocs,
+      currentText: userMessage,
+      records,
+    });
+    const entries = ids.map((id) => {
+      const rec = safeGet(id);
+      return {
+        discordId: id,
+        name: nameFor(id),
+        addressName: rec && rec.addressName ? rec.addressName : null,
+        aliases: rec && Array.isArray(rec.aliases) ? rec.aliases : [],
+      };
+    });
+    return { nameFor, roster: formatRoster({ entries, currentSpeakerId: userId || null }) };
   }
 
   /**
@@ -742,6 +861,7 @@ ${context}`;
           userMessage,
           personalityId,
           referencedMessage,
+          speaker: user,
         }).catch((ctxErr) => {
           contextDegraded = true;
           logger.error(`buildTurnContext failed for user ${user.id} in channel ${channelId || 'unknown'}; this channel-voice turn runs with NO system prompt (generic base prompt instead of the learned channel-voice personality), NO memory context and NO history: ${ctxErr && ctxErr.stack ? ctxErr.stack : ctxErr}`);

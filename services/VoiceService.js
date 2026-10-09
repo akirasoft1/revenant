@@ -856,6 +856,11 @@ class VoiceService {
     return Promise.race([promise, timeout]).finally(() => { if (timer !== null) clearT(timer); });
   }
 
+  _safeLookupUser(userId) {
+    if (!this._deps || typeof this._deps.lookupUser !== 'function') return null;
+    try { return this._deps.lookupUser(userId) || null; } catch (_) { return null; }
+  }
+
   async _openSession(g, guildId, userId) {
     let systemPrompt = this._config.voice.systemPrompt || '';
     let recallContext = '';
@@ -865,6 +870,9 @@ class VoiceService {
         this._contextBuilder({
           userId, userTag: '', channelId: g.channelId, guildId,
           userMessage: '', personalityId: 'channel-voice',
+          // Cache-only Discord user (may be null) so the roster/label name for
+          // the session opener can use their Discord names, not just stored rows.
+          speaker: this._safeLookupUser(userId),
         }),
         CONTEXT_BUILD_TIMEOUT_MS,
         `context build timed out after ${CONTEXT_BUILD_TIMEOUT_MS}ms`);
