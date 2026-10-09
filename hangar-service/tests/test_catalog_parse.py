@@ -143,3 +143,29 @@ def test_vehicle_and_item_summaries():
     assert {k: i[k] for k in ("uuid", "name", "type", "size")} == {
         "uuid": "3bd1502d-f593-456f-a3a9-14fec5b8c1a5", "name": "Hemera", "type": "QuantumDrive", "size": 2}
     assert set(i) == {"uuid", "name", "className", "type", "subType", "size", "grade", "class", "manufacturer"}
+
+
+# ---------- fix round 1 ----------
+
+def test_empty_editable_port_classified_by_compatible_types():
+    # An editable port with nothing fitted in stock has type "" on the Wiki
+    # (the port type is copied from the equipped item), so classification
+    # falls back to the allowlisted compatible type.
+    v = {"ports": [
+        {"name": "hp_empty_gun", "type": "", "editable": True, "sizes": {"min": 2, "max": 3},
+         "compatible_types": [{"type": "WeaponGun", "sub_types": []}, {"type": "Turret", "sub_types": []}],
+         "equipped_item": None},
+        {"name": "hp_empty_odd", "type": "", "editable": True, "sizes": {"min": 1, "max": 1},
+         "compatible_types": [{"type": "Paints", "sub_types": []}], "equipped_item": None},
+        {"name": "hp_empty_locked", "type": "", "editable": False, "sizes": {"min": 1, "max": 1},
+         "compatible_types": [{"type": "Shield", "sub_types": []}], "equipped_item": None},
+    ]}
+    s = _by_name(parse_slots(v))
+    assert set(s) == {"hp_empty_gun"}
+    gun = s["hp_empty_gun"]
+    assert (gun.type, gun.size_min, gun.size_max, gun.stock_item) == ("WeaponGun", 2, 3, None)
+
+
+def test_taurus_slot_set_unchanged_by_compatible_type_classification():
+    # 17 slots before and after: no empty editable component port on the Taurus
+    assert len(parse_slots(_taurus())) == 17

@@ -170,9 +170,10 @@ class FirestoreShipRepository(ShipRepository):
 
     async def _guard(self, coro_fn):
         from google.api_core import exceptions as gexc
+        from google.auth import exceptions as gauth
         try:
             return await coro_fn()
-        except (gexc.GoogleAPIError, OSError, TimeoutError) as e:
+        except (gexc.GoogleAPIError, gauth.GoogleAuthError, OSError, TimeoutError) as e:
             raise RepositoryError(f"firestore {type(e).__name__}: {e}") from e
 
     async def list_ships(self, member_id: str) -> list[dict]:

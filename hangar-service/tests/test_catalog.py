@@ -152,3 +152,162 @@ async def test_item_lookup():
     it = await c.item(HEMERA_UUID)
     assert (it["name"], it["type"], it["size"]) == ("Hemera", "QuantumDrive", 2)
     assert await c.item("nope") is None
+
+
+# ---------- fix round 1 ----------
+import asyncio  # noqa: E402
+
+from src.catalog import NEGATIVE_TTL_S, UnknownItemType, normalize_item_type  # noqa: E402
+from tests.conftest import TAURUS_UUID as _T  # noqa: E402,F401
+
+
+def _cat_spawn(calls=None, fail=None, clock=None, spawned=None, **kw):
+    cache = TTLCache(clock=clock) if clock else None
+    def spawn(coro):
+        t = asyncio.ensure_future(coro)
+        if spawned is not None:
+            spawned.append(t)
+        return t
+    return build_catalog("https://api.star-citizen.wiki/api", version="test",
+                         transport=httpx.MockTransport(wiki_handler(calls, fail)),
+                         cache=cache, sleep=_nosleep, spawn=spawn, **kw)
+
+
+def _n(calls, pred):
+    return sum(1 for r in calls if pred(r))
+
+
+async def test_not_found_vehicle_cached_only_short_ttl():
+    clk, calls = Clock(), []
+    c = _cat_spawn(calls, clock=clk)
+    is_q = lambda r: r.url.path == "/api/vehicles/no-such-ship"  # noqa: E731
+    assert await c.vehicle("no-such-ship") is None
+    clk.t += NEGATIVE_TTL_S - 1
+    assert await c.vehicle("no-such-ship") is None
+    assert _n(calls, is_q) == 1
+    clk.t += 2
+    assert await c.vehicle("no-such-ship") is None
+    assert _n(calls, is_q) == 2
+
+
+async def test_not_found_item_and_empty_item_list_use_short_ttl():
+    clk, calls = Clock(), []
+    c = _cat_spawn(calls, clock=clk)
+    assert await c.item("nope") is None
+    assert await c.items("Shield", size=9) == []
+    clk.t += NEGATIVE_TTL_S + 1
+    await c.item("nope")
+    await c.items("Shield", size=9)
+    assert _n(calls, lambda r: r.url.path == "/api/v2/items/nope") == 2
+    assert _n(calls, lambda r: r.url.path == "/api/v2/items") == 2
+
+
+async def test_found_results_keep_long_ttl():
+    clk, calls = Clock(), []
+    c = _cat_spawn(calls, clock=clk)
+    await c.item(HEMERA_UUID)
+    await c.items("QuantumDrive", size=2)
+    clk.t += NEGATIVE_TTL_S + 1
+    await c.item(HEMERA_UUID)
+    await c.items("QuantumDrive", size=2)
+    assert _n(calls, lambda r: r.url.path.startswith("/api/v2/items")) == 2
+
+
+def test_negative_ttl_is_ten_minutes():
+    assert NEGATIVE_TTL_S == 600
+
+
+def test_normalize_item_type():
+    assert normalize_item_type("quantumdrive") == "QuantumDrive"
+    assert normalize_item_type(" SHIELD ") == "Shield"
+    for bad in ("Paints", "", "QuantumDrive; drop", None):
+        with pytest.raises(UnknownItemType):
+            normalize_item_type(bad)
+
+
+async def test_items_normalises_type_and_shares_cache_key():
+    calls = []
+    c = _cat_spawn(calls)
+    a = await c.items("quantumdrive", size=2)
+    b = await c.items("QuantumDrive", size=2)
+    assert a == b and len(a) == 20
+    assert _n(calls, lambda r: r.url.path == "/api/v2/items") == 1
+    req = [r for r in calls if r.url.path == "/api/v2/items"][0]
+    assert req.url.params["filter[type]"] == "QuantumDrive"
+
+
+async def test_items_unknown_type_raises_without_upstream_call():
+    calls = []
+    c = _cat_spawn(calls)
+    with pytest.raises(UnknownItemType):
+        await c.items("Paints")
+    assert calls == []
+    assert issubclass(UnknownItemType, ValueError)
+
+
+async def test_overlong_free_text_keys_do_not_reach_upstream():
+    calls = []
+    c = _cat_spawn(calls)
+    assert await c.item("x" * 500) is None
+    assert await c.vehicle("y" * 500) is None
+    assert calls == []
+
+
+async def test_free_text_lookup_keys_are_lru_bounded():
+    calls = []
+    c = _cat_spawn(calls, max_lookup_keys=3)
+    for k in ("a", "b", "c", "d"):
+        await c.item(k)
+    await c.item("d")      # still cached
+    await c.item("a")      # evicted -> refetched
+    assert _n(calls, lambda r: r.url.path == "/api/v2/items/d") == 1
+    assert _n(calls, lambda r: r.url.path == "/api/v2/items/a") == 2
+    assert c.lookup_key_count() <= 3
+
+
+async def test_vehicle_index_stale_while_revalidate_single_flight():
+    clk, calls, spawned = Clock(), [], []
+    c = _cat_spawn(calls, clock=clk, spawned=spawned)
+    await c.vehicle_index()
+    clk.t += CATALOG_TTL_S + 1
+    a = await c.vehicle_index()   # stale served immediately
+    b = await c.vehicle_index()   # refresh already in flight -> not spawned again
+    assert len(a) == len(b) == 299
+    assert len(spawned) == 1
+    await c.drain_refreshes()
+    assert _n(calls, lambda r: r.url.path == "/api/vehicles") == 12  # 6 pages x 2
+    await c.vehicle_index()       # fresh again: no new refresh
+    assert len(spawned) == 1
+
+
+async def test_vehicle_detail_stale_while_revalidate_and_refresh_failure_keeps_stale():
+    clk, spawned = Clock(), []
+    down = {"on": False}
+    c = _cat_spawn(fail=lambda r: down["on"], clock=clk, spawned=spawned)
+    await c.vehicle(TAURUS_UUID)
+    clk.t += CATALOG_TTL_S + 1
+    down["on"] = True
+    assert (await c.vehicle(TAURUS_UUID))["name"] == "Constellation Taurus"
+    await c.drain_refreshes()   # background refresh failed; logged, not raised
+    assert (await c.vehicle(TAURUS_UUID))["name"] == "Constellation Taurus"
+
+
+async def test_warm_loads_index_and_never_raises():
+    calls = []
+    c = _cat_spawn(calls)
+    await c.warm()
+    assert _n(calls, lambda r: r.url.path == "/api/vehicles") == 6
+    broken = _cat_spawn(fail=lambda r: True)
+    await broken.warm()  # logged, not raised
+
+
+async def test_slots_returned_are_copies():
+    c = _cat_spawn()
+    s1 = await c.slots(TAURUS_UUID)
+    s1[0].compatible_types.append({"type": "Junk", "sub_types": []})
+    s1[0].stock_item["name"] = "corrupted"
+    s1.clear()
+    s2 = await c.slots(TAURUS_UUID)
+    assert len(s2) == 17
+    assert all(ct["type"] != "Junk" for ct in s2[0].compatible_types)
+    assert s2[0].stock_item["name"] != "corrupted"

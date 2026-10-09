@@ -14,7 +14,10 @@ the top (``hardpoint_gun_laser_top_left/hardpoint_class_2``). The child's OWN
 every Constellation Taurus S5 turret and the Harbinger's nose guns), so gating
 on the parent's ``editable_children`` would hide every swappable gun.
 """
+import asyncio
+import copy
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
@@ -28,6 +31,9 @@ from .http import UpstreamClient, UpstreamError
 log = logging.getLogger(__name__)
 
 CATALOG_TTL_S = 12 * 3600
+NEGATIVE_TTL_S = 600  # not-found / empty results
+MAX_LOOKUP_KEYS = 2000
+MAX_LOOKUP_KEY_LEN = 200
 DEFAULT_WIKI_BASE = "https://api.star-citizen.wiki/api"
 SEARCH_LIMIT_MAX = 25
 _INDEX_PAGE_SIZE = 50  # the Wiki caps /vehicles pages at 50
@@ -89,12 +95,18 @@ def parse_slots(vehicle: dict) -> list[Slot]:
             if not isinstance(p, dict) or not p.get("name"):
                 continue
             path = f"{prefix}/{p['name']}" if prefix else p["name"]
-            if p.get("editable") is True and p.get("type") in SLOT_TYPES:
+            compat = _compat(p.get("compatible_types"))
+            # An editable port that is EMPTY in stock has type "" (the Wiki
+            # copies the port type from the equipped item), so fall back to
+            # the first allowlisted compatible type.
+            slot_type = p.get("type") if p.get("type") in SLOT_TYPES else next(
+                (c["type"] for c in compat if c["type"] in SLOT_TYPES), None)
+            if p.get("editable") is True and slot_type is not None:
                 sizes = p.get("sizes") or {}
                 slots.append(Slot(
-                    name=path, type=p["type"], sub_type=p.get("sub_type"),
+                    name=path, type=slot_type, sub_type=p.get("sub_type"),
                     size_min=sizes.get("min"), size_max=sizes.get("max"),
-                    compatible_types=_compat(p.get("compatible_types")),
+                    compatible_types=compat,
                     stock_item=_stock(p.get("equipped_item")),
                 ))
             walk(p.get("ports"), path)
@@ -145,24 +157,109 @@ def _search_score(q: str, v: dict) -> float:
     return best
 
 
+def _is_empty(value: Any) -> bool:
+    return value is None or (isinstance(value, (list, dict)) and not value)
+
+
+class UnknownItemType(ValueError):
+    """An item type outside ``SLOT_TYPES`` (Task 2 maps it to 400/422)."""
+
+
+def normalize_item_type(type_: Any) -> str:
+    """Case-insensitive match against ``SLOT_TYPES`` -> canonical spelling.
+    Validated BEFORE the type becomes a cache key or an upstream query."""
+    if isinstance(type_, str):
+        wanted = type_.strip().casefold()
+        for t in SLOT_TYPES:
+            if t.casefold() == wanted:
+                return t
+    raise UnknownItemType(f"unknown item type {type_!r}; expected one of {sorted(SLOT_TYPES)}")
+
+
 class Catalog:
+    """Wiki catalog with a 12h cache.
+
+    - Found results live ``ttl_s`` (12h); not-found / empty results only
+      ``NEGATIVE_TTL_S`` (10 min), so a newly added ship or item is picked up.
+    - The vehicle index and vehicle details are stale-while-revalidate: past
+      expiry the stale copy is returned at once and ONE background refresh
+      runs per key (a failed refresh is logged and the stale copy kept).
+    - Free-text lookup keys (vehicle slug/uuid, item uuid/name) are capped at
+      ``MAX_LOOKUP_KEY_LEN`` characters and LRU-bounded at ``max_lookup_keys``
+      so arbitrary caller input cannot grow the cache without bound.
+    """
+
     def __init__(self, upstream: UpstreamClient, cache: TTLCache | None = None,
-                 ttl_s: float = CATALOG_TTL_S) -> None:
+                 ttl_s: float = CATALOG_TTL_S, negative_ttl_s: float = NEGATIVE_TTL_S,
+                 spawn: Callable[[Awaitable], "asyncio.Task"] | None = None,
+                 max_lookup_keys: int = MAX_LOOKUP_KEYS) -> None:
         self._u = upstream
         self._cache = cache or TTLCache()
         self._ttl = ttl_s
+        self._neg_ttl = negative_ttl_s
+        self._spawn = spawn or asyncio.create_task
+        self._refreshing: dict[str, asyncio.Task] = {}
+        self._max_lookup_keys = max_lookup_keys
+        self._lookup_keys: OrderedDict[str, None] = OrderedDict()
+
+    # ----- caching -----
+
+    def _ttl_for(self, key: str) -> float:
+        peeked = self._cache.peek(key)
+        return self._neg_ttl if peeked is not None and _is_empty(peeked.value) else self._ttl
 
     async def _cached(self, key: str, fetch: Callable[[], Awaitable[Any]]) -> Any:
-        res = await self._cache.get_or_fetch(key, self._ttl, fetch)
+        res = await self._cache.get_or_fetch(key, self._ttl_for(key), fetch)
         if res.status == "stale":
             log.warning("catalog: serving stale %s (age %.0fs) after a Wiki failure", key, res.age_s)
         return res.value
 
+    async def _refresh(self, key: str, ttl: float, fetch) -> None:
+        try:
+            await self._cache.get_or_fetch(key, ttl, fetch)
+        except Exception:
+            log.warning("catalog: background refresh of %s failed; serving stale data", key, exc_info=True)
+
+    async def _swr(self, key: str, fetch: Callable[[], Awaitable[Any]]) -> Any:
+        """Stale-while-revalidate for non-empty values; an expired empty
+        (not-found) value is re-fetched inline instead."""
+        ttl = self._ttl_for(key)
+        peeked = self._cache.peek(key, ttl)
+        if peeked is not None and peeked.status == "stale" and not _is_empty(peeked.value):
+            task = self._refreshing.get(key)
+            if task is None or task.done():
+                self._refreshing[key] = self._spawn(self._refresh(key, ttl, fetch))
+            return peeked.value
+        return await self._cached(key, fetch)
+
+    async def drain_refreshes(self) -> None:
+        """Await in-flight background refreshes (tests / shutdown)."""
+        tasks = [t for t in self._refreshing.values() if not t.done()]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _touch_lookup(self, key: str) -> None:
+        self._lookup_keys[key] = None
+        self._lookup_keys.move_to_end(key)
+        while len(self._lookup_keys) > self._max_lookup_keys:
+            old, _ = self._lookup_keys.popitem(last=False)
+            self._cache.discard(old)
+
+    def lookup_key_count(self) -> int:
+        return len(self._lookup_keys)
+
+    async def warm(self) -> None:
+        """Startup prefetch of the vehicle index. Best effort: never raises."""
+        try:
+            await self.vehicle_index()
+        except Exception:
+            log.warning("catalog: warm-up of the vehicle index failed", exc_info=True)
+
     # ----- vehicles -----
 
     async def _detail(self, uuid_or_slug: str) -> dict | None:
-        ident = uuid_or_slug.strip()
-        if not ident:
+        ident = (uuid_or_slug or "").strip()
+        if not ident or len(ident) > MAX_LOOKUP_KEY_LEN:
             return None
 
         async def fetch():
@@ -177,7 +274,9 @@ class Catalog:
                 return None
             return {"summary": vehicle_summary(data), "slots": parse_slots(data)}
 
-        return await self._cached(f"vehicle:{ident.casefold()}", fetch)
+        key = f"vehicle:{ident.casefold()}"
+        self._touch_lookup(key)
+        return await self._swr(key, fetch)
 
     async def vehicle(self, uuid_or_slug: str) -> dict | None:
         """Vehicle summary ``{uuid, name, gameName, slug, className, manufacturer}``
@@ -187,9 +286,10 @@ class Catalog:
         return dict(d["summary"]) if d else None
 
     async def slots(self, vehicle_uuid: str) -> list[Slot] | None:
-        """Component slots of a vehicle (uuid or slug), None if unknown."""
+        """Component slots of a vehicle (uuid or slug), None if unknown.
+        Deep copies: callers may mutate them without touching the cache."""
         d = await self._detail(vehicle_uuid)
-        return list(d["slots"]) if d else None
+        return copy.deepcopy(d["slots"]) if d else None
 
     async def vehicle_index(self) -> list[dict]:
         """Every catalog vehicle as a summary dict (all /vehicles pages, cached 12h)."""
@@ -206,7 +306,7 @@ class Catalog:
                     break
                 page += 1
             return out
-        return [dict(v) for v in await self._cached("vehicle_index", fetch)]
+        return [dict(v) for v in await self._swr("vehicle_index", fetch)]
 
     async def search_vehicles(self, q: str, limit: int = SEARCH_LIMIT_MAX) -> list[dict]:
         """Autocomplete: best matches first, at most ``min(limit, 25)``. An empty
@@ -229,12 +329,17 @@ class Catalog:
     # ----- items -----
 
     async def items(self, type_: str, size: int | None = None, q: str | None = None) -> list[dict]:
-        """Items of a Wiki type (e.g. ``QuantumDrive``), optionally one size,
-        optionally filtered by a case-insensitive name substring; sorted by name."""
+        """Items of a Wiki type (case-insensitive, must be in ``SLOT_TYPES``
+        else ``UnknownItemType``), optionally one size, optionally filtered by
+        a case-insensitive name substring; sorted by name."""
+        canonical = normalize_item_type(type_)
+        if size is not None:
+            size = int(size)
+
         async def fetch():
             out: list[dict] = []
             page = 1
-            params: dict = {"filter[type]": type_, "limit": 200}
+            params: dict = {"filter[type]": canonical, "limit": 200}
             if size is not None:
                 params["filter[size]"] = size
             while page <= _MAX_PAGES:
@@ -247,7 +352,7 @@ class Catalog:
             out.sort(key=lambda i: (i["name"] or "").casefold())
             return out
 
-        items = await self._cached(f"items:{type_}:{size}", fetch)
+        items = await self._cached(f"items:{canonical}:{size}", fetch)
         if q and q.strip():
             needle = q.strip().casefold()
             items = [i for i in items
@@ -257,7 +362,7 @@ class Catalog:
     async def item(self, uuid_or_name: str) -> dict | None:
         """One item summary by uuid (or exact Wiki name), None if unknown."""
         ident = (uuid_or_name or "").strip()
-        if not ident:
+        if not ident or len(ident) > MAX_LOOKUP_KEY_LEN:
             return None
 
         async def fetch():
@@ -270,15 +375,19 @@ class Catalog:
             data = body.get("data") if isinstance(body, dict) else None
             return item_summary(data) if isinstance(data, dict) and data.get("uuid") else None
 
-        res = await self._cached(f"item:{ident.casefold()}", fetch)
+        key = f"item:{ident.casefold()}"
+        self._touch_lookup(key)
+        res = await self._cached(key, fetch)
         return dict(res) if res else None
 
 
 def build_catalog(wiki_base: str = DEFAULT_WIKI_BASE, version: str = "dev",
                   transport: httpx.AsyncBaseTransport | None = None,
                   cache: TTLCache | None = None,
-                  sleep: Callable[[float], Awaitable[None]] | None = None) -> Catalog:
+                  sleep: Callable[[float], Awaitable[None]] | None = None,
+                  spawn: Callable[[Awaitable], "asyncio.Task"] | None = None,
+                  max_lookup_keys: int = MAX_LOOKUP_KEYS) -> Catalog:
     headers = {"User-Agent": f"revenant-hangar-service/{version}", "Accept": "application/json"}
     kw = {"sleep": sleep} if sleep is not None else {}
     upstream = UpstreamClient("wiki", wiki_base, headers, RateLimiter(60, 60.0), transport=transport, **kw)
-    return Catalog(upstream, cache=cache)
+    return Catalog(upstream, cache=cache, spawn=spawn, max_lookup_keys=max_lookup_keys)

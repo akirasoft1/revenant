@@ -1,5 +1,6 @@
 # Copied from sc-knowledge/src/cache.py (2026-10-09) -- keep in sync by hand; hangar-service is a
-# separate image so it cannot import sc-knowledge's package.
+# separate image so it cannot import sc-knowledge's package. hangar-only addition:
+# TTLCache.discard() (used by the catalog's LRU bound on free-text lookup keys).
 """In-process TTL cache with stale-on-error, and a sliding-window rate limiter."""
 import asyncio
 import time
@@ -45,6 +46,14 @@ class TTLCache:
         age = self._clock() - entry[0]
         status = "hit" if ttl is None or age < ttl else "stale"
         return CacheResult(entry[1], status, age)
+
+    def discard(self, key: str) -> None:
+        """Forget a key entirely (value, lock, failure backoff)."""
+        self._data.pop(key, None)
+        self._failures.pop(key, None)
+        lock = self._locks.get(key)
+        if lock is not None and not lock.locked():
+            self._locks.pop(key, None)
 
     def _backed_off(self, key: str, now: float) -> Exception | None:
         failure = self._failures.get(key)

@@ -68,13 +68,26 @@ def check_compatible(slot: Slot, item: dict) -> str | None:
     """None when ``item`` (a dict with ``type``, ``size``, ``name``) fits
     ``slot`` -- its type is one of the slot's compatible types (falling back to
     the slot's own type when the catalog lists none) and its size is within
-    ``[sizeMin, sizeMax]``. Otherwise a human-readable reason."""
+    ``[sizeMin, sizeMax]``; when the slot lists sub-types for that type and
+    the item has a real sub-type (not empty/``UNDEFINED``), it must be one of
+    them. Otherwise a human-readable reason."""
     name = item.get("name") or item.get("uuid") or "item"
     allowed = [c["type"] for c in slot.compatible_types] or [slot.type]
     itype = item.get("type")
     if itype not in allowed:
         return (f"{name} is a {itype or 'unknown type'}, but slot {slot.name} accepts "
                 f"{', '.join(allowed)}")
+    # Sub-types are only enforced when the slot's entries for this type list
+    # some AND the item states a real one ("UNDEFINED" / missing = unknown,
+    # e.g. every Wiki quantum drive is UNDEFINED while the slot lists QDrive).
+    isub = item.get("subType", item.get("sub_type"))
+    entries = [c for c in slot.compatible_types if c["type"] == itype]
+    listed = [c.get("sub_types") or [] for c in entries]
+    if (isub and str(isub).upper() != "UNDEFINED" and entries and all(listed)
+            and not any(isub in subs for subs in listed)):
+        allowed_subs = sorted({x for subs in listed for x in subs})
+        return (f"{name} is a {isub} {itype}, but slot {slot.name} accepts "
+                f"{', '.join(allowed_subs)}")
     size = item.get("size")
     if not isinstance(size, int) or isinstance(size, bool):
         return f"{name} has no known size, so it cannot be checked against slot {slot.name}"
@@ -123,6 +136,38 @@ def _base_edition(vs: list[dict]) -> dict | None:
     return bases[0] if len(bases) == 1 else None
 
 
+def _match(v: dict) -> Resolution:
+    return Resolution("match", {**v, "label": v.get("name")})
+
+
+def _ambiguous(ranked: list[dict], max_candidates: int) -> Resolution:
+    """Candidate list for an ``ambiguous`` result, in rank order: special
+    editions sharing a display name collapse into their base edition (see
+    ``_base_edition``); names that still collide get the slug in ``label``.
+    Collapsing happens before the cap so editions don't crowd out ships."""
+    groups: dict[str, list[dict]] = {}
+    for v in ranked:
+        groups.setdefault((v.get("name") or "").casefold(), []).append(v)
+    out: list[dict] = []
+    emitted: set[str] = set()
+    for v in ranked:
+        key = (v.get("name") or "").casefold()
+        if key in emitted:
+            continue
+        emitted.add(key)
+        group = groups[key]
+        base = _base_edition(group) if len(group) > 1 else None
+        if base is not None or len(group) == 1:
+            keep = base or group[0]
+            out.append({**keep, "label": keep.get("name")})
+        else:
+            out.extend({**g, "label": f"{g.get('name')} ({g.get('slug')})"} for g in group)
+    out = out[:max_candidates]
+    if len(out) == 1:
+        return Resolution("match", out[0])
+    return Resolution("ambiguous", None, out)
+
+
 def _fuzzy(q: str, v: dict) -> float:
     return max(fuzz.token_sort_ratio(q, (v.get("name") or "").casefold()),
                fuzz.token_sort_ratio(q, (v.get("gameName") or "").casefold()))
@@ -140,7 +185,9 @@ def resolve_vehicle(query: str, candidates: list[dict], *, max_candidates: int =
          gameName ("harbinger" -> Vanguard Harbinger)
       3. fuzzy (token_sort_ratio >= 85), a match only with a clear lead
     One distinct vehicle -> ``match``; several -> ``ambiguous`` (best first,
-    capped at ``max_candidates``); none -> ``not_found``.
+    editions collapsed, capped at ``max_candidates``); none -> ``not_found``.
+    ``match`` and every candidate carry a display ``label`` (the name, plus
+    ``(slug)`` when names collide).
     """
     q = (query or "").strip().casefold()
     if not q:
@@ -149,16 +196,16 @@ def resolve_vehicle(query: str, candidates: list[dict], *, max_candidates: int =
     def finish(hits: list[dict]) -> Resolution:
         hits = _dedupe(hits)
         if len(hits) == 1:
-            return Resolution("match", dict(hits[0]))
+            return _match(hits[0])
         hits.sort(key=lambda v: (-_fuzzy(q, v), (v.get("name") or "").casefold()))
-        return Resolution("ambiguous", None, [dict(v) for v in hits[:max_candidates]])
+        return _ambiguous(hits, max_candidates)
 
     exact = _dedupe([v for v in candidates
                      if q in {(v.get(k) or "").casefold() for k in ("uuid", "slug", "className", "name", "gameName")}])
     if len(exact) > 1:
         base = _base_edition(exact)
         if base is not None:
-            return Resolution("match", dict(base))
+            return _match(base)
     if exact:
         return finish(exact)
 
@@ -180,5 +227,5 @@ def resolve_vehicle(query: str, candidates: list[dict], *, max_candidates: int =
     if not scored_unique:
         return Resolution("not_found")
     if len(scored_unique) == 1 or scored_unique[0][0] - scored_unique[1][0] >= _FUZZY_CLEAR_LEAD:
-        return Resolution("match", dict(scored_unique[0][1]))
-    return Resolution("ambiguous", None, [dict(v) for _, v in scored_unique[:max_candidates]])
+        return _match(scored_unique[0][1])
+    return _ambiguous([v for _, v in scored_unique], max_candidates)

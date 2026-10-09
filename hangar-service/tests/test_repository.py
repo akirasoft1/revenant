@@ -213,3 +213,15 @@ async def test_firestore_paths_and_quoted_slot_field_path():
     assert await repo.set_nickname("111", "missing", "x", updated_by="111") is None
     assert await repo.delete_ship("111", "missing") is False
     assert await repo.delete_ship("111", ship["shipId"]) is True
+
+
+async def test_firestore_auth_errors_are_wrapped():
+    from google.auth import exceptions as gauth
+
+    class NoCreds:
+        def collection(self, *a, **k):
+            raise gauth.DefaultCredentialsError("no ADC available")
+
+    with pytest.raises(RepositoryError) as ei:
+        await FirestoreShipRepository(NoCreds()).get_ship("111", "s")
+    assert "no ADC available" in str(ei.value)

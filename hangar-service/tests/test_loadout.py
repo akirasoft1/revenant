@@ -183,3 +183,54 @@ def test_resolution_to_dict():
     r = resolve_vehicle("taurus", _index())
     d = r.to_dict()
     assert d["status"] == "ambiguous" and d["match"] is None and len(d["candidates"]) == 2
+
+
+# ---------- fix round 1 ----------
+
+def _radar_slot():
+    return Slot(name="hp_radar", type="Radar", sub_type="MidRangeRadar", size_min=1, size_max=2,
+                compatible_types=[{"type": "Radar", "sub_types": ["ShortRangeRadar", "MidRangeRadar"]}],
+                stock_item=None)
+
+
+def test_sub_type_enforced_when_slot_lists_some():
+    r = check_compatible(_radar_slot(), {"name": "Far Eye", "type": "Radar", "subType": "LongRangeRadar", "size": 2})
+    assert r is not None and "LongRangeRadar" in r
+    assert check_compatible(_radar_slot(), {"name": "Mid", "type": "Radar", "subType": "MidRangeRadar",
+                                            "size": 2}) is None
+
+
+def test_undefined_or_missing_item_sub_type_is_accepted():
+    qd = next(s for s in _taurus_slots() if s.name == "hardpoint_quantum_drive")
+    assert [c["sub_types"] for c in qd.compatible_types] == [["QDrive"]]
+    assert check_compatible(qd, {"name": "Hemera", "type": "QuantumDrive", "subType": "UNDEFINED", "size": 2}) is None
+    assert check_compatible(qd, {"name": "Hemera", "type": "QuantumDrive", "size": 2}) is None
+    # raw Wiki items carry snake_case sub_type
+    assert check_compatible(_radar_slot(), {"name": "x", "type": "Radar", "sub_type": "LongRangeRadar",
+                                            "size": 1}) is not None
+
+
+def test_slot_without_sub_types_accepts_any_sub_type():
+    assert check_compatible(_slot(), {"name": "a", "type": "QuantumDrive", "subType": "Whatever", "size": 2}) is None
+
+
+def test_ambiguous_candidates_collapse_editions_and_label_collisions():
+    r = resolve_vehicle("cutlass", _index(), max_candidates=50)
+    assert r.status == "ambiguous"
+    slugs = [c["slug"] for c in r.candidates]
+    # the BIS2950 editions collapse into their base ships
+    assert "drak-cutlass-black" in slugs and "drak-cutlass-black-bis2950" not in slugs
+    assert "drak-cutlass-red-bis2950" not in slugs
+    labels = [c["label"] for c in r.candidates]
+    assert "Cutlass Black" in labels
+    # names that still collide (no base edition) are labelled with their slug
+    pyam = [c for c in r.candidates if c["name"] == "Cutlass Black PYAM Exec"]
+    assert len(pyam) == 2
+    assert {c["label"] for c in pyam} == {"Cutlass Black PYAM Exec (drak-cutlass-black-exec-military)",
+                                          "Cutlass Black PYAM Exec (drak-cutlass-black-exec-stealth)"}
+    assert len(labels) == len(set(labels))
+
+
+def test_match_carries_label_too():
+    r = resolve_vehicle("harbinger", _index())
+    assert r.match["label"] == "Vanguard Harbinger"
