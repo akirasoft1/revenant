@@ -70,7 +70,7 @@ from **hangar-service** (Cloud Run, see `hangar-service/README.md` and the
 about a member's OWN ships only; `member_id` is the numeric Discord ID from
 the bot's `[Name · id]` message labels or the "People in this conversation"
 roster ("my" = the labelled speaker). A non-numeric `member_id` returns
-`bad_request` without a call. Reads of any member are allowed ("can Micro use
+`invalid_request` (hangar-service's code for a bad member id) without a call. Reads of any member are allowed ("can Micro use
 it?"); there is no write path here.
 
 - **Read-only client** (`src/hangar.py`): only `GET /v1/members/{id}/hangar`,

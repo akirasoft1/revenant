@@ -138,7 +138,7 @@ async def test_service_error_code_passes_through():
 async def test_non_numeric_member_id_rejected_without_calling_service(bad):
     hangar = FakeHangar()
     r = await _tools(hangar).member_hangar(bad)
-    assert r["error"] == "bad_request" and "numeric Discord ID" in r["detail"]
+    assert r["error"] == "invalid_request" and "numeric Discord ID" in r["detail"]
     assert hangar.calls == []
 
 

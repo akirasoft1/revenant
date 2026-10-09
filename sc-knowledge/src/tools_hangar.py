@@ -238,7 +238,8 @@ class HangarTools:
                                               "server (HANGAR_API_URL unset)")
         mid = (member_id or "").strip()
         if not _MEMBER_ID_RE.match(mid):
-            return None, error("bad_request",
+            # invalid_request: the same code hangar-service uses for a bad member id.
+            return None, error("invalid_request",
                                f"member_id must be the numeric Discord ID (e.g. from a "
                                f"'[Name · 123456789]' label or the conversation roster), "
                                f"not {member_id!r}")
