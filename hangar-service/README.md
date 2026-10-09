@@ -25,7 +25,8 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
 | `limit` | 409 | adding the ship would exceed `HANGAR_MAX_SHIPS_PER_MEMBER` (body carries `limit`, `shipCount`) |
 | `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
-| `too_large` | 413 | spviewer import body over 2 MB (+64 KiB envelope) |
+| `too_large` | 413 | spviewer import body over 2 MB (+64 KiB envelope), or more than 100 rows |
+| `busy` | 503 | both import slots of this instance are in use (2 concurrent imports); retry shortly |
 | `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable; browser login not configured (`/api/auth/*`, `/api/me`) |
 | `unavailable` | 500 | unexpected server error (full stack logged) |
 
@@ -132,15 +133,22 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   On the real export (`tests/fixtures/spviewer_harbinger.json`) every port's
   `Loadout` is stock, while `selectedShields` / `selectedRadar` /
   `selectedPilotWeapons` / … (keyed `"<index>-<PortName><childPortName>"`,
-  names concatenated without a separator) hold the actual loadout — spviewer's
+  names concatenated without a separator; each `selectedX` map is paired with
+  its `xPorts` array — `selectedShields` ↔ `shieldPorts`, `selectedMissilesRacks`
+  ↔ `missilesRackPorts`, compared case-insensitively without a trailing `s` —
+  and an entry whose index doesn't match is ignored unless that array has
+  exactly one port) hold the actual loadout — spviewer's
   own `loadoutPerfs` match the `selected*` items (shield pool 20000 = 2 × 7MA
   'Lorica', pilot alpha 1166 = Deadbolt V + 4 × BRVS Repeater). A port with
   no `selected*` entry falls back to its `Loadout` (uuid or class name).
 - Slot ids = `PortName`s joined with `/` (identical to hangar slot ids). A
-  port is **changed** when its current item matches neither spviewer's stock
-  (`BaseLoadout.ClassName`, and `Loadout` when a `selected*` entry exists) nor
-  the Wiki's stock item, by class name or uuid (a uuid naming the stock item is
-  not a change). Changed tracked slots resolve the item through the Wiki
+  port is **changed** when its `selected*` item, or else its `Loadout`, matches
+  neither spviewer's stock (`BaseLoadout.ClassName`) nor the Wiki's stock item,
+  by class name or uuid (a uuid naming the stock item is not a change).
+  `Loadout` counts as stock only when it equals one of those, or is the
+  `reference` of a stock `selected*` entry; a `Loadout` that differs from stock
+  is a change even next to a stock `selected*` entry (a non-stock `selected*`
+  entry wins over it). Changed tracked slots resolve the item through the Wiki
   (`v2/items/{uuid|ClassName}`) and must pass `check_compatible`.
 - `skipped[].reason` codes: `untracked_slot` (changed port the hangar does not
   track — missiles/torpedoes, gimbal mounts, turrets, paint, flair, flight
@@ -151,12 +159,22 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   `loadoutData` not LZ-string, not JSON, or without `*Ports`), `too_large`
   (decoded `loadoutData` over 2 MB, or over the 16 MB per-request budget),
   `empty_slot` (a tracked slot emptied in spviewer — the hangar can't store
-  "empty", so it stays stock). An untracked port whose current item is only a
+  "empty", so it stays stock), `too_many_lookups` (the request's budget of 64
+  DISTINCT Wiki item lookups is spent). A duplicate slot path in a row makes the
+  whole row `unrecognized_format`; more than 500 ports makes it `too_large`. An untracked port whose current item is only a
   bare uuid (no `selected*` entry) is not resolved — it can't affect the
   import and would cost a Wiki lookup per mount.
 - Caps: body ≤ 2 MB (+64 KiB envelope; 413 `too_large`, checked on
-  `Content-Length` and while streaming), ≤ 100 rows, ≤ 2 MB decoded per row,
-  16 MB decoded per request. Decoding runs in a worker thread.
+  `Content-Length` and while streaming), ≤ 100 rows (413 `too_large`), ≤ 500
+  ports and ≤ 2 MB decoded per row, 16 MB decoded per request, and **64
+  distinct Wiki item lookups per request** — the Wiki client's 60/min rate
+  limiter is shared with every hangar read (bot, sc-knowledge, editor), so an
+  upload must not be able to queue thousands of lookups. Only a uuid or a
+  `[A-Za-z0-9_]{1,100}` class name is ever sent to the Wiki (anything else →
+  `unknown_item`, no call). Untracked ports never cost a lookup. At most 2
+  import requests run at once per instance (503 `busy` otherwise, no
+  queueing); decoding runs in a worker thread. Deeply nested JSON → 400 (body)
+  or `unrecognized_format` (loadoutData).
 - **preview** stores nothing; `matchingShips` = the target member's ships of
   that vehicle (`label` = `nickname (vehicle)` or the vehicle name). Target =
   `?member=` else the acting member (session user / `X-Acting-Member`); any

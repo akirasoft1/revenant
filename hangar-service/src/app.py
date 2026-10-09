@@ -85,6 +85,9 @@ MEMBER_DIRECTORY_TTL_S = 60.0
 # The spviewer file is capped at 2 MB; the JSON envelope ({file, rows}) may add a little.
 IMPORT_BODY_MAX = MAX_UPLOAD_BYTES + 64 * 1024
 IMPORT_MODES = ("new", "existing")
+# Concurrent import requests per instance (each may hold a 2 MB body, its
+# parsed JSON and up to 16 MB of decoded loadouts). Full -> 503 ``busy``.
+IMPORT_CONCURRENCY = 2
 
 # On EVERY response (incl. errors and 500s). Task 4's static SPA serving adds
 # its own Cache-Control for assets; these stay.
@@ -186,7 +189,7 @@ async def _capped_json_object(request: Request, limit: int) -> dict:
         chunks.append(chunk)
     try:
         body = json.loads(b"".join(chunks))
-    except ValueError:
+    except (ValueError, RecursionError):      # RecursionError: absurdly deep nesting
         raise _bad("request body must be valid JSON") from None
     if not isinstance(body, dict):
         raise _bad("request body must be a JSON object")
@@ -198,7 +201,8 @@ def _export_rows(body: dict) -> list:
     if not isinstance(rows, list):
         raise _bad("'file' must be the spviewer export: a JSON array of saved loadouts")
     if len(rows) > MAX_ROWS:
-        raise _bad(f"the export has {len(rows)} loadouts; at most {MAX_ROWS} can be imported at once")
+        raise ApiError(413, "too_large",
+                       f"the export has {len(rows)} loadouts; at most {MAX_ROWS} can be imported at once")
     return rows
 
 
@@ -674,6 +678,21 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     # ----- spviewer import -----
 
+    import_slots = asyncio.Semaphore(IMPORT_CONCURRENCY)
+    app.state.import_slots = import_slots
+
+    @contextlib.asynccontextmanager
+    async def import_slot():
+        # Non-blocking: a full semaphore answers 503 at once instead of queueing
+        # (the fast path of acquire() does not yield when a slot is free).
+        if import_slots.locked():
+            raise ApiError(503, "busy", "the server is busy with other imports; try again in a moment")
+        await import_slots.acquire()
+        try:
+            yield
+        finally:
+            import_slots.release()
+
     async def _analyze(rows: list, indexes) -> dict[int, RowResult]:
         budget = DecodeBudget()
         out: dict[int, RowResult] = {}
@@ -687,8 +706,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         # Read-only (nothing is stored), so no CSRF / write check: any
         # authenticated caller may preview against any member's ships.
         target = _import_member(principal, member)
-        rows = _export_rows(await _capped_json_object(request, IMPORT_BODY_MAX))
-        results = await _analyze(rows, range(len(rows)))
+        async with import_slot():
+            rows = _export_rows(await _capped_json_object(request, IMPORT_BODY_MAX))
+            results = await _analyze(rows, range(len(rows)))
         ships = await app.state.repository.list_ships(target)
         out = []
         for i in range(len(rows)):
@@ -709,7 +729,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         target = _import_member(principal, member)
         authorize_browser_write(request, principal)
         authorize_write(principal, target, config.admin_ids)
-        body = await _capped_json_object(request, IMPORT_BODY_MAX)
+        async with import_slot():
+            return await _apply(principal, target, await _capped_json_object(request, IMPORT_BODY_MAX))
+
+    async def _apply(principal: Principal, target: str, body: dict) -> dict:
         rows = _export_rows(body)
         wanted = body.get("rows")
         if not isinstance(wanted, list) or not wanted:

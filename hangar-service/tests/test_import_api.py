@@ -201,7 +201,7 @@ def test_preview_admin_member_param_and_service_caller(client):
 @pytest.mark.parametrize("body,status,code", [
     ({"file": {"not": "a list"}}, 400, "invalid_request"),
     ({"nofile": []}, 400, "invalid_request"),
-    ({"file": [{}] * (MAX_ROWS + 1)}, 400, "invalid_request"),
+    ({"file": [{}] * (MAX_ROWS + 1)}, 413, "too_large"),
     ([1, 2], 400, "invalid_request"),
 ])
 def test_preview_body_validation(client, body, status, code):
@@ -387,3 +387,78 @@ def test_import_routes_on_both_prefixes(client):
     for prefix in ("/v1", "/api/v1"):
         r = client.post(f"{prefix}/import/spviewer/preview", json={"file": []}, headers=H())
         assert r.status_code == 200
+
+
+# ---------- fix round 1 ----------
+
+def _counting_client(repo, calls):
+    # The production 60/min limiter would really wait past 60 calls; the test
+    # counts calls instead, so the limiter is effectively unlimited.
+    from src.cache import RateLimiter
+    from src.catalog import Catalog
+    from src.http import UpstreamClient
+    upstream = UpstreamClient("wiki", "https://api.star-citizen.wiki/api", {},
+                              RateLimiter(1_000_000, 60.0),
+                              transport=httpx.MockTransport(wiki_handler(calls)), sleep=_nosleep)
+    catalog = Catalog(upstream)
+    return TestClient(create_app(cfg(**BROWSER_ENV), catalog=catalog, repository=repo, verifier=fake_verifier,
+                                 warm=False, clock=Clock()), base_url=ORIGIN)
+
+
+def test_upload_cannot_amplify_wiki_item_lookups(repo):
+    """100 rows x 12 tracked slots, every one a different random uuid, plus a
+    row of 3000 duplicate ports: at most MAX_ITEM_LOOKUPS distinct item calls."""
+    from src.spviewer import MAX_ITEM_LOOKUPS
+    tracked = [("quantumdrivePorts", QD), ("shieldPorts", SHIELD1), ("radarPorts", RADAR),
+               *[("pilotWeaponsPorts", p) for p in NOSE_S2]]
+    file, n = [], 0
+    for _ in range(MAX_ROWS - 1):
+        lo = stock_loadout()
+        for cat, path in tracked:
+            _port(lo, cat, path)["Loadout"] = f"00000000-0000-4000-8000-{n:012d}"
+            n += 1
+        file.append(row_with(lo))
+    dup = stock_loadout()
+    dup["quantumdrivePorts"] = [{"PortName": QD, "Loadout": f"10000000-0000-4000-8000-{i:012d}"}
+                                for i in range(3000)]
+    file.append(row_with(dup))
+    calls = []
+    with _counting_client(repo, calls) as c:
+        as_user(c)
+        r = c.post("/api/v1/import/spviewer/preview", json={"file": file})
+    assert r.status_code == 200, r.text
+    item_calls = {q.url.path for q in calls if q.url.path.startswith("/api/v2/items/")}
+    assert len(item_calls) <= MAX_ITEM_LOOKUPS
+    rows = r.json()["rows"]
+    reasons = [s["reason"] for row in rows for s in row["skipped"]]
+    assert reasons.count("too_many_lookups") == n - MAX_ITEM_LOOKUPS
+    assert rows[-1]["skipped"][0]["reason"] == "unrecognized_format"
+
+
+def test_import_busy_when_concurrency_slots_are_taken(client):
+    import asyncio
+    sem = client.app.state.import_slots
+    taken = 0
+    while not sem.locked():                     # occupy every slot (sync access is fine: no waiters)
+        sem._value -= 1
+        taken += 1
+    try:
+        as_user(client)
+        r = client.post("/api/v1/import/spviewer/preview", json={"file": []})
+        assert r.status_code == 503 and r.json()["error"] == "busy"
+        r = _apply(client, [{"rowIndex": 0, "mode": "new"}])
+        assert r.status_code == 503 and r.json()["error"] == "busy"
+    finally:
+        sem._value += taken
+    assert taken == 2 and isinstance(sem, asyncio.Semaphore)
+    assert client.post("/api/v1/import/spviewer/preview", json={"file": []}).status_code == 200
+    # a request that failed inside the slot releases it
+    assert client.post("/api/v1/import/spviewer/preview", json={"file": "x"}).status_code == 400
+    assert not sem.locked() and sem._value == 2
+
+
+def test_deeply_nested_body_is_400(client):
+    as_user(client)
+    deep = b'{"file": ' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+    r = client.post("/api/v1/import/spviewer/preview", content=deep, headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and r.json()["error"] == "invalid_request"

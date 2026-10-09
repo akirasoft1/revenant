@@ -9,9 +9,9 @@ import pytest
 
 from src.catalog import build_catalog
 from src.lzstring import LZStringError, decompress_from_encoded_uri_component
-from src.spviewer import (EMPTY_SLOT, INCOMPATIBLE, MAX_ROW_DECODED_CHARS, TOO_LARGE, UNKNOWN_ITEM,
-                          UNKNOWN_VEHICLE, UNRECOGNIZED_FORMAT, UNTRACKED_SLOT, DecodeBudget, FormatError,
-                          analyze_row, decode_loadout, walk_ports)
+from src.spviewer import (EMPTY_SLOT, INCOMPATIBLE, MAX_PORTS_PER_ROW, MAX_ROW_DECODED_CHARS,
+                          TOO_LARGE, TOO_MANY_LOOKUPS, UNKNOWN_ITEM, UNKNOWN_VEHICLE, UNRECOGNIZED_FORMAT,
+                          UNTRACKED_SLOT, DecodeBudget, FormatError, analyze_row, decode_loadout, walk_ports)
 from tests.conftest import HARBINGER_UUID, HEMERA_UUID, load_fixture, wiki_handler
 from tests.lzcompress import compress_to_encoded_uri_component as lz
 
@@ -150,18 +150,24 @@ def test_walk_ports_builds_slash_slot_ids_and_reads_selected_maps():
     assert {"hardpoint_quantum_drive", "hardpoint_quantum_drive/hardpoint_Jump_Drive",
             NOSE_S5, *NOSE_S2, "hardpoint_shield_generator_001", "hardpoint_paint"} <= set(ports)
     shield = ports["hardpoint_shield_generator_001"]
-    assert (shield.current_ref, shield.current_class) == (LORICA, "SHLD_BEHR_S02_7MA_SCItem")
-    assert "shld_godi_s02_secureshield_scitem" in shield.stock_refs
+    assert (shield.selected_ref, shield.selected_class) == (LORICA, "SHLD_BEHR_S02_7MA_SCItem")
+    assert shield.loadout_ref == shield.base_class == "SHLD_GODI_S02_SecureShield_SCItem"
     # selected key "1-hardpoint_weapon_gun_nose_fixed_001hardpoint_class_2" (no separator)
-    assert ports[NOSE_S2[0]].current_ref == BRVS
-    assert CVSA in ports[NOSE_S2[0]].stock_refs                # Loadout spells stock here
-    assert ports["hardpoint_paint"].is_empty
+    assert ports[NOSE_S2[0]].selected_ref == BRVS and ports[NOSE_S2[0]].loadout_ref == CVSA
+    assert not ports["hardpoint_paint"].has_selected and ports["hardpoint_paint"].loadout_ref is None
+
+
+def test_every_selected_map_of_the_real_export_pairs_with_its_ports_array():
+    lo = real_loadout()
+    ports = walk_ports(lo)
+    used = {p.category for p in ports if p.has_selected}
+    with_entries = {k for k, v in lo.items() if k.startswith("selected") and v}
+    assert len(used) == len(with_entries) == 10      # every non-empty selected* map is used
 
 
 def test_walk_ports_without_selected_uses_loadout():
     ports = {p.slot: p for p in walk_ports(stock_loadout())}
-    assert ports[NOSE_S2[0]].current_ref == CVSA                # uuid Loadout
-    assert ports["hardpoint_shield_generator_001"].current_class == "SHLD_GODI_S02_SecureShield_SCItem"
+    assert not ports[NOSE_S2[0]].has_selected and ports[NOSE_S2[0]].loadout_ref == CVSA
 
 
 # ---------- analyze_row ----------
@@ -280,3 +286,112 @@ async def test_undecodable_row_is_unrecognized_format(mutate):
 async def test_malformed_row_is_unrecognized_format(row):
     res = await analyze_row(make_catalog(), 0, row, budget=DecodeBudget())
     assert res.error == UNRECOGNIZED_FORMAT and res.to_preview()["vehicle"] is None
+
+
+# ---------- fix round 1: lookup amplification, recursion, Loadout vs selected, key pairing ----------
+
+def _item_calls(calls):
+    return [c for c in calls if c.url.path.startswith("/api/v2/items/")]
+
+
+async def test_duplicate_port_paths_are_unrecognized_format_without_any_lookup():
+    lo = stock_loadout()
+    # same (tracked) slot path 3000 times, a different uuid each
+    lo["quantumdrivePorts"] = [{"PortName": QD, "Loadout": f"00000000-0000-4000-8000-{i:012d}"}
+                               for i in range(3000)]
+    calls = []
+    res = await analyze_row(make_catalog(calls), 0, row_with(lo), budget=DecodeBudget())
+    assert res.error == UNRECOGNIZED_FORMAT and "more than once" in res.error_message
+    assert _item_calls(calls) == []
+
+
+async def test_too_many_ports_is_too_large():
+    lo = stock_loadout()
+    lo["flairPorts"] = [{"PortName": f"flair_{i}", "Loadout": None} for i in range(MAX_PORTS_PER_ROW + 1)]
+    res = await analyze_row(make_catalog(), 0, row_with(lo), budget=DecodeBudget())
+    assert res.error == TOO_LARGE and str(MAX_PORTS_PER_ROW) in res.error_message
+
+
+async def test_distinct_lookup_budget_is_per_request_and_reported():
+    calls = []
+    catalog = make_catalog(calls)
+    budget = DecodeBudget(max_lookups=3)
+    results = []
+    for r in range(3):                       # each row: QD + 2 shields + radar -> 4 distinct random uuids
+        lo = stock_loadout()
+        for k, (cat, path) in enumerate((("quantumdrivePorts", QD), ("shieldPorts", "hardpoint_shield_generator_001"),
+                                         ("shieldPorts", "hardpoint_shield_generator_002"),
+                                         ("radarPorts", "hardpoint_radar"))):
+            _port(lo, cat, path)["Loadout"] = f"00000000-0000-4000-8000-{r * 10 + k:012d}"
+        results.append(await analyze_row(catalog, r, row_with(lo), budget=budget))
+    looked = {c.url.path for c in _item_calls(calls)}
+    assert len(looked) <= 3
+    reasons = [s["reason"] for res in results for s in res.skipped]
+    assert (reasons.count(UNKNOWN_ITEM), reasons.count(TOO_MANY_LOOKUPS)) == (3, 9)
+    # a repeat of an already-looked-up key is free
+    assert budget.admit_lookup(next(iter(budget.looked_up))) is True
+
+
+async def test_repeated_item_across_rows_costs_one_lookup():
+    budget = DecodeBudget(max_lookups=1)
+    calls = []
+    catalog = make_catalog(calls)
+    for r in range(5):
+        res = await analyze_row(catalog, r, real_row(), budget=budget)   # BRVS, 7MA, V801 by uuid
+        if r == 0:
+            assert {s["reason"] for s in res.skipped} >= {TOO_MANY_LOOKUPS}
+    assert len(budget.looked_up) == 1
+
+
+@pytest.mark.parametrize("bad_ref", ["COOL with spaces", "../../etc/passwd", "x" * 101, "QDRV-Hemera", "é_item"])
+async def test_malformed_item_keys_are_never_sent_to_the_wiki(bad_ref):
+    lo = stock_loadout()
+    _port(lo, "coolerPorts", "hardpoint_cooler_left")["Loadout"] = bad_ref
+    calls = []
+    res = await analyze_row(make_catalog(calls), 0, row_with(lo), budget=DecodeBudget())
+    assert [(s["slot"], s["reason"]) for s in res.skipped] == [("hardpoint_cooler_left", UNKNOWN_ITEM)]
+    assert _item_calls(calls) == []
+
+
+def test_deeply_nested_json_is_unrecognized_format():
+    with pytest.raises(FormatError) as ei:
+        decode_loadout(lz("[" * 200_000 + "]" * 200_000))
+    assert ei.value.reason == UNRECOGNIZED_FORMAT
+
+
+async def test_loadout_differing_from_stock_is_a_change_even_with_a_stock_selected_entry():
+    lo = real_loadout()
+    # selected says stock SecureShield, but the port's Loadout says 7MA
+    lo["selectedShields"]["0-hardpoint_shield_generator_001"].update(
+        {"className": "SHLD_GODI_S02_SecureShield_SCItem", "reference": SECURESHIELD})
+    _port(lo, "shieldPorts", "hardpoint_shield_generator_001")["Loadout"] = "SHLD_BEHR_S02_7MA_SCItem"
+    # no selected entry at all, Loadout a non-stock uuid
+    del lo["selectedQuantumDrive"]["0-hardpoint_quantum_drive"]
+    _port(lo, "quantumdrivePorts", QD)["Loadout"] = HEMERA_UUID
+    res = await analyze_row(make_catalog(), 0, row_with(lo), budget=DecodeBudget())
+    changes = {c["slot"]: c["to"]["uuid"] for c in res.changes}
+    assert changes["hardpoint_shield_generator_001"] == LORICA
+    assert changes[QD] == HEMERA_UUID
+
+
+async def test_non_stock_selected_entry_wins_over_a_non_stock_loadout():
+    lo = real_loadout()          # selected: 7MA
+    _port(lo, "shieldPorts", "hardpoint_shield_generator_001")["Loadout"] = "QDRV_RSI_S02_Hemera_SCItem"
+    res = await analyze_row(make_catalog(), 0, row_with(lo), budget=DecodeBudget())
+    assert {c["slot"]: c["to"]["uuid"] for c in res.changes}["hardpoint_shield_generator_001"] == LORICA
+
+
+def test_selected_entries_are_scoped_to_their_category_and_index():
+    lo = real_loadout()
+    # A shield entry filed under the RADAR map must not apply to the shield port.
+    entry = lo["selectedShields"].pop("0-hardpoint_shield_generator_001")
+    lo["selectedRadar"]["0-hardpoint_shield_generator_001"] = entry
+    # Wrong index in a multi-port array (shieldPorts has 2): ignored.
+    lo["selectedShields"]["5-hardpoint_shield_generator_002"] = lo["selectedShields"].pop(
+        "1-hardpoint_shield_generator_002")
+    # Wrong index in a single-port array (radarPorts has 1): accepted.
+    lo["selectedRadar"]["3-hardpoint_radar"] = lo["selectedRadar"].pop("0-hardpoint_radar")
+    ports = {p.slot: p for p in walk_ports(lo)}
+    assert not ports["hardpoint_shield_generator_001"].has_selected
+    assert not ports["hardpoint_shield_generator_002"].has_selected
+    assert ports["hardpoint_radar"].selected_ref == V801

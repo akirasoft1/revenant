@@ -19,7 +19,7 @@ def _price(v: Any) -> int | None:
         return None
     try:
         p = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):    # OverflowError: int(float("inf"))
         return None
     return p if p > 0 else None
 

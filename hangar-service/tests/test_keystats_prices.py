@@ -65,3 +65,10 @@ def test_item_option_extends_summary_and_items_route_shape_is_unchanged():
     assert {k: opt[k] for k in ITEM_SUMMARY_KEYS} == item_summary(raw)
     assert opt["keyStat"]["name"] == "speed" and opt["cheapestPrice"] is None
     assert set(item_summary(raw)) == set(ITEM_SUMMARY_KEYS)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan"), "Infinity", "1e999"])
+def test_cheapest_price_ignores_non_finite(bad):
+    rows = [{"price_buy": bad, "terminal_name": "X"}, {"price_buy": 700, "terminal_name": "Y"}]
+    assert cheapest_price({"uex_prices": {"purchase": rows}}) == {"price": 700, "shop": "Y", "location": None}
+    assert cheapest_price({"uex_prices": {"purchase": rows[:1]}}) is None
