@@ -204,17 +204,21 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
 
 Two layers:
 
-1. **Cloud Run edge (invoker IAM ON).** The org enforces domain-restricted
-   sharing (`iam.allowedPolicyMemberDomains`), so `--allow-unauthenticated`
-   (an `allUsers` invoker binding) FAILS. The service is deployed
-   `--no-allow-unauthenticated` with `roles/run.invoker` granted to
-   `hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com`. Google's front
-   end rejects anything without a valid invoker token before the app runs.
-   The project-2 browser editor can't present such a token, so it will need a
-   different approach (e.g. `--no-invoker-iam-check`, leaving auth to the app
-   alone). That decision is deferred to project 2.
-2. **The app**, which re-verifies the same ID token and enforces the
-   member write rule:
+1. **Cloud Run edge: invoker IAM check OFF (`--no-invoker-iam-check`).** The
+   org enforces domain-restricted sharing (`iam.allowedPolicyMemberDomains`),
+   so `--allow-unauthenticated` (an `allUsers` invoker binding) FAILS — and a
+   browser can't present a Google invoker token anyway. The service (this one
+   only; the org policy is untouched) is therefore updated with
+   `--no-invoker-iam-check`: Cloud Run lets every request through to the app,
+   and **the app's own authentication is the only gate**. Nothing changed for
+   the bot and sc-knowledge: they still call the `run.app` URL with Google ID
+   tokens for the exact audience `https://hangar-service-hvmf2jpuca-uc.a.run.app`.
+   Every `/v1` and `/api/v1` route stays authenticated; `/health`,
+   `/version.txt` and the static editor are open (they carry no member data).
+   The `roles/run.invoker` binding for `hangar-api@` stays in place (harmless,
+   and needed again if the check is ever turned back on).
+2. **The app**, which verifies Google ID tokens (service callers) and
+   Discord sessions (browsers) and enforces the member write rule:
 - **Service callers** send `Authorization: Bearer <Google ID token>`. The token
   is verified with `google.oauth2.id_token.verify_oauth2_token` (Google
   signature, expiry, issuer `accounts.google.com`) for audience
@@ -297,7 +301,9 @@ Two layers:
 | `WIKI_BASE` | `https://api.star-citizen.wiki/api` | Star Citizen Wiki API base |
 | `GOOGLE_CLOUD_PROJECT` | *(ADC)* | Firestore project |
 | `PORT` | `8080` | Listen port (Cloud Run sets it) |
-| `HANGAR_VERSION` | `$K_REVISION` or `dev` | Reported by `/health`, sent in the Wiki User-Agent |
+| `HANGAR_VERSION` | image build arg `GIT_SHA` (else `$K_REVISION` or `dev`) | Reported by `/health` and `/version.txt`, sent in the Wiki User-Agent |
+| `HANGAR_STATIC_DIR` | `/app/static` in the image; locally `../hangar-editor/dist` | The built web editor. Missing / no `index.html` → the API still works, editor paths 404 (one WARNING at startup) |
+| `HANGAR_RUM_ORIGINS` | *(none)* | Comma/space-separated https origins (Dynatrace RUM script CDN + beacon endpoint) added to the SPA CSP's `script-src` and `connect-src`. Only needed when the image was built with `VITE_DT_RUM_SRC`; non-https entries are ignored with a WARNING |
 | `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** (refused when `K_SERVICE` is set, i.e. on Cloud Run) |
 | `HANGAR_PUBLIC_ORIGIN` | `https://hangar.aklabs.io` | Web editor origin: CSRF check + OAuth redirect URI (`<origin>/api/auth/callback`). Trailing slash dropped |
 | `DISCORD_CLIENT_ID` | *(empty → browser login off)* | Discord application client ID (`1558216042151419935`) |
@@ -311,6 +317,31 @@ Two layers:
 `HANGAR_PUBLIC_ORIGIN` is normalized at load (scheme/host lower-cased, default
 port and a lone trailing `/` dropped); a path, query, fragment, userinfo or bad
 port turns browser login off.
+
+## Web editor (static SPA)
+
+The load balancer sends every path of `https://hangar.aklabs.io` to this
+service, which serves the built `hangar-editor` (`HANGAR_STATIC_DIR`) next to
+the API (`src/static_site.py`):
+
+- `/assets/*` (Vite's content-hashed bundles): `Cache-Control: public,
+  max-age=31536000, immutable`. A missing asset is a JSON 404, never HTML.
+- Other real files at the root (`favicon.svg`): `public, max-age=3600`.
+- Any other GET/HEAD not under `/api`, `/v1`, `/health`, `/healthz` or
+  `/assets` → `index.html` with `Cache-Control: no-cache`, so client routes
+  (`/members/…`, `/import`) survive a reload and a deploy is picked up on the
+  next navigation. The fallback hooks the router's 404, so API routing is
+  unchanged (unknown `/v1` paths are JSON 404s, wrong methods 405).
+- The document carries `Content-Security-Policy: default-src 'self';
+  script-src 'self'; style-src 'self'; img-src 'self'
+  https://cdn.discordapp.com data:; connect-src 'self'; font-src 'self';
+  object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors
+  'none'` (+ `HANGAR_RUM_ORIGINS` on script/connect). The Vite build has no
+  inline script or style, so no `'unsafe-inline'`. Every response also keeps
+  the security headers (HSTS, nosniff, `X-Frame-Options: DENY`, …).
+- Dot segments, dotfiles and anything resolving outside the static dir are
+  never served.
+- `GET /version.txt` → `HANGAR_VERSION` (the image's git short SHA), `no-cache`.
 
 ## Session key rotation / revocation
 
@@ -368,42 +399,64 @@ so the venv uses 3.13. The container runs the real 3.14 and the suite passes the
 
 ## Build and deploy (coordinator)
 
-Prereqs (once): APIs `run`, `firestore`, `artifactregistry` enabled; Firestore
-Native DB in `us-central1`; Artifact Registry repo `revenant`; runtime SA
-`hangar-runtime@` with `roles/datastore.user`; caller SA `hangar-api@`.
-Never `:latest` — tag with the git short SHA.
+Prereqs (once): APIs `run`, `firestore`, `artifactregistry`, `secretmanager`
+enabled; Firestore Native DB in `us-central1`; Artifact Registry repo
+`revenant`; runtime SA `hangar-runtime@` with `roles/datastore.user` and
+`roles/secretmanager.secretAccessor` on the secrets `hangar-discord-client-secret`
+and `hangar-session-key`; caller SA `hangar-api@`. Never `:latest` — tag with
+the git short SHA.
+
+**One image = API + web editor.** `hangar-service/Dockerfile` is multi-stage:
+`node:24-slim` runs `npm ci && npm run build` in `hangar-editor/`, then the
+`python:3.14-slim` stage copies `dist/` to `/app/static` (non-root uid 10001).
+The **build context is the repo root**, filtered by
+`hangar-service/Dockerfile.dockerignore` — an allow-list (`*`, then only
+`hangar-service/requirements.txt`, `hangar-service/src/**` and the
+`hangar-editor/` sources; `node_modules`, `dist`, `**/.env*`,
+`**/*key*.json`, `OrgGuides` always excluded). Docker uses that file instead of
+the root `.dockerignore` because it sits next to the Dockerfile.
 
 ```bash
 SHA=$(git rev-parse --short HEAD)
 IMAGE=us-central1-docker.pkg.dev/revenant-discord-bot-2/revenant/hangar-service:$SHA
 
 gcloud auth configure-docker us-central1-docker.pkg.dev
-docker build -t "$IMAGE" -f hangar-service/Dockerfile hangar-service/
+# From the REPO ROOT (note the trailing "."). Optional RUM:
+#   --build-arg VITE_DT_RUM_SRC=<script src>  (+ HANGAR_RUM_ORIGINS at deploy)
+docker build -f hangar-service/Dockerfile --build-arg GIT_SHA=$SHA -t "$IMAGE" .
 docker push "$IMAGE"
 
 # ^;^ switches gcloud's env-var delimiter to ';' because HANGAR_ADMIN_IDS contains commas.
-# --no-allow-unauthenticated: domain-restricted sharing forbids an allUsers invoker.
+# --no-invoker-iam-check: domain-restricted sharing forbids an allUsers invoker
+# and browsers can't send invoker tokens, so the app's auth is the only gate.
+# --memory 1Gi: up to 2 concurrent spviewer imports (~150-250 MB each) + caches.
 gcloud run deploy hangar-service --project revenant-discord-bot-2 \
-  --image "$IMAGE" --region us-central1 --no-allow-unauthenticated \
+  --image "$IMAGE" --region us-central1 --no-invoker-iam-check \
   --service-account hangar-runtime@revenant-discord-bot-2.iam.gserviceaccount.com \
-  --min-instances 1 --memory 512Mi \
-  --set-env-vars "^;^GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2;HANGAR_ALLOWED_CALLERS=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com;HANGAR_ADMIN_IDS=<id1>,<id2>;HANGAR_VERSION=$SHA"
-
-# Let the caller SA through Cloud Run's invoker check (once).
-gcloud run services add-iam-policy-binding hangar-service --project revenant-discord-bot-2 \
-  --region us-central1 \
-  --member serviceAccount:hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com \
-  --role roles/run.invoker
-
-# First deploy only: the audience is the service URL, known after the deploy.
-# status.url is the -uc.a.run.app form -- the one HANGAR_AUDIENCE uses today.
-URL=$(gcloud run services describe hangar-service --project revenant-discord-bot-2 \
-  --region us-central1 --format='value(status.url)')
-gcloud run services update hangar-service --project revenant-discord-bot-2 \
-  --region us-central1 --update-env-vars "HANGAR_AUDIENCE=$URL"
-# Callers' HANGAR_API_URL must be this same $URL.
-# On later deploys add HANGAR_AUDIENCE=$URL to --set-env-vars (it replaces the whole set).
+  --min-instances 1 --memory 1Gi \
+  --set-secrets DISCORD_CLIENT_SECRET=hangar-discord-client-secret:latest,HANGAR_SESSION_KEY=hangar-session-key:latest \
+  --set-env-vars "^;^GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2;HANGAR_ALLOWED_CALLERS=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com;HANGAR_ADMIN_IDS=<id1>,<id2>;HANGAR_VERSION=$SHA;HANGAR_AUDIENCE=https://hangar-service-hvmf2jpuca-uc.a.run.app;DISCORD_CLIENT_ID=1558216042151419935;HANGAR_ALLOWED_GUILD_IDS=323349603976216577;HANGAR_PUBLIC_ORIGIN=https://hangar.aklabs.io"
+# --set-env-vars replaces the whole set: always pass every var above.
+# Callers' HANGAR_API_URL must equal HANGAR_AUDIENCE (the -uc.a.run.app URL).
 ```
+
+First-time history: the service was first deployed with invoker IAM on
+(`--no-allow-unauthenticated` + `roles/run.invoker` for `hangar-api@`) and
+`HANGAR_AUDIENCE` set from `status.url` after that first deploy. The binding is
+still there; the invoker check itself is now off.
+
+**Domain + load balancer:** `hangar-service/scripts/setup-domain.sh` creates
+(idempotently — every step is "create if missing") the Cloud DNS zone
+`zone-hangar-aklabs-io`, static IP `hangar-editor-ip`, the `A` record, the
+managed certificate `hangar-editor-cert`, serverless NEG `hangar-editor-neg` →
+`hangar-service`, backend `hangar-editor-backend`, URL map `hangar-editor-lb`,
+HTTPS proxy/rule `hangar-editor-https-proxy`/`hangar-editor-https-rule`, and the
+HTTP→HTTPS redirect (`hangar-editor-http-redirect`, `hangar-editor-http-proxy`,
+`hangar-editor-http-rule`), then runs `gcloud run services update
+hangar-service --no-invoker-iam-check`. When it creates the zone it prints the
+NS records and pauses until they are added at the `aklabs.io` DNS provider.
+The managed cert stays `PROVISIONING` until DNS resolves to the LB IP
+(`gcloud compute ssl-certificates describe hangar-editor-cert --global`).
 
 Smoke test with a real token, minted from the `hangar-api@` key file
 (never commit the key):
@@ -416,8 +469,9 @@ c = s.IDTokenCredentials.from_service_account_file(sys.argv[1], target_audience=
 # Alternative: gcloud auth print-identity-token --impersonate-service-account=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com \
 #   --audiences="$URL" --include-email   (requires roles/iam.serviceAccountTokenCreator on hangar-api@ for your account)
 
-# /health, not /healthz (Cloud Run 404s paths ending in z). With invoker IAM on,
-# even /health needs the token at the Cloud Run edge.
-curl -s -H "Authorization: Bearer $TOKEN" "$URL/health"
+# /health, not /healthz (Cloud Run 404s paths ending in z). Open since the
+# invoker check is off; the /v1 routes still need the token.
+curl -s "$URL/health"
+curl -s https://hangar.aklabs.io/health https://hangar.aklabs.io/version.txt   # through the LB
 curl -s -H "Authorization: Bearer $TOKEN" "$URL/v1/catalog/vehicles?q=harbinger"
 ```
