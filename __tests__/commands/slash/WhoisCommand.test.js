@@ -112,7 +112,7 @@ describe('/whois', () => {
   });
 
   test.each([
-    ['invalid', /letter/i],
+    ['invalid', /shortened to 24/],
     ['too_many', /10/],
     ['unavailable', /Identity storage is unavailable right now\./],
   ])('reason %s', async (reason, re) => {
@@ -130,10 +130,34 @@ describe('/whois', () => {
   });
 
   test('unchanged add is reported', async () => {
-    identity.addAlias.mockResolvedValue({ ok: true, unchanged: true, record: { discordId: 'u1', addressName: 'A', aliases: ['Aki'] } });
-    const i = fakeInteraction({ sub: 'alias-add', alias: 'Aki' });
+    identity.addAlias.mockResolvedValue({ ok: true, unchanged: true, name: 'aki', record: { discordId: 'u1', addressName: 'A', aliases: ['Aki'] } });
+    const i = fakeInteraction({ sub: 'alias-add', alias: 'aki' });
     await cmd.execute(i, ctx);
     expect(text(i).content).toMatch(/already/i);
+  });
+
+  test('replies show the stored name, not raw input', async () => {
+    identity.setAddressName.mockResolvedValue({ ok: true, name: 'Akira', record: { discordId: 'u1', addressName: 'Akira', aliases: [] } });
+    let i = fakeInteraction({ sub: 'address', name: '😀 Akira 😀' });
+    await cmd.execute(i, ctx);
+    expect(text(i).content).toContain('Akira.');
+    expect(text(i).content).not.toContain('😀');
+    identity.addAlias.mockResolvedValue({ ok: true, name: 'Aki', record: { discordId: 'u1', addressName: 'Akira', aliases: ['Aki'] } });
+    i = fakeInteraction({ sub: 'alias-add', alias: '**Aki**' });
+    await cmd.execute(i, ctx);
+    expect(text(i).content).toContain('‘Aki’');
+    expect(text(i).content).not.toContain('**');
+  });
+
+  test('thrown service errors are logged in full and reported unavailable', async () => {
+    const logger = require('../../../logger');
+    const spy = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    identity.addAlias.mockRejectedValue(new Error('boom'));
+    const i = fakeInteraction({ sub: 'alias-add', alias: 'Bob' });
+    await cmd.execute(i, ctx);
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('/whois alias-add failed for target u1: Error: boom'));
+    expect(text(i).content).toMatch(/unavailable/i);
+    spy.mockRestore();
   });
 
   test('service missing degrades to unavailable', async () => {

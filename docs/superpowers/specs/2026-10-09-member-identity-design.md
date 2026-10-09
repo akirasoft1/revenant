@@ -19,7 +19,7 @@ Out of scope (own spec next): per-member Star Citizen inventory (owned ships + f
   - `all() -> Array<…>` (sync)
   - `setAddressName(targetId, name, actorId)`, `addAlias(targetId, alias, actorId)`, `removeAlias(targetId, alias, actorId)` → `{ok: true, record} | {ok: false, reason, holderId?}`
 - **Validation (names land in prompts AND are spoken):** run through the existing `SpeakerNames.sanitize`; reject if empty after sanitising or without a letter; max 24 chars (sanitize's cap); max 10 aliases per member; **collision rule:** a name (alias OR address name) already held by ANOTHER member — compared case-insensitively against every other member's addressName and aliases — is rejected with `reason: 'taken'` and `holderId`. A member's own addressName may also appear in their aliases (no-op). Adding an existing alias is idempotent.
-- **Permissions:** omitted `member` option = self (anyone). Any other target requires `config.discord.adminUserIds` (`BaseSlashCommand.isAdmin`).
+- **Permissions:** omitted `member` option = self (anyone). Editing another member requires `config.discord.adminUserIds` (`BaseSlashCommand.isAdmin`); `show` is open to everyone (the roster exposes the same data).
 - **Resolution order (`SpeakerNames.resolve`)**: registry `addressName` → `VOICE_SPEAKER_NAMES` override → existing Discord-name chain (globalName → nickname → stripped username). Registry is consulted via an optional `identity` dependency passed to `createSpeakerNames({ overrides, identity })`; absent/failed → today's behaviour. The registry name is sanitised like every other candidate.
 - **Seeding:** `scripts/seed-member-identities.js` (dry run by default, `--apply`) copies each `VOICE_SPEAKER_NAMES` entry into `addressName` for IDs that have no record yet. Never overwrites. The configmap stays as a fallback layer.
 
@@ -40,7 +40,7 @@ All built bot-side in `ChatService.buildTurnContext` — no sidecar or proto cha
 - **Roster.** A block appended to the returned `systemPrompt`:
   ```
   ## People in this conversation
-  Messages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don't mention these aliases unless it matters.
+  Messages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don't mention these aliases unless it matters. Never start your own replies with a label.
   - Akira (Discord 161644375040983040) — also called Akirasoft, Phalabala; address as Akira  ← current speaker
   ```
   Included members (deduped, current speaker first): the current speaker; every distinct `authorId` among the history window's user turns; and any registry member whose addressName or alias appears as a whole word (case-insensitive, Unicode-aware boundaries) in the history window text or the current message. A member with no registry record appears with their resolved name only. Never the full table. Omitted entirely when there is nothing to list. Cap 20 entries.

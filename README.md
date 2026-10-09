@@ -468,7 +468,7 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 - `/whois address <name> [member]` - set the name I call you
 - `/whois alias-add <alias> [member]` / `/whois alias-remove <alias> [member]` - manage other names you go by (max 10)
 
-Anyone can edit their own entry; editing another member requires a bot admin (`BOT_ADMIN_USER_IDS`). Names must contain a letter, be 2-24 characters, and not be a long run of digits; a name already used by someone else is refused. Replies are only visible to you.
+Anyone can edit their own entry; editing another member requires a bot admin (`BOT_ADMIN_USER_IDS`). Names need at least one letter and 2 or more characters (longer names are shortened to 24), and can't be a long run of digits; a name already used by someone else is refused. Replies are only visible to you.
 
 To seed address names from `VOICE_SPEAKER_NAMES`: `node scripts/seed-member-identities.js` (dry run) then `--apply` (never overwrites existing entries).
 

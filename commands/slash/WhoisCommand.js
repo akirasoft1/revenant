@@ -4,6 +4,7 @@
 'use strict';
 const { SlashCommandBuilder } = require('discord.js');
 const BaseSlashCommand = require('../base/BaseSlashCommand');
+const logger = require('../../logger');
 
 const UNAVAILABLE = 'Identity storage is unavailable right now.';
 
@@ -81,6 +82,7 @@ class WhoisSlashCommand extends BaseSlashCommand {
         return;
       }
     } catch (e) {
+      logger.error(`/whois ${sub} failed for target ${targetId}: ${e && e.stack ? e.stack : e}`);
       await this._say(interaction, UNAVAILABLE);
       return;
     }
@@ -90,12 +92,17 @@ class WhoisSlashCommand extends BaseSlashCommand {
       return;
     }
     const rec = result.record || {};
+    // Show the STORED (sanitised/truncated) name, never the raw input.
+    const stored = sub === 'address'
+      ? (rec.addressName || result.name || input)
+      : ((rec.aliases || []).find((a) => a.toLowerCase() === String(result.name || '').toLowerCase())
+        || result.name || input);
     if (sub === 'address') {
-      await this._say(interaction, `${result.unchanged ? 'Already calling' : 'Okay, I will call'} ${mention} ${rec.addressName}.`);
+      await this._say(interaction, `${result.unchanged ? 'Already calling' : 'Okay, I will call'} ${mention} ${stored}.`);
     } else if (sub === 'alias-add') {
       await this._say(interaction, result.unchanged
-        ? `‘${input}’ is already one of ${posessive} aliases.`
-        : `Added ‘${input}’ as an alias for ${mention}.`);
+        ? `‘${stored}’ is already one of ${posessive} aliases (or ${self ? 'your' : 'their'} address name).`
+        : `Added ‘${stored}’ as an alias for ${mention}.`);
     } else {
       await this._say(interaction, `Removed ‘${input}’ from ${posessive} aliases.`);
     }
@@ -106,7 +113,7 @@ class WhoisSlashCommand extends BaseSlashCommand {
       case 'taken':
         return `‘${input}’ is already used by <@${result.holderId}>.`;
       case 'invalid':
-        return `‘${input}’ isn't a usable name: it needs at least one letter, 2-24 characters, and no long digit runs (like Discord IDs).`;
+        return `‘${input}’ isn't a usable name: it needs at least one letter and 2 or more characters (longer names are shortened to 24), and can't be a long run of digits.`;
       case 'too_many':
         return 'That member already has the maximum of 10 aliases. Remove one first.';
       case 'not_found':

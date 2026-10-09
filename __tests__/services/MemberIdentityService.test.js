@@ -209,7 +209,7 @@ describe('setAddressName', () => {
     const { svc, col, fixedNow } = makeService([AKIRA]);
     await svc.load();
     const res = await svc.setAddressName('n', '  Newbie  ', 'n');
-    expect(res).toEqual({ ok: true, record: { discordId: 'n', addressName: 'Newbie', aliases: [] } });
+    expect(res).toEqual({ ok: true, name: 'Newbie', record: { discordId: 'n', addressName: 'Newbie', aliases: [] } });
     expect(col.updateOne).toHaveBeenCalledWith(
       { _id: 'n' },
       { $set: { addressName: 'Newbie', aliases: [], updatedBy: 'n', updatedAt: fixedNow } },
@@ -275,7 +275,7 @@ describe('addAlias', () => {
     const { svc, col, fixedNow } = makeService([]);
     await svc.load();
     const res = await svc.addAlias('n', 'Nuggets', 'admin');
-    expect(res).toEqual({ ok: true, record: { discordId: 'n', addressName: null, aliases: ['Nuggets'] } });
+    expect(res).toEqual({ ok: true, name: 'Nuggets', record: { discordId: 'n', addressName: null, aliases: ['Nuggets'] } });
     expect(col.updateOne).toHaveBeenCalledWith(
       { _id: 'n' },
       { $set: { addressName: null, aliases: ['Nuggets'], updatedBy: 'admin', updatedAt: fixedNow } },
@@ -287,7 +287,7 @@ describe('addAlias', () => {
     const { svc, col } = makeService([AKIRA]);
     await svc.load();
     const res = await svc.addAlias('a', 'AKIRASOFT', 'a');
-    expect(res).toEqual({ ok: true, record: { discordId: 'a', addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] } });
+    expect(res).toEqual({ ok: true, unchanged: true, name: 'AKIRASOFT', record: { discordId: 'a', addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] } });
     expect(col.updateOne).not.toHaveBeenCalled();
   });
 
@@ -295,7 +295,7 @@ describe('addAlias', () => {
     const { svc, col } = makeService([AKIRA]);
     await svc.load();
     const res = await svc.addAlias('a', 'akira', 'a');
-    expect(res).toEqual({ ok: true, record: { discordId: 'a', addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] } });
+    expect(res).toEqual({ ok: true, unchanged: true, name: 'akira', record: { discordId: 'a', addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] } });
     expect(col.updateOne).not.toHaveBeenCalled();
   });
 

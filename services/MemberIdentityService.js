@@ -144,17 +144,23 @@ class MemberIdentityService {
   async setAddressName(targetId, name, actorId) {
     const normalized = normalizeName(name);
     if (!targetId || !normalized) return { ok: false, reason: 'invalid' };
-    return this._mutate(targetId, actorId, (current, records) => {
+    return this._withName(normalized, this._mutate(targetId, actorId, (current, records) => {
       const holderId = findHolder(records, normalized, String(targetId));
       if (holderId) return { ok: false, reason: 'taken', holderId };
       return { write: { addressName: normalized, aliases: current.aliases } };
-    });
+    }));
+  }
+
+  /** Attach the stored (sanitised) name to a successful result. */
+  async _withName(name, promise) {
+    const r = await promise;
+    return r && r.ok ? { ...r, name } : r;
   }
 
   async addAlias(targetId, alias, actorId) {
     const normalized = normalizeName(alias);
     if (!targetId || !normalized) return { ok: false, reason: 'invalid' };
-    return this._mutate(targetId, actorId, (current, records) => {
+    return this._withName(normalized, this._mutate(targetId, actorId, (current, records) => {
       const holderId = findHolder(records, normalized, String(targetId));
       if (holderId) return { ok: false, reason: 'taken', holderId };
       // Idempotent: already one of theirs, or their own address name (any
@@ -163,7 +169,7 @@ class MemberIdentityService {
         || current.aliases.some((a) => namesEqual(a, normalized))) return { unchanged: true };
       if (current.aliases.length >= MAX_ALIASES) return { ok: false, reason: 'too_many' };
       return { write: { addressName: current.addressName, aliases: [...current.aliases, normalized] } };
-    });
+    }));
   }
 
   async removeAlias(targetId, alias, actorId) {
@@ -206,7 +212,7 @@ class MemberIdentityService {
     const current = existing ? copy(existing) : { discordId: id, addressName: null, aliases: [] };
     const decision = decide(current, this.all(), !!existing);
     if (decision.ok === false) return decision;
-    if (decision.unchanged) return { ok: true, record: current };
+    if (decision.unchanged) return { ok: true, unchanged: true, record: current };
 
     const { addressName, aliases } = decision.write;
     try {
