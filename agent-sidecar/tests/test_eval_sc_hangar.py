@@ -330,7 +330,8 @@ def test_purchasable_followup_is_not_a_scoring_gate():
     uc1 = next(c for c in SC_EVAL_SET if c.get("expect_purchasable_compare"))
     s = score_sc([(uc1, _r([_call("sc_member_hangar", HANGAR_MEMBER_AKIRA)]))])
     assert s["tool_hit_rate"] == 1.0 and set(s) == {
-        "sandbox_attempts_total", "tool_hit_rate", "control_false_sc_calls", "unprompted_hangar_calls"}
+        "sandbox_attempts_total", "tool_hit_rate", "control_false_sc_calls", "unprompted_hangar_calls",
+        "unprompted_hangar_edits"}
 
 
 def test_report_prompt_strips_the_speaker_label():
@@ -341,8 +342,9 @@ def test_report_prompt_strips_the_speaker_label():
     assert _display_prompt({"prompt": "[not a label] hi"}) == "[not a label] hi"
 
 
-def test_seed_script_docs_name_the_sc_knowledge_pod_only():
+def test_seed_script_docs_name_the_agent_pod():
     import eval.seed_hangar_eval as seed_mod
     doc = seed_mod.__doc__
-    assert "deploy/sc-knowledge" in doc
-    assert "bot image" in doc  # says why not the bot pod
+    assert "deploy/discord-article-bot-agent" in doc
+    assert "hangar-api-sa" in doc
+    assert "Node-only" in doc  # says why not the bot pod

@@ -4,8 +4,9 @@ Per-member Star Citizen ship loadouts. A small FastAPI service on **Cloud Run**
 (GCP project `revenant-discord-bot-2`, region `us-central1`) that stores each
 Discord member's ships in **Firestore** (`members/{discordId}/ships/{shipId}`)
 and derives every ship's component slots from the **Star Citizen Wiki API**.
-Callers: the bot's `/hangar` command and sc-knowledge's `sc_member_hangar` /
-`sc_member_fit_check` tools (Google ID tokens), and the web editor at
+Callers: the bot's `/hangar` command, sc-knowledge's `sc_member_hangar` /
+`sc_member_fit_check` tools, and the agent and voice sidecars' chat-edit tools
+`hangar_fit` / `hangar_add_ship` / `hangar_reset` (Google ID tokens), and the web editor at
 `https://hangar.aklabs.io` (Discord login, signed session cookie).
 
 Specs: `docs/superpowers/specs/2026-10-09-member-hangar-design.md` (service),
@@ -22,9 +23,10 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | `unauthenticated` | 401 | no / invalid / wrong-audience / non-allow-listed token (`WWW-Authenticate: Bearer`) |
 | `forbidden` | 403 | write without `X-Acting-Member`, or acting member is neither the path member nor an admin, or a browser-session write that is not same-origin |
 | `not_found` | 404 | unknown ship / vehicle / slot / item, unknown route |
-| `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` |
+| `ambiguous` | 409 | vehicle text matches several vehicles; body carries `candidates` (chat edits: ship text matches several of the member's ships, `candidates: [{shipId, label}]`) |
+| `choose_slot` | 409 | chat edits: several slots fit and the `slot` hint didn't pick one; body carries `ship`, `slots: [{slot, type, size, current: {name}}]` |
 | `limit` | 409 | adding the ship would exceed `HANGAR_MAX_SHIPS_PER_MEMBER` (body carries `limit`, `shipCount`) |
-| `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why |
+| `incompatible` | 422 | item does not fit the slot (type / sub-type / size); `message` says why (chat fit: + `reason` `size_mismatch` \| `no_slot`) |
 | `too_large` | 413 | spviewer import body over 2 MB (+64 KiB envelope), or more than 100 rows |
 | `busy` | 503 | both import slots of this instance are in use (2 concurrent imports); retry shortly |
 | `unavailable` | 503 | Wiki (nothing cached), Firestore, or Google's signing certs unreachable; browser login not configured (`/api/auth/*`, `/api/me`) |
@@ -39,6 +41,8 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | DELETE | `/v1/members/{discordId}/ships/{shipId}` | – | `{deleted: true, shipId}` |
 | PUT | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | `{item}` (uuid or exact Wiki name) | `{ship: Ship}` |
 | DELETE | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | – | `{ship: Ship}` (reset to stock) |
+| POST | `/v1/members/{discordId}/fit` | `{ship, item, slot?}` (free text) | `{member, ship: {shipId, label, vehicle}, item: {uuid, name, type, size, matchedBy: "exact" \| "fuzzy"}, changes: [Change], unchanged}` — see "Chat edits" |
+| POST | `/v1/members/{discordId}/ships/{shipRef}/reset` | `{slot?}` (body optional) | `{member, ship: {shipId, label, vehicle}, changes: [Change], unchanged}` — see "Chat edits" |
 | GET | `/v1/catalog/vehicles?q=&limit=` | – | `{vehicles: [VehicleSummary]}` (≤25) |
 | GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary, slots: [SlotDef]}` |
 | GET | `/v1/catalog/items?type=&size=&q=` | – | `{items: [ItemSummary]}` |
@@ -78,6 +82,90 @@ holds only changes from stock). Full shapes: `src/app.py`.
 **Use `/health`, not `/healthz`, against Cloud Run.** Cloud Run's front end
 reserves URL paths ending in `z`, so `/healthz` gets Google's own 404 before it
 ever reaches the container. `/healthz` is kept for local and in-cluster parity.
+
+## Chat edits (`/fit`, `/ships/{shipRef}/reset`)
+
+The bot's agent and voice sidecars record "I put the Hemera in my Connie" /
+"put my Harbinger's shields back to stock" through these two writes, sending
+the real speaker as `X-Acting-Member` (same write rule as every other write:
+acting member == path member, or an admin; browser sessions need a
+same-origin request). The server does ALL resolution; every resolution error
+is returned before anything is written, and each request makes at most ONE
+write (`update_slots`: one Firestore update setting / deleting exactly the
+target `fitted.<slot>` fields), so a multi-slot change is all-or-nothing,
+never wipes other slots edited concurrently, and `changes` is exactly the
+written set (logged only after the write succeeds).
+The callers bind `X-Acting-Member` from trusted plumbing, never from a tool
+argument (agent: `ChatRequest.user_id`; voice: the current `SetSpeaker.user_id`,
+else the session opener), and their tools have no member parameter — see
+`CLAUDE.md` "Member hangar" → "Chat edits".
+
+- **Ship** (`ship`, `shipRef`): an exact `shipId`, else free text resolved
+  within the member's own hangar by `src/ship_resolve.py` — exact nickname →
+  nickname fuzzy → exact model → model tokens/prefixes with community
+  shorthand (`SHIP_SHORTHAND`: "Connie" → Constellation, "cutty", "msr", …) →
+  model fuzzy. **KEEP IN SYNC** with `sc-knowledge/src/tools_hangar.py`
+  (`sc_member_hangar` reads with the same rules and labels);
+  `tests/test_ship_resolve.py` fails if the copies drift. Several → 409
+  `ambiguous` `field: "ship"`, `candidates: [{shipId, label}]`; none → 404
+  `not_found` `field: "ship"` with `owned: [{shipId, label}]`. Labels: `"Nickname" (Model)`, else the model
+  name, plus `(ship <id>)` when two would read the same.
+- **Item** (`/fit` only, `src/item_resolve.py`, shared by text and voice):
+  exact catalog lookup (uuid / exact Wiki name / class name); else drop
+  leading "my/the", possessives and component-type words ("the hemera
+  quantum drive" → "Hemera", types → QuantumDrive) and retry exact; else
+  score a pool = `catalog.items(type)` for the spoken type(s), or every type
+  the ship's slots accept: exact casefold name → every word a whole token or
+  ≥3-char prefix of the name (quotes stripped: "lorica" → `7MA 'Lorica'`) →
+  fuzzy ratio ≥ 85 with a 5-point lead ("hemra" → Hemera). Ties prefer items
+  that fit one of the ship's slots (type + size). Several → 409 `ambiguous`
+  `field: "item"`, `candidates: [{uuid, name, type, size}]` (≤5); none → 404
+  `not_found` `field: "item"`, `suggestions: [name]` (≤3, score ≥ 60). The
+  response's `item.matchedBy` is `"exact"` or `"fuzzy"`, `item.name` the
+  canonical name. Pool lists are prefetched at startup (see "Runtime
+  behaviour"); a cold one costs one Wiki fetch per type, then cached 12h.
+- **Target slots** (`/fit`): the ship's visible slots `check_compatible`
+  accepts; a mount of another type (Turret gimbal) that also accepts the item
+  is skipped when a fitting child is visible. None → 422 `incompatible` with
+  `reason` `size_mismatch` (+ `slots` it would go in, by size) or `no_slot`.
+  `slot` (`src/slot_hint.py`):
+  - omitted: exactly one compatible slot → it; several → 409 `choose_slot`;
+  - `"all"` / `"every"` / `"everything"` / `"each"` → every compatible slot;
+    `"both"` → only when exactly two remain, else 409 `choose_slot`;
+  - an exact slot id (case-insensitive) → that slot (incompatible → 422);
+  - a hint matched against slot-id tokens. Position words are equivalence
+    sets — {top, upper}, {bottom, lower, under}, {front, nose, fwd, forward},
+    {left, port, l}, {right, starboard, r}, {rear, back, aft} — so "top left"
+    and "upper left" both hit `hardpoint_gun_laser_top_left/...`. Number words
+    "two".."six" / "first".."sixth" are digits; "one" only after a type word
+    ("shield one"), otherwise filler ("the top left one"). Numbers compare
+    numerically ("1" == "001"), and tokens
+    every candidate shares — e.g. the `hardpoint_class_2` suffix on all
+    Harbinger nose guns — are ignored first, so "2" means `..._fixed_002`).
+    Component words filter by type ("shield 2", "left cooler", "qd"); a
+    plural one ("shields", "both coolers") selects every slot it leaves. One
+    match → it; several → 409 `choose_slot`; none → 409 `choose_slot` listing
+    every compatible slot.
+- **Writes**: one `update_slots` call for every target slot, with the same
+  stock rule as `PUT .../slots/{slot}` (fitting the stock item deletes the
+  override). Slots already holding the
+  item are skipped; nothing to change → `changes: []`, `unchanged: true`.
+- **Reset** (`slot` omitted / `"all"` / id / hint): resets slots to stock.
+  Only non-stock slots matter: a ship with nothing fitted is always
+  `unchanged`; omitted `slot` → the one refitted slot, or 409 `choose_slot`
+  listing the refitted slots; `"all"` → every refitted slot in one write; a
+  hint matching several slots narrows to the refitted ones (one → it, several
+  → `choose_slot`, none → `unchanged`); no match → `choose_slot` listing the
+  refitted slots; `"both"` alone → the refitted slots when there are at most
+  two, else `choose_slot`. Fitted ids the catalog no longer has (renamed in a
+  patch, or the whole vehicle gone from the catalog) are resettable by exact
+  id and by `"all"` (`to` names are then null).
+- `Change` = `{slot, from: {name, uuid}, to: {name, uuid}}` (`from` is the
+  previously effective item, `to` the new one — the stock item for a reset;
+  `null` names for an empty slot or an orphaned slot's stock).
+- One INFO log line per changed slot (`hangar: chat fit:` / `hangar: chat
+  reset:` with member, ship, slot, from -> to, acting member) and one for a
+  no-op.
 
 ## Catalog rules (Star Citizen Wiki `GET /api/vehicles/{slug|uuid}` → `ports[]`)
 
@@ -368,8 +456,10 @@ Sessions are stateless signed cookies, so there is no per-session revoke; use:
 
 ## Runtime behaviour
 
-- The Wiki vehicle index (~299 vehicles, 6 requests) is warmed by a background
-  task at startup; startup doesn't wait for it and a failure is only logged.
+- The Wiki vehicle index (~299 vehicles, 6 requests) and then the item list of
+  every slot type (one type at a time, rate-limiter friendly — the lists chat
+  edits' fuzzy item resolution reads) are warmed by a background task at
+  startup; startup doesn't wait for it and each failure is only logged.
   Catalog data is cached 12h, stale-while-revalidate (not-found entries 10min).
 - Cloud Run runs with request-only CPU, so a background refresh may stall
   between requests and finish on the next one. That's accepted: stale catalog

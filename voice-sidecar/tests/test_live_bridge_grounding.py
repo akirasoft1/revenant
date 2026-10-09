@@ -80,7 +80,7 @@ async def test_counters_reset_per_turn_and_end_totals(caplog):
     assert not [ln for ln in lines if "web search (turn #2)" in ln]
     assert _line(lines, "web search (turn #3)")[0].endswith(": a")
     end = _line(lines, "session END")[0]
-    assert end.endswith("search_turns=2 search_queries=3"), end
+    assert end.endswith("search_turns=2 search_queries=3 hangar_edits=0"), end
     # existing fields are kept, in order, before the new ones
     assert "tool_calls=0 sc_fallbacks=0 search_turns=2" in end
 
@@ -89,7 +89,7 @@ async def test_no_grounding_logs_zero_and_no_search_line(caplog):
     lines = await _run([_gmsg(None, metadata=None, turn_complete=True)], caplog)
     assert "search_queries=0" in _line(lines, "turn complete (#1")[0]
     assert not [ln for ln in lines if "web search (turn" in ln]
-    assert _line(lines, "session END")[0].endswith("search_turns=0 search_queries=0")
+    assert _line(lines, "session END")[0].endswith("search_turns=0 search_queries=0 hangar_edits=0")
 
 
 async def test_messages_without_grounding_attribute_are_tolerated(caplog):
@@ -160,7 +160,7 @@ def _interrupted_msg():
 async def test_interrupted_turn_without_turn_complete_is_flushed(caplog):
     lines = await _run([_gmsg(["q interrupted"]), _interrupted_msg()], caplog)
     assert _line(lines, "web search (interrupted turn)")[0].endswith(": q interrupted")
-    assert _line(lines, "session END")[0].endswith("search_turns=1 search_queries=1")
+    assert _line(lines, "session END")[0].endswith("search_turns=1 search_queries=1 hangar_edits=0")
 
 
 async def test_pending_queries_flushed_at_session_end(caplog):
@@ -169,7 +169,7 @@ async def test_pending_queries_flushed_at_session_end(caplog):
     lines = await _run([_gmsg(["q1", "q2"])], caplog)
     assert [ln for ln in lines if "web search (" in ln and ln.endswith(": q1 | q2")]
     end = _line(lines, "session END")[0]
-    assert end.endswith("search_turns=1 search_queries=2"), end
+    assert end.endswith("search_turns=1 search_queries=2 hangar_edits=0"), end
     # flushed exactly once, even though both the per-session and END paths run
     assert len([ln for ln in lines if "web search (" in ln]) == 1
 
@@ -185,7 +185,7 @@ async def test_drop_mid_turn_then_resume_does_not_bleed_into_next_turn(caplog):
     assert [ln for ln in lines if "web search (" in ln and ln.endswith(": before drop")]
     assert "search_queries=1" in _line(lines, "turn complete (#1")[0]
     assert _line(lines, "web search (turn #1)")[0].endswith(": after resume")
-    assert _line(lines, "session END")[0].endswith("search_turns=2 search_queries=2")
+    assert _line(lines, "session END")[0].endswith("search_turns=2 search_queries=2 hangar_edits=0")
 
 
 async def test_resume_does_not_dedupe_against_the_dropped_turn(caplog):
@@ -197,4 +197,4 @@ async def test_resume_does_not_dedupe_against_the_dropped_turn(caplog):
         await _drive_open_ended(bridge, voice_pb2.SessionStart(user_id="u1"))
     lines = [r.getMessage() for r in caplog.records]
     assert "search_queries=1" in _line(lines, "turn complete (#1")[0]
-    assert _line(lines, "session END")[0].endswith("search_turns=2 search_queries=2")
+    assert _line(lines, "session END")[0].endswith("search_turns=2 search_queries=2 hangar_edits=0")

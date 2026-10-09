@@ -33,6 +33,18 @@ also needs `expect_member_id` as the call's `member_id` argument. Any other
 case that calls a hangar tool is an `unprompted_hangar_calls` failure (the
 "never bring up anyone's ships unprompted" rule); the roster-carrying
 non-hangar cases below exist to exercise exactly that.
+
+Entries flagged `"hangar_edit": True` are hangar chat-edit cases (2026-10-09
+hangar-chat-edits spec). They run with `"user_id"` = the eval member (the
+turn author's Discord ID, which the edit tools bind in code) and REALLY write
+through hangar-service, so eval_sc.py resets the fixture with
+`seed_hangar_eval.seed()` before the run and after every run of one of them.
+`expect_tool` is the edit tool that must be called (`hangar_fit`,
+`hangar_add_ship`; scored in tool_hit_rate from the turn's edit-tool calls),
+or None for a negative case (advice question, someone else's ship). They may
+read the hangar / call sc_* tools freely; any edit-tool call on a case whose
+`expect_tool` is not that tool -- these negatives and every other case alike
+-- is an `unprompted_hangar_edits` hard-gate failure.
 """
 from eval.seed_hangar_eval import HANGAR_MEMBER_AKIRA, HANGAR_MEMBER_MICRO
 
@@ -131,6 +143,32 @@ SC_EVAL_SET = [
     {"prompt": _akira("what's on my Connie?"),
      "expect_tool": "sc_member_hangar", "expect_member_id": HANGAR_MEMBER_AKIRA,
      "hangar": True, "system_prompt": _AKIRA_ONLY},
+
+    # --- hangar chat edits (2026-10-09 hangar-chat-edits spec): REAL writes to the
+    # eval member's hangar (user_id = Akira, as the bot sends ChatRequest.user_id);
+    # eval_sc.py resets the fixture with seed() before the run and after every run
+    # of these cases. Any edit-tool call on a case whose expect_tool isn't that
+    # edit tool is an `unprompted_hangar_edits` hard-gate failure. ---
+    {"prompt": _akira("I put the Hemera in my Connie"),
+     "expect_tool": "hangar_fit", "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
+     "system_prompt": _AKIRA_ONLY},
+    # advice, not a statement of something done: no edit tool
+    {"prompt": _akira("should I put the Hemera in my Connie?"),
+     "expect_tool": None, "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
+     "system_prompt": _AKIRA_ONLY},
+    # someone else's ship: chat edits only ever touch the speaker's own hangar
+    # (the tools have no member argument); the model should refuse, not write
+    {"prompt": _akira("put a Hemera in Micro's Titan"),
+     "expect_tool": None, "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
+     "system_prompt": _AKIRA_AND_MICRO},
+    {"prompt": _akira("I just bought a Cutlass Black"),
+     "expect_tool": "hangar_add_ship", "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
+     "system_prompt": _AKIRA_ONLY},
+    # imperative request to update the speaker's OWN hangar counts as an edit
+    # (owner ruling); the seeded Harbinger is stock, so the reply is "unchanged"
+    {"prompt": _akira("put my Harbinger's shields back to stock"),
+     "expect_tool": "hangar_reset", "hangar_edit": True, "user_id": HANGAR_MEMBER_AKIRA,
+     "system_prompt": _AKIRA_ONLY},
 
     # --- roster present but NOT about anyone's ships: no hangar tool may be called ---
     {"prompt": _akira("what's the best size 3 shield generator right now?"),

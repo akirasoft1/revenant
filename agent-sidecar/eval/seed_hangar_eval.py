@@ -1,23 +1,29 @@
 """Seed / clean up the fake members the SC eval's member-hangar cases read.
 
 Standalone on purpose (stdlib + google-auth only, no `src`/`eval` imports) so
-it can be piped into the sc-knowledge pod, which mounts Secret `hangar-api-sa`
-at /var/secrets/hangar/key.json, carries HANGAR_API_URL, and has Python +
-google-auth. Run it ONLY there: the bot image also mounts the key but is a
-Node image with no Python or google-auth.
+it can be piped into a pod over stdin. Run it in the AGENT sidecar pod -- the
+same place eval_sc.py now runs, because the hangar chat-edit cases need the
+hangar-api@ key in the eval's own process -- which (once the deployed overlay
+mounts Secret `hangar-api-sa` at /var/secrets/hangar/key.json and sets
+HANGAR_API_URL) has Python + google-auth. (The sc-knowledge pod also works
+for this standalone script; the bot pod does not: its image is Node-only.)
 
-  kubectl exec -i -n discord-article-bot deploy/sc-knowledge -- \
+  kubectl exec -i -n discord-article-bot deploy/discord-article-bot-agent -- \
       python - --seed < agent-sidecar/eval/seed_hangar_eval.py      # before the eval
-  kubectl exec -i -n discord-article-bot deploy/sc-knowledge -- \
+  kubectl exec -i -n discord-article-bot deploy/discord-article-bot-agent -- \
       python - --cleanup < agent-sidecar/eval/seed_hangar_eval.py   # after it
 
 Env: HANGAR_API_URL (also the ID-token audience -- must equal the service's
-HANGAR_AUDIENCE byte for byte, no trailing slash), HANGAR_SA_KEY_PATH
+HANGAR_AUDIENCE byte for byte; a trailing slash is stripped and the stripped
+form is used as both audience and base), HANGAR_SA_KEY_PATH
 (default /var/secrets/hangar/key.json).
 
 Writes go through the real API as the member themselves (X-Acting-Member =
-the path member id), so no admin id is needed. `--seed` is idempotent (a ship
-whose model name is already in that member's hangar is skipped); `--cleanup`
+the path member id), so no admin id is needed. `--seed` is idempotent and
+resets the two members to EXACTLY the fixture (extra ships deleted, refitted
+fixture ships put back to stock -- the hangar chat-edit cases really write;
+eval_sc.py also calls `seed()` itself before the run and after every run of
+an edit case); `--cleanup`
 deletes EVERY ship of the two fake members -- they exist only for the eval.
 The ids are fake (no Discord account has them).
 """
@@ -95,18 +101,47 @@ def _hangar(base, member, token, http):
 
 
 def seed(base: str, *, token: str, http=None) -> None:
+    """Put both fake members' hangars into EXACTLY the SEED_SHIPS state.
+
+    Idempotent, and also the reset the hangar chat-edit cases need between
+    runs (they really write: a Hemera fitted into the Connie, a Cutlass Black
+    added): a ship matching a fixture entry (vehicle + nickname) is kept, and
+    put back to stock (`POST .../ships/{shipId}/reset {"slot": "all"}`) if
+    anything is fitted; any other ship of the two members -- and a duplicate
+    of a fixture ship -- is deleted; a missing fixture ship is added."""
     http = http or UrllibHttp()
     base = base.rstrip("/")
-    owned = {m: {s.get("vehicleName") for s in _hangar(base, m, token, http)} for m in MEMBERS}
-    for member, vehicle, nickname in SEED_SHIPS:
-        if vehicle in owned[member]:
-            print(f"seed: {member} already owns {vehicle} -- skipped")
-            continue
-        status, body = http.request(
-            "POST", f"{base}/v1/members/{member}/ships", headers=_headers(token, member),
-            body=json.dumps({"vehicle": vehicle, "nickname": nickname}))
-        ship = _check(status, body, f"POST {vehicle} for {member}").get("ship", {})
-        print(f"seed: {member} += {vehicle} (nickname {nickname!r}, shipId {ship.get('shipId')})")
+    for member in MEMBERS:
+        wanted = [(vehicle, nickname) for m, vehicle, nickname in SEED_SHIPS if m == member]
+        kept: dict = {}
+        for ship in _hangar(base, member, token, http):
+            key = (ship.get("vehicleName"), ship.get("nickname"))
+            if key in wanted and key not in kept:
+                kept[key] = ship
+                continue
+            ship_id = ship["shipId"]
+            status, body = http.request("DELETE", f"{base}/v1/members/{member}/ships/{ship_id}",
+                                        headers=_headers(token, member))
+            _check(status, body, f"DELETE {ship_id} of {member}")
+            print(f"seed: {member} -= {ship.get('vehicleName')} ({ship_id}) -- not in the fixture")
+        for vehicle, nickname in wanted:
+            ship = kept.get((vehicle, nickname))
+            if ship is not None:
+                if ship.get("fitted"):
+                    ship_id = ship["shipId"]
+                    status, body = http.request(
+                        "POST", f"{base}/v1/members/{member}/ships/{ship_id}/reset",
+                        headers=_headers(token, member), body=json.dumps({"slot": "all"}))
+                    _check(status, body, f"reset {vehicle} ({ship_id}) of {member}")
+                    print(f"seed: {member} {vehicle} ({ship_id}) reset to stock")
+                else:
+                    print(f"seed: {member} already owns {vehicle} (stock) -- skipped")
+                continue
+            status, body = http.request(
+                "POST", f"{base}/v1/members/{member}/ships", headers=_headers(token, member),
+                body=json.dumps({"vehicle": vehicle, "nickname": nickname}))
+            ship = _check(status, body, f"POST {vehicle} for {member}").get("ship", {})
+            print(f"seed: {member} += {vehicle} (nickname {nickname!r}, shipId {ship.get('shipId')})")
 
 
 def cleanup(base: str, *, token: str, http=None) -> None:

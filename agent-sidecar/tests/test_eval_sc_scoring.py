@@ -13,7 +13,7 @@ def test_score_counts_hits_controls_and_sandbox():
             ({"prompt": "c", "expect_tool": None}, _r(["sc_find_item"]))]
     s = score_sc(recs)
     assert s == {"sandbox_attempts_total": 1, "tool_hit_rate": 0.5, "control_false_sc_calls": 1,
-                 "unprompted_hangar_calls": 0}
+                 "unprompted_hangar_calls": 0, "unprompted_hangar_edits": 0}
 
 
 def test_uncovered_sc_prompts_gate_sandbox_but_not_controls_or_hit_rate():
@@ -23,7 +23,7 @@ def test_uncovered_sc_prompts_gate_sandbox_but_not_controls_or_hit_rate():
             (uncovered, _r([], sandbox=2))]             # but sandbox still gates
     s = score_sc(recs)
     assert s == {"sandbox_attempts_total": 2, "tool_hit_rate": 1.0, "control_false_sc_calls": 0,
-                 "unprompted_hangar_calls": 0}
+                 "unprompted_hangar_calls": 0, "unprompted_hangar_edits": 0}
 
 
 def test_eval_set_has_location_shops_and_uncovered_prompts():
@@ -49,7 +49,7 @@ def test_sc_dispute_gates_sandbox_but_not_controls_or_hit_rate():
             (_DISPUTE, _r([], sandbox=1))]             # but the sandbox hard gate still applies
     s = score_sc(recs)
     assert s == {"sandbox_attempts_total": 1, "tool_hit_rate": 1.0, "control_false_sc_calls": 0,
-                 "unprompted_hangar_calls": 0}
+                 "unprompted_hangar_calls": 0, "unprompted_hangar_edits": 0}
 
 
 def test_eval_set_has_the_quantum_drive_dispute_case():

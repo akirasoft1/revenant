@@ -116,6 +116,8 @@ def test_healthz_unauthenticated_and_no_upstream_calls(client, wiki_calls):
     ("DELETE", f"/v1/members/{SELF}/ships/abc"),
     ("PUT", f"/v1/members/{SELF}/ships/abc/slots/x"),
     ("DELETE", f"/v1/members/{SELF}/ships/abc/slots/x"),
+    ("POST", f"/v1/members/{SELF}/fit"),
+    ("POST", f"/v1/members/{SELF}/ships/abc/reset"),
     ("GET", "/v1/members"),
     # the browser aliases (same handlers under /api)
     ("GET", f"/api/v1/members/{SELF}/hangar"),
@@ -127,6 +129,8 @@ def test_healthz_unauthenticated_and_no_upstream_calls(client, wiki_calls):
     ("DELETE", f"/api/v1/members/{SELF}/ships/abc"),
     ("PUT", f"/api/v1/members/{SELF}/ships/abc/slots/x"),
     ("DELETE", f"/api/v1/members/{SELF}/ships/abc/slots/x"),
+    ("POST", f"/api/v1/members/{SELF}/fit"),
+    ("POST", f"/api/v1/members/{SELF}/ships/abc/reset"),
     ("GET", "/api/v1/members"),
 ])
 def test_every_v1_route_requires_auth(client, wiki_calls, headers, method, path):

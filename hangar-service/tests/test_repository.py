@@ -350,3 +350,54 @@ async def test_firestore_replace_fitted_writes_the_fitted_field():
     assert fields["fitted"] == new and fields["updatedBy"] == "222" and fields["ownerName"] == "Aki"
     assert u is not None
     assert await repo.replace_fitted("111", "missing", {}, updated_by="111") is None
+
+
+# ---------- update_slots (chat edits: several slots in ONE write) ----------
+
+async def test_update_slots_sets_and_clears_in_one_call(repo):
+    s = await _add(repo)
+    await repo.set_slot("111", s["shipId"], "hardpoint_radar", item_uuid="r", item_name="R", updated_by="111")
+    await repo.set_slot("111", s["shipId"], "hardpoint_cooler_left", item_uuid="c", item_name="C",
+                        updated_by="111")
+    u = await repo.update_slots("111", s["shipId"],
+                                {SLOT: {"itemUuid": "i", "itemName": "Gun"}, "hardpoint_radar": None},
+                                updated_by="999", owner_name="Akira")
+    # untouched slots survive (no whole-map replace), cleared ones are gone
+    assert u["fitted"] == {SLOT: {"itemUuid": "i", "itemName": "Gun"},
+                           "hardpoint_cooler_left": {"itemUuid": "c", "itemName": "C"}}
+    assert u["updatedBy"] == "999" and u["ownerName"] == "Akira"
+    assert await repo.get_ship("111", s["shipId"]) == u
+    # clearing an already-stock slot is a no-op success
+    u = await repo.update_slots("111", s["shipId"], {"hardpoint_quantum_drive": None}, updated_by="111")
+    assert set(u["fitted"]) == {SLOT, "hardpoint_cooler_left"}
+
+
+async def test_update_slots_missing_ship_is_none(repo):
+    assert await repo.update_slots("111", "nope", {SLOT: None}, updated_by="111") is None
+
+
+async def test_update_slots_stores_a_copy():
+    repo = _memory()
+    s = await _add(repo)
+    entry = {"itemUuid": "i", "itemName": "Gun"}
+    await repo.update_slots("111", s["shipId"], {SLOT: entry}, updated_by="111")
+    entry["itemUuid"] = "mutated"
+    assert (await repo.get_ship("111", s["shipId"]))["fitted"][SLOT]["itemUuid"] == "i"
+
+
+async def test_firestore_update_slots_is_one_update_with_quoted_paths():
+    from google.cloud import firestore
+    store = _Store()
+    repo = FirestoreShipRepository(store, clock=Clock())
+    ship = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="T", vehicle_class_name=None,
+                                  nickname=None, updated_by="111")
+    other = "hardpoint_gun_laser_top_right/hardpoint_class_2"
+    await repo.update_slots("111", ship["shipId"], {SLOT: {"itemUuid": "i", "itemName": "Gun"}, other: None},
+                            updated_by="222")
+    updates = [c for c in store.calls if c[0] == "update"]
+    assert len(updates) == 1
+    fields = updates[0][2]
+    assert fields[f"fitted.`{SLOT}`"] == {"itemUuid": "i", "itemName": "Gun"}
+    assert fields[f"fitted.`{other}`"] is firestore.DELETE_FIELD
+    assert fields["updatedBy"] == "222"
+    assert await repo.update_slots("111", "missing", {SLOT: None}, updated_by="111") is None

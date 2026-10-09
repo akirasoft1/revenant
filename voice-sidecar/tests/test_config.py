@@ -85,3 +85,44 @@ def test_control_tools_flag_falsey_spellings(monkeypatch):
     for value in ("true", "1", "yes", "on"):
         monkeypatch.setenv("VOICE_CONTROL_TOOLS_ENABLED", value)
         assert cfg.load().control_tools_enabled is True, value
+
+
+HANGAR_URL = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+
+
+def _clear_hangar_env(monkeypatch):
+    for k in ("HANGAR_API_URL", "HANGAR_SA_KEY_PATH", "HANGAR_EDITS_ENABLED"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_hangar_edits_off_without_url(monkeypatch):
+    _clear_hangar_env(monkeypatch)
+    c = cfg.load()
+    assert c.hangar_api_url is None
+    assert c.hangar_sa_key_path == "/var/secrets/hangar/key.json"
+    assert c.hangar_edits_enabled is False
+    # the flag alone can't enable edits with nowhere to send them
+    monkeypatch.setenv("HANGAR_EDITS_ENABLED", "true")
+    assert cfg.load().hangar_edits_enabled is False
+
+
+def test_hangar_edits_default_on_when_url_set(monkeypatch):
+    _clear_hangar_env(monkeypatch)
+    monkeypatch.setenv("HANGAR_API_URL", HANGAR_URL + "/  ")
+    c = cfg.load()
+    assert c.hangar_api_url == HANGAR_URL      # exact token audience: no trailing slash
+    assert c.hangar_edits_enabled is True
+
+
+def test_hangar_edits_flag_can_disable(monkeypatch):
+    _clear_hangar_env(monkeypatch)
+    monkeypatch.setenv("HANGAR_API_URL", HANGAR_URL)
+    for v in ("false", "0", "no", "off", "FALSE"):
+        monkeypatch.setenv("HANGAR_EDITS_ENABLED", v)
+        assert cfg.load().hangar_edits_enabled is False, v
+
+
+def test_hangar_key_path_from_env(monkeypatch):
+    _clear_hangar_env(monkeypatch)
+    monkeypatch.setenv("HANGAR_SA_KEY_PATH", "/tmp/k.json")
+    assert cfg.load().hangar_sa_key_path == "/tmp/k.json"

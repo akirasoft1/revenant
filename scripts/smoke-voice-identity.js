@@ -33,6 +33,14 @@
 // doesn't answer a question Sarah never actually asked in this segment.
 // Without the flag, this script's behaviour is byte-identical to before.
 //
+// Segment C (always runs, after A and B): an ID-ONLY SetSpeaker
+// ({ userId, displayName: '' }) -- a holder whose name didn't resolve. Since a
+// named marker was already emitted this session, the sidecar sends the
+// neutral "[SPEAKER: someone else]" marker before C's audio (hangar chat
+// edits final fix round). Checked: the model never reads it aloud (part of
+// the critical MARKER SILENT verdict) and doesn't address C by the previous
+// speaker's name (informational -- C reuses speaker A's clip).
+//
 // Env overrides:
 //   VOICE_GRPC_ADDR         sidecar address (default 127.0.0.1:50051, i.e. a port-forward)
 //   SMOKE_TURN_TIMEOUT_MS   how long to wait for a reply per speaker turn (default 25000)
@@ -217,6 +225,8 @@ function containsMarkerLeak(text) {
   if (/\[\s*SYSTEM\s*:/i.test(text)) return true;
   // Also catch the literal tag with the brackets paraphrased away, for each
   // name actually sent in marker form this run.
+  // The neutral marker for an unnamed speaker, with the brackets paraphrased away.
+  if (/SPEAKER\s*:\s*someone else/i.test(text)) return true;
   return SPEAKERS.some((s) => new RegExp(`SPEAKER\\s*:\\s*${s.displayName}\\b`, 'i').test(text));
 }
 
@@ -373,6 +383,30 @@ async function main() {
     perSpeakerResults.push({ ...spk, turnsThisSegment, audioBytesThisSegment });
   }
 
+  // --- Segment C (always): an id-only speaker -> neutral marker ---
+  log(`\n${hr('-')}\nSpeaker C (id-only, no name -> neutral "[SPEAKER: someone else]" marker)\n${hr('-')}`);
+  currentSpeakerTag = 'C/(unnamed)';
+  session.sendSpeaker({ userId: 'smoke-test-speaker-C', displayName: '' });
+  log("  sendSpeaker({ userId: 'smoke-test-speaker-C', displayName: '' })");
+  const neutralOutputsBefore = outputTranscripts.length;
+  const neutralTurnsBefore = turnCompleteCount;
+  log(`  streaming ${framesA.length} frames (speaker A's clip, as a different person)...`);
+  for (const f of framesA) {
+    session.sendAudio(f);
+    await sleep(FRAME_MS);
+  }
+  session.sendAudioStreamEnd();
+  log('  sendAudioStreamEnd (finalize turn)');
+  if (await waitForEvent(session, 'turnComplete', TURN_TIMEOUT_MS)) {
+    await sleep(500);
+  } else {
+    log('  WARNING: no turn_complete observed within the timeout -- proceeding anyway.');
+  }
+  const neutralTranscripts = outputTranscripts.slice(neutralOutputsBefore);
+  log(`  segment result: turn_complete x${turnCompleteCount - neutralTurnsBefore}, reply: ${neutralTranscripts.length ? neutralTranscripts.map((t) => `"${t}"`).join(' ') : '(no output transcript received)'}`);
+  const neutralNoLeakPass = !neutralTranscripts.some((t) => containsMarkerLeak(t));
+  const neutralNoPreviousNamePass = !neutralTranscripts.some((t) => mentionsName(t, SPEAKERS[1].displayName));
+
   // --- Segment 3 (--deferral only): AcknowledgeWaiting for a withheld speaker ---
   if (DEFERRAL_MODE) {
     deferralRan = true;
@@ -427,7 +461,7 @@ async function main() {
 
   // 1. MARKER SILENT (critical)
   const leaks = outputTranscripts.filter(containsMarkerLeak);
-  const markerSilentPass = leaks.length === 0;
+  const markerSilentPass = leaks.length === 0 && neutralNoLeakPass;
   log(`\nMARKER SILENT (critical): ${markerSilentPass ? 'PASS' : 'FAIL'}`);
   log('  No output transcript may contain "SPEAKER", "[", "]", or the literal marker text.');
   if (!markerSilentPass) {
@@ -436,6 +470,12 @@ async function main() {
   } else {
     log(`  Checked ${outputTranscripts.length} output transcript(s); none leaked marker text.`);
   }
+
+  // 1b. NEUTRAL MARKER SILENT (critical, folded into MARKER SILENT) + no previous name
+  log(`\nNEUTRAL MARKER SILENT (critical): ${neutralNoLeakPass ? 'PASS' : 'FAIL'}`);
+  log('  Speaker C\'s reply must not read "[SPEAKER: someone else]" aloud.');
+  log(`\nNEUTRAL NO PREVIOUS NAME: ${neutralNoPreviousNamePass ? 'PASS' : 'FAIL'}`);
+  log(`  Speaker C (unnamed) should not be called "${SPEAKERS[1].displayName}" (the previous speaker).`);
 
   // 2. NAMES USED
   const nameHits = outputTranscripts.filter((t) => mentionsName(t, 'Mike') || mentionsName(t, 'Sarah'));
@@ -524,6 +564,8 @@ async function main() {
 
   log(`\n${hr('=')}\nSUMMARY\n${hr('=')}`);
   log(`  MARKER SILENT (critical) : ${markerSilentPass ? 'PASS' : 'FAIL'}`);
+  log(`  NEUTRAL MARKER SILENT    : ${neutralNoLeakPass ? 'PASS' : 'FAIL'}  (critical)`);
+  log(`  NEUTRAL NO PREVIOUS NAME : ${neutralNoPreviousNamePass ? 'PASS' : 'FAIL'}`);
   log(`  NAMES USED               : ${namesUsedPass ? 'PASS' : 'FAIL'}`);
   log(`  NO DOUBLE-ANSWER          : ${noDoubleAnswerPass ? 'PASS' : 'FAIL'}`);
   log(`  ATTRIBUTION SANITY        : ${inputTranscripts.length > 0 ? 'DATA PRESENT (see above)' : 'NO DATA'}`);

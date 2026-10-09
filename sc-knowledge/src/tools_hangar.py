@@ -7,6 +7,13 @@ nickname fuzzy -> owned model name/token (with community shorthand like
 `ambiguous` with display-label candidates; nothing -> `not_found` with the
 member's owned ships listed.
 
+KEEP IN SYNC with hangar-service/src/ship_resolve.py: ``resolve_ship``,
+``_labels`` (``ship_labels`` there), ``_tokens``, ``_query_tokens``,
+``_best_fuzzy``, ``_token_hit``, ``SHIP_SHORTHAND``, ``_LEADING_STOPWORDS``
+and the fuzzy thresholds are duplicated there for chat edits (POST .../fit,
+.../reset), so a ship read here as "my Connie" is the ship written there.
+hangar-service's tests/test_ship_resolve.py fails if the two copies drift.
+
 Fit-check slot compatibility is the SAME rule as hangar-service's
 `check_compatible`, applied to the effective-loadout entries (`type`,
 `sizeMin`, `sizeMax`, `compatibleTypes`): the item's type must be one of the
