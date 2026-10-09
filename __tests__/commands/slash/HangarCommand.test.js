@@ -79,6 +79,15 @@ describe('/hangar', () => {
     ]);
   });
 
+  test('every ship option is capped at 200 chars (the service vehicle limit)', () => {
+    const json = cmd.data.toJSON();
+    for (const sub of json.options) {
+      const shipOpt = sub.options.find((o) => o.name === 'ship');
+      if (shipOpt) expect(shipOpt.max_length).toBe(200);
+    }
+    expect(json.options.filter((s) => s.options.some((o) => o.name === 'ship'))).toHaveLength(3);
+  });
+
   describe('list', () => {
     test('empty hangar for self', async () => {
       const i = fakeInteraction();

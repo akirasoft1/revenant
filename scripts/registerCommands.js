@@ -107,6 +107,9 @@ async function registerCommands() {
   if (config.hangar?.apiUrl) {
     commands.push(new HangarSlashCommand(null));
     console.log('Including /hangar command (HANGAR_API_URL set)');
+  } else {
+    console.warn('WARNING: HANGAR_API_URL is not set -- skipping /hangar. Registration REPLACES the whole command set, '
+      + 'so this run will remove /hangar if it was registered. Run from the bot pod or with HANGAR_API_URL set.');
   }
 
   if (config.voice?.enabled) {

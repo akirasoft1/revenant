@@ -20,6 +20,8 @@ const MAX_CHOICE_LEN = 100;
 const AUTOCOMPLETE_TIMEOUT_MS = 2200;
 const MAX_FITTED_INLINE = 120;
 const NICKNAME_MAX = 64;
+// hangar-service's vehicle limit; also keeps echoed input well inside Discord's 2000-char reply.
+const SHIP_MAX = 200;
 
 const clamp = (s, n = MAX_CHOICE_LEN) => {
   const str = String(s == null ? '' : s);
@@ -40,15 +42,15 @@ class HangarSlashCommand extends BaseSlashCommand {
         .addSubcommand((s) => s.setName('list').setDescription('List the ships in a hangar')
           .addUserOption(member))
         .addSubcommand((s) => s.setName('add').setDescription('Add a ship to a hangar')
-          .addStringOption((o) => o.setName('ship').setDescription('Ship model').setRequired(true).setAutocomplete(true))
+          .addStringOption((o) => o.setName('ship').setDescription('Ship model').setRequired(true).setAutocomplete(true).setMaxLength(SHIP_MAX))
           .addStringOption((o) => o.setName('nickname').setDescription('Optional nickname').setRequired(false).setMaxLength(NICKNAME_MAX))
           .addUserOption(member))
         .addSubcommand((s) => s.setName('rename').setDescription("Change a ship's nickname")
-          .addStringOption((o) => o.setName('ship').setDescription('Ship in the hangar').setRequired(true).setAutocomplete(true))
+          .addStringOption((o) => o.setName('ship').setDescription('Ship in the hangar').setRequired(true).setAutocomplete(true).setMaxLength(SHIP_MAX))
           .addStringOption((o) => o.setName('nickname').setDescription('New nickname').setRequired(true).setMaxLength(NICKNAME_MAX))
           .addUserOption(member))
         .addSubcommand((s) => s.setName('remove').setDescription('Remove a ship from a hangar')
-          .addStringOption((o) => o.setName('ship').setDescription('Ship in the hangar').setRequired(true).setAutocomplete(true))
+          .addStringOption((o) => o.setName('ship').setDescription('Ship in the hangar').setRequired(true).setAutocomplete(true).setMaxLength(SHIP_MAX))
           .addUserOption(member)),
       cooldown: 2,
       ephemeral: true,
