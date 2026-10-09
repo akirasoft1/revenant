@@ -41,7 +41,7 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | DELETE | `/v1/members/{discordId}/ships/{shipId}` | – | `{deleted: true, shipId}` |
 | PUT | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | `{item}` (uuid or exact Wiki name) | `{ship: Ship}` |
 | DELETE | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | – | `{ship: Ship}` (reset to stock) |
-| POST | `/v1/members/{discordId}/fit` | `{ship, item, slot?}` (free text) | `{member, ship: {shipId, label, vehicle}, item: {uuid, name, type, size}, changes: [Change], unchanged}` — see "Chat edits" |
+| POST | `/v1/members/{discordId}/fit` | `{ship, item, slot?}` (free text) | `{member, ship: {shipId, label, vehicle}, item: {uuid, name, type, size, matchedBy: "exact" \| "fuzzy"}, changes: [Change], unchanged}` — see "Chat edits" |
 | POST | `/v1/members/{discordId}/ships/{shipRef}/reset` | `{slot?}` (body optional) | `{member, ship: {shipId, label, vehicle}, changes: [Change], unchanged}` — see "Chat edits" |
 | GET | `/v1/catalog/vehicles?q=&limit=` | – | `{vehicles: [VehicleSummary]}` (≤25) |
 | GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary, slots: [SlotDef]}` |
