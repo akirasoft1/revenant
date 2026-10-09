@@ -123,6 +123,10 @@ without ever spinning up a pod. Each prompt runs `--runs` times and
 - `unprompted_hangar_calls` — count of runs of any case NOT flagged `hangar`
   (controls, other SC prompts, uncovered/dispute) that called
   `sc_member_hangar` or `sc_member_fit_check` (should be 0; see below).
+- `unprompted_hangar_edits` — count of runs that called a hangar chat-edit
+  tool (`hangar_fit` / `hangar_add_ship` / `hangar_reset`) the case didn't
+  expect: every non-edit case plus the negative edit cases (must be 0; see
+  "Hangar chat-edit cases" below).
 - `sandbox_attempts_total` — sum of sandbox attempts across every prompt in
   the set, SC and control alike (must be 0).
 
@@ -189,9 +193,12 @@ Otherwise it exits **1** if **any** of the four scoring gates hold:
    had no business calling.
 4. `unprompted_hangar_calls > 0` — a member's ships were looked up for a
    question that wasn't about them.
+5. `unprompted_hangar_edits > 0` — a hangar edit tool was called on a case
+   that didn't ask for that write (advice question, someone else's ship, or
+   any other case).
 
 Exit **0** only when preflight passed, no mid-run outage occurred, and all
-four gates pass.
+five gates pass.
 
 ### Member-hangar cases (2026-10-09)
 
@@ -252,8 +259,11 @@ kubectl exec -i -n discord-article-bot deploy/sc-knowledge -- \
 It mints an ID token from `HANGAR_SA_KEY_PATH` (default
 `/var/secrets/hangar/key.json`) with audience `HANGAR_API_URL` and writes
 through the real API as each member (`X-Acting-Member` = the member's own
-id, so no admin id is needed). `--seed` is idempotent (skips a model the
-member already owns); `--cleanup` deletes every ship of both fake members.
+id, so no admin id is needed). `--seed` is idempotent and resets both
+members to EXACTLY the fixture above: ships not in it (or duplicates) are
+deleted, fixture ships with anything fitted are put back to stock
+(`POST …/ships/{shipId}/reset {"slot":"all"}`), missing ones are added.
+`--cleanup` deletes every ship of both fake members.
 Exit 1 names the failing request and its HTTP status/body; exit 2 means
 `HANGAR_API_URL` is unset. Without seeding, the model still calls the
 hangar tools (so `tool_hit_rate` still measures selection), but the answers
@@ -263,3 +273,41 @@ that long after seeding if a probe already read the hangar.
 Do NOT wire into CI (needs creds + spend + a live port-forward); it's an
 on-demand tuning/regression tool, run the same way as
 `eval_sandbox_invocation.py`.
+
+
+### Hangar chat-edit cases (2026-10-09)
+
+Spec `docs/superpowers/specs/2026-10-09-hangar-chat-edits-design.md`. The
+agent's `hangar_fit` / `hangar_add_ship` / `hangar_reset` tools write the
+SPEAKER's own hangar; the speaker is bound in code from
+`ChatRequest.user_id` (no tool has a member argument). Cases flagged
+`hangar_edit: True` run with `user_id` = Akira (`…001`) and **really write**
+through hangar-service:
+
+| prompt (after the label) | expect_tool | scored by |
+|---|---|---|
+| I put the Hemera in my Connie | `hangar_fit` | tool_hit_rate |
+| should I put the Hemera in my Connie? | None (advice) | `unprompted_hangar_edits` |
+| put a Hemera in Micro's Titan (roster names Micro) | None (someone else's ship) | `unprompted_hangar_edits` |
+| I just bought a Cutlass Black | `hangar_add_ship` | tool_hit_rate |
+
+A hit reads `AgentChatResult.hangar_edit_calls` (the edit-tool calls the
+turn actually executed, with their result code); the report prints
+`edit calls per run: [hangar_fit=ok, …]`. Edit cases may read the hangar /
+call `sc_*` tools freely (they're excluded from `control_false_sc_calls`
+and `unprompted_hangar_calls`). Every other case runs as `user_id="eval"`
+(non-numeric), so a stray edit call there is refused as `unknown_speaker`
+and writes nothing — it is still counted by the gate. The Micro case can't
+write to Micro structurally (no member argument); the gate checks the model
+refuses instead of calling a tool at all.
+
+**Fixture reset is automatic.** Because these cases write, `eval_sc.py`
+calls `seed_hangar_eval.seed()` (reset to the fixture) once before the run
+and after every run of an edit case, so each run starts from the same
+hangar and the read-only hangar cases never see a leftover Hemera or Cutlass.
+That needs the hangar-api@ key in the eval's own process: set
+`HANGAR_API_URL=https://hangar-service-hvmf2jpuca-uc.a.run.app` and
+`HANGAR_SA_KEY_PATH` (or run where `/var/secrets/hangar/key.json` is mounted,
+e.g. the agent sidecar pod once it mounts `hangar-api-sa`). Without them the
+run fails preflight (exit 2); `--no-hangar-edits` drops the four edit cases.
+Still run `--cleanup` after the eval to remove the fake members entirely.

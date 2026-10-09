@@ -41,6 +41,12 @@ async def test_preflight_passes_when_available():
     await _preflight(provider, "http://sc.test/mcp")  # must not raise
 
 
+def _cfg():
+    from types import SimpleNamespace
+    return SimpleNamespace(sc_knowledge_url="http://sc.test/mcp",
+                           hangar_api_url="https://hangar.example", hangar_sa_key_path="/k.json")
+
+
 class _NeverCalledAgent:
     """If _run() calls process_chat despite a failed preflight, this fails
     loudly instead of silently returning fake data."""
@@ -53,10 +59,10 @@ async def test_run_exits_2_before_any_process_chat_when_probe_fails(monkeypatch)
     import eval.eval_sc as eval_sc
 
     provider = _FakeProvider(enabled=True, available=False)
-    monkeypatch.setattr(eval_sc, "_build", lambda: (_NeverCalledAgent(), provider, "http://sc.test/mcp"))
+    monkeypatch.setattr(eval_sc, "_build", lambda **kw: (_NeverCalledAgent(), provider, _cfg(), None))
 
     with pytest.raises(SystemExit) as exc:
-        await _run(runs=1)
+        await _run(runs=1, hangar_edits=False)
     assert exc.value.code == 2
 
 
@@ -137,10 +143,70 @@ async def test_run_forwards_case_history_to_process_chat(monkeypatch):
     cases = [{"prompt": "plain", "expect_tool": None},
              {"prompt": "disputed", "expect_tool": None, "sc_dispute": True, "history": history}]
     monkeypatch.setattr(eval_sc, "SC_EVAL_SET", cases)
-    monkeypatch.setattr(eval_sc, "_build", lambda: (agent, provider, "http://sc.test/mcp"))
+    monkeypatch.setattr(eval_sc, "_build", lambda **kw: (agent, provider, _cfg(), None))
 
-    records = await _run(runs=2)
+    records = await _run(runs=2, hangar_edits=False)
     assert len(records) == 4
     assert agent.calls[0] == {"user_id": "eval", "user_message": "plain"}
     assert agent.calls[2] == {"user_id": "eval", "user_message": "disputed", "history": history}
     assert agent.calls[3]["history"] is history
+
+
+async def test_run_with_edit_cases_resets_the_fixture_before_and_after_each_edit_run(monkeypatch):
+    import eval.eval_sc as eval_sc
+
+    agent = _RecordingAgent()
+    provider = _FakeProvider(enabled=True, available=True)
+    events = []
+
+    def fake_reset(config):
+        events.append("reset")
+
+    orig = agent.process_chat
+
+    async def recording(**kw):
+        events.append(kw["user_message"])
+        return await orig(**kw)
+    agent.process_chat = recording
+    cases = [{"prompt": "plain", "expect_tool": None},
+             {"prompt": "I bought X", "expect_tool": "hangar_add_ship", "hangar_edit": True,
+              "user_id": "100000000000000001"}]
+    monkeypatch.setattr(eval_sc, "SC_EVAL_SET", cases)
+    monkeypatch.setattr(eval_sc, "_build", lambda **kw: (agent, provider, _cfg(), object()))
+    monkeypatch.setattr(eval_sc, "reset_hangar_fixture", fake_reset)
+
+    await _run(runs=2)
+    assert events == ["reset", "plain", "plain", "I bought X", "reset", "I bought X", "reset"]
+    assert agent.calls[2]["user_id"] == "100000000000000001"
+
+
+async def test_run_without_a_hangar_client_fails_preflight_unless_edits_skipped(monkeypatch):
+    import eval.eval_sc as eval_sc
+
+    provider = _FakeProvider(enabled=True, available=True)
+    monkeypatch.setattr(eval_sc, "_build", lambda **kw: (_NeverCalledAgent(), provider, _cfg(), None))
+    with pytest.raises(SystemExit) as exc:
+        await _run(runs=1)
+    assert exc.value.code == 2
+
+
+async def test_no_hangar_edits_drops_the_edit_cases(monkeypatch):
+    import eval.eval_sc as eval_sc
+
+    agent = _RecordingAgent()
+    provider = _FakeProvider(enabled=True, available=True)
+    cases = [{"prompt": "plain", "expect_tool": None},
+             {"prompt": "I bought X", "expect_tool": "hangar_add_ship", "hangar_edit": True}]
+    monkeypatch.setattr(eval_sc, "SC_EVAL_SET", cases)
+    monkeypatch.setattr(eval_sc, "_build", lambda **kw: (agent, provider, _cfg(), None))
+    records = await _run(runs=1, hangar_edits=False)
+    assert [c["prompt"] for c, _ in records] == ["plain"]
+
+
+def test_reset_hangar_fixture_mints_for_the_exact_audience_and_seeds():
+    import eval.eval_sc as eval_sc
+    calls = []
+    eval_sc.reset_hangar_fixture(
+        _cfg(), seed_fn=lambda base, token: calls.append((base, token)),
+        mint=lambda aud, key: f"tok:{aud}:{key}")
+    assert calls == [("https://hangar.example", "tok:https://hangar.example:/k.json")]
