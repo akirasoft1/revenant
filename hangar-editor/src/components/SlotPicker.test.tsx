@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -131,5 +132,43 @@ describe('SlotPicker', () => {
     renderWithProviders(<SlotPicker vehicleUuid="veh-1" slot={slot} onPick={() => {}} onClose={onClose} />);
     await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('traps Tab inside the dialog and returns focus to the opener on close', async () => {
+    // Ice Queen is not the current item, so its Fit button is the last focusable.
+    mockFetch({ 'GET /api/v1/catalog/slot-options': { body: { items: COOLERS.slice(1, 2) } } });
+    function Opener() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Change</button>
+          <button>Elsewhere</button>
+          {open && <SlotPicker vehicleUuid="veh-1" slot={slot} onPick={() => {}} onClose={() => setOpen(false)} />}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    renderWithProviders(<Opener />);
+    const opener = screen.getByRole('button', { name: 'Change' });
+    await user.click(opener);
+    const dialog = await screen.findByRole('dialog');
+    await screen.findByRole('button', { name: 'Fit Ice Queen' });
+    expect(dialog).toHaveFocus();
+    const close = screen.getByRole('button', { name: 'Close' });
+    const fit = screen.getByRole('button', { name: 'Fit Ice Queen' });
+    await user.tab();
+    expect(close).toHaveFocus();
+    // Shift+Tab from the first focusable wraps to the last (never leaves the dialog).
+    await user.tab({ shift: true });
+    expect(fit).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+    for (let i = 0; i < 8; i++) {
+      await user.tab();
+      expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    }
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(opener).toHaveFocus();
   });
 });

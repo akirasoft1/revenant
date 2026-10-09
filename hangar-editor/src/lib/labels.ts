@@ -46,12 +46,13 @@ export function typeLabel(type: string): string {
 
 const SKIP_REASONS: Record<string, string> = {
   untracked_slot: 'Slot not tracked by the hangar',
-  untracked: 'Slot not tracked by the hangar',
   unknown_item: 'Item not found in the catalog',
   incompatible: 'Item does not fit this slot',
   unknown_vehicle: 'Ship not found in the catalog',
-  vehicle_not_found: 'Ship not found in the catalog',
   unrecognized_format: 'Could not read this loadout',
+  too_large: 'Loadout data too large',
+  empty_slot: 'Emptied in spviewer — the hangar keeps the stock item',
+  too_many_lookups: 'Too many different items in this file — split it up and import again',
 };
 
 export function skipReasonLabel(reason: string): string {

@@ -60,7 +60,9 @@ export function SignIn() {
         <a className="btn btn-discord" href={loginUrl(next)}>
           Sign in with Discord
         </a>
-        <p className="muted small">Only your public Discord profile (name and avatar) is used.</p>
+        <p className="muted small">
+          Your Discord profile and your membership in the org's Discord server are used to sign you in.
+        </p>
       </div>
     </main>
   );

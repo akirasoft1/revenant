@@ -17,6 +17,8 @@ export function errorText(err: unknown): string {
         ? `Hangar limit reached: at most ${limit} ships per member${count != null ? ` (this hangar has ${count})` : ''}. Remove a ship first.`
         : `Hangar limit reached: ${err.message}`;
     }
+    if (err.code === 'busy') return 'The importer is busy — try again in a moment.';
+    if (err.code === 'too_large') return `Too large: ${err.message}`;
     if (err.status === 403) return `Not allowed: ${err.message}`;
     if (err.status === 503) return `Temporarily unavailable: ${err.message}`;
     return err.message;

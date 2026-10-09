@@ -20,9 +20,9 @@ theme, mobile-friendly). Tests: Vitest + Testing Library (jsdom).
 | (any, signed out) | Landing: "Sign in with Discord" → `/api/auth/login?next=<current path>`. A `?login_error=<code>` from a failed callback is explained (incl. `not_member`: only members of the org's Discord server may sign in, and `discord_unavailable`). `/api/me` 503 → "Login is unavailable right now" |
 | `/` | My hangar: ship cards, add ship (catalog search), rename, remove (with confirm) |
 | `/members` | Directory of members with at least one ship |
-| `/members/:id` | A member's hangar. Read-only unless it is yours or you are an admin (`/api/me` `isAdmin`) |
+| `/members/:id` | A member's hangar (display names always shown with the Discord ID, since names are user-controlled). Read-only unless it is yours or you are an admin (`/api/me` `isAdmin`) |
 | `/members/:id/ships/:shipId` | Ship detail: slot table grouped by type (slot, size, current item, stock/fitted badge). **Change** opens the compatible-item picker (sorted by the type's key stat, respecting lower-is-better; filter by text/size; cheapest UEX price when known). **Reset to stock** |
-| `/import` | spviewer import: export snippet + copy button, upload, per-row preview (changes and skipped reasons), new/existing ship choice, apply, summary |
+| `/import` (`?member=<id>` for admins) | spviewer import: export snippet + copy button, upload, per-row preview (changes and skipped reasons), new/existing ship choice, apply, summary. "Update existing" is pre-selected only for a matching ship with no fitted changes (the import is authoritative and resets every other slot to stock); otherwise "New ship". Admins reach `?member=<id>` from that member's hangar |
 
 ## API
 
@@ -53,9 +53,19 @@ npm run dev        # http://localhost:5173, proxies /api -> http://localhost:808
 ```
 
 Run `hangar-service` locally on 8080 for the proxy (see `hangar-service/README.md`
-"Local run"; `HANGAR_STORAGE=memory`). Discord login needs browser-login env on
-the service and a redirect URI registered for your local origin. Without it,
-`/api/me` answers 503 and the editor shows "Login is unavailable right now".
+"Local run"; `HANGAR_STORAGE=memory`). For a real Discord login through the dev
+server:
+
+- start the service with `HANGAR_PUBLIC_ORIGIN=http://localhost:5173` (the OAuth
+  redirect URI and the CSRF origin check both derive from it), plus
+  `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, a 32+ character `HANGAR_SESSION_KEY`
+  and `HANGAR_ALLOWED_GUILD_IDS`;
+- register `http://localhost:5173/api/auth/callback` as an OAuth2 redirect URI on the
+  Discord application.
+
+The session cookie is `__Host-`-prefixed and `Secure`. Browsers accept that on
+`http://localhost`, but not on other plain-HTTP hosts. Without the browser-login
+env, `/api/me` answers 503 and the editor shows "Login is unavailable right now".
 
 ## Test and build
 

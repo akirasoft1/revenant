@@ -1,14 +1,16 @@
 import { useState, type ChangeEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { MAX_IMPORT_BYTES, importApply, importPreview } from '../api/client';
+import { MAX_IMPORT_BYTES, getHangar, importApply, importPreview } from '../api/client';
 import type { ImportApplyResult, ImportPreviewRow } from '../api/types';
-import { useMe } from '../auth/AuthGate';
+import { canEdit, useMe } from '../auth/AuthGate';
+import { useMemberName } from './MemberHangarPage';
 import { ExportSnippet } from '../components/ExportSnippet';
 import {
   ImportPreview,
   defaultSelections,
   toApplyRows,
+  type FittedCounts,
   type Selections,
 } from '../components/ImportPreview';
 import { shipTitle } from '../components/HangarView';
@@ -35,6 +37,14 @@ export async function readExportFile(file: File): Promise<unknown> {
 export function ImportPage() {
   const me = useMe();
   const qc = useQueryClient();
+  const [params] = useSearchParams();
+  // Admins import into another member's hangar via /import?member=<id>.
+  const target = params.get('member') || me.discordId;
+  const forOther = target !== me.discordId;
+  const targetName = useMemberName(target);
+  const allowed = canEdit(me, target);
+  const [inputKey, setInputKey] = useState(0);
+  const [fittedCounts, setFittedCounts] = useState<FittedCounts>({});
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileData, setFileData] = useState<unknown>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -43,17 +53,28 @@ export function ImportPage() {
   const [result, setResult] = useState<ImportApplyResult | null>(null);
 
   const preview = useMutation({
-    mutationFn: (data: unknown) => importPreview(data),
-    onSuccess: (r) => {
+    mutationFn: async (data: unknown) => {
+      const [r, hangar] = await Promise.all([
+        importPreview(data, forOther ? target : undefined),
+        // Fresh fitted counts decide the safe default (see defaultSelection).
+        qc.fetchQuery({ queryKey: ['hangar', target], queryFn: () => getHangar(target), staleTime: 0 }),
+      ]);
+      const counts: FittedCounts = Object.fromEntries(
+        hangar.ships.map((s) => [s.shipId, Object.keys(s.fitted ?? {}).length]),
+      );
+      return { rows: r, counts };
+    },
+    onSuccess: ({ rows: r, counts }) => {
       setRows(r);
-      setSelections(defaultSelections(r));
+      setFittedCounts(counts);
+      setSelections(defaultSelections(r, counts));
     },
   });
   const apply = useMutation({
-    mutationFn: () => importApply(fileData, toApplyRows(rows ?? [], selections)),
+    mutationFn: () => importApply(fileData, toApplyRows(rows ?? [], selections), forOther ? target : undefined),
     onSuccess: (r) => {
       setResult(r);
-      void qc.invalidateQueries({ queryKey: ['hangar', me.discordId] });
+      void qc.invalidateQueries({ queryKey: ['hangar', target] });
       void qc.invalidateQueries({ queryKey: ['members'] });
     },
   });
@@ -78,6 +99,7 @@ export function ImportPage() {
   }
 
   function startOver() {
+    setInputKey((k) => k + 1); // fresh <input type=file> so the same file can be picked again
     setFileName(null);
     setFileData(null);
     setRows(null);
@@ -88,10 +110,29 @@ export function ImportPage() {
   }
 
   const applyRows = rows ? toApplyRows(rows, selections) : [];
+  const shipLink = (shipId: string) => `/members/${target}/ships/${shipId}`;
+
+  if (!allowed) {
+    return (
+      <>
+        <h1>Import from spviewer</h1>
+        <p className="alert alert-error" role="alert">
+          Only admins can import into another member’s hangar.
+        </p>
+      </>
+    );
+  }
 
   return (
     <>
       <h1>Import from spviewer</h1>
+      {forOther && (
+        <p className="alert alert-warn" data-testid="import-target">
+          <span>
+            Importing into {targetName !== target ? `${targetName} (${target})` : target}’s hangar.
+          </span>
+        </p>
+      )}
 
       <section className="panel">
         <h2>1. Export your saved loadouts</h2>
@@ -118,7 +159,7 @@ export function ImportPage() {
       <section className="panel">
         <h2>2. Upload the file</h2>
         <label className="file">
-          <input type="file" accept=".json,application/json" onChange={(e) => void onFile(e)} aria-label="Loadout file" />
+          <input key={inputKey} type="file" accept=".json,application/json" onChange={(e) => void onFile(e)} aria-label="Loadout file" />
         </label>
         {fileName && !fileError && <p className="muted small">{fileName}</p>}
         {fileError && (
@@ -148,6 +189,7 @@ export function ImportPage() {
           <ImportPreview
             rows={rows}
             selections={selections}
+            fittedCounts={fittedCounts}
             disabled={apply.isPending}
             onChange={(i, next) => setSelections((s) => ({ ...s, [i]: next }))}
           />
@@ -177,12 +219,13 @@ export function ImportPage() {
         <section className="panel" aria-label="Import summary">
           <h2>Done</h2>
           <p>
-            {result.ships.length} {result.ships.length === 1 ? 'ship' : 'ships'} saved to your hangar.
+            {result.ships.length} {result.ships.length === 1 ? 'ship' : 'ships'} saved to{' '}
+            {forOther ? `${targetName}’s` : 'your'} hangar.
           </p>
           <ul className="summary">
             {result.ships.map((s) => (
               <li key={s.shipId}>
-                <Link to={`/members/${me.discordId}/ships/${s.shipId}`}>{shipTitle(s)}</Link>{' '}
+                <Link to={shipLink(s.shipId)}>{shipTitle(s)}</Link>{' '}
                 <span className="muted">
                   {s.vehicleName} · {Object.keys(s.fitted ?? {}).length} fitted
                 </span>
@@ -204,8 +247,8 @@ export function ImportPage() {
             </>
           )}
           <div className="toolbar">
-            <Link className="btn btn-primary" to="/">
-              Go to my hangar
+            <Link className="btn btn-primary" to={forOther ? `/members/${target}` : '/'}>
+              {forOther ? `Go to ${targetName}’s hangar` : 'Go to my hangar'}
             </Link>
             <button className="btn btn-ghost" onClick={startOver}>
               Import another file

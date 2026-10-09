@@ -10,22 +10,38 @@ export interface RowSelection {
 
 export type Selections = Record<number, RowSelection>;
 
+/**
+ * Row-level skips (no `slot`) that make the whole row unusable. The server
+ * resolves the vehicle BEFORE decoding, so `vehicle` can be set on a row whose
+ * loadout could not be read at all; such a row must not be importable.
+ */
+const ROW_BLOCKING_REASONS = new Set(['unrecognized_format', 'too_large', 'unknown_vehicle']);
+
 export function importable(row: ImportPreviewRow): boolean {
-  return row.vehicle != null;
+  if (row.vehicle == null) return false;
+  return !row.skipped.some((s) => !s.slot && ROW_BLOCKING_REASONS.has(s.reason));
 }
 
-export function defaultSelection(row: ImportPreviewRow): RowSelection {
-  const first = row.matchingShips[0]?.shipId ?? '';
+/** shipId -> number of fitted (non-stock) slots on that existing ship. */
+export type FittedCounts = Record<string, number>;
+
+/**
+ * Default target: "Update existing" ONLY when a matching ship has no fitted
+ * overrides (the authoritative import loses nothing there); otherwise a new ship.
+ * The existing-ship select still defaults to the first match when chosen by hand.
+ */
+export function defaultSelection(row: ImportPreviewRow, fitted: FittedCounts = {}): RowSelection {
+  const pristine = row.matchingShips.find((m) => (fitted[m.shipId] ?? Infinity) === 0);
   return {
     include: importable(row),
-    mode: first ? 'existing' : 'new',
-    shipId: first,
+    mode: pristine ? 'existing' : 'new',
+    shipId: pristine?.shipId ?? row.matchingShips[0]?.shipId ?? '',
     nickname: '',
   };
 }
 
-export function defaultSelections(rows: ImportPreviewRow[]): Selections {
-  return Object.fromEntries(rows.map((r) => [r.rowIndex, defaultSelection(r)]));
+export function defaultSelections(rows: ImportPreviewRow[], fitted: FittedCounts = {}): Selections {
+  return Object.fromEntries(rows.map((r) => [r.rowIndex, defaultSelection(r, fitted)]));
 }
 
 /** The `rows` body for `/import/spviewer/apply` (only included, importable rows). */
@@ -47,16 +63,18 @@ export function toApplyRows(rows: ImportPreviewRow[], sel: Selections): ImportAp
 interface Props {
   rows: ImportPreviewRow[];
   selections: Selections;
+  /** Fitted-change counts of the target member's ships (for the overwrite note). */
+  fittedCounts?: FittedCounts;
   onChange: (rowIndex: number, next: RowSelection) => void;
   disabled?: boolean;
 }
 
-export function ImportPreview({ rows, selections, onChange, disabled }: Props) {
+export function ImportPreview({ rows, selections, fittedCounts = {}, onChange, disabled }: Props) {
   if (rows.length === 0) return <p className="empty">The file contains no saved loadouts.</p>;
   return (
     <ol className="import-rows">
       {rows.map((row) => {
-        const sel = selections[row.rowIndex] ?? defaultSelection(row);
+        const sel = selections[row.rowIndex] ?? defaultSelection(row, fittedCounts);
         const set = (patch: Partial<RowSelection>) => onChange(row.rowIndex, { ...sel, ...patch });
         const ok = importable(row);
         return (
@@ -74,6 +92,7 @@ export function ImportPreview({ rows, selections, onChange, disabled }: Props) {
               </label>
               <span className="muted">
                 {row.vehicle ? row.vehicle.name : 'ship not recognized'}
+                {row.vehicle && !ok && ' · cannot be imported'}
                 {row.patch && ` · ${row.patch}`}
               </span>
             </div>
@@ -164,9 +183,7 @@ export function ImportPreview({ rows, selections, onChange, disabled }: Props) {
                         </option>
                       ))}
                     </select>
-                    <p className="muted small">
-                      Replaces that ship’s fitted components: slots this loadout doesn’t change go back to stock.
-                    </p>
+                    <OverwriteNote count={fittedCounts[sel.shipId]} />
                   </>
                 )}
               </div>
@@ -175,5 +192,21 @@ export function ImportPreview({ rows, selections, onChange, disabled }: Props) {
         );
       })}
     </ol>
+  );
+}
+
+function OverwriteNote({ count }: { count: number | undefined }) {
+  const lead =
+    count == null
+      ? ''
+      : count === 0
+        ? 'That ship is all stock today, so nothing is lost. '
+        : `That ship has ${count} fitted ${count === 1 ? 'change' : 'changes'} that will be replaced. `;
+  return (
+    <p className={count ? 'warn-text small overwrite-note' : 'muted small overwrite-note'}>
+      {lead}
+      The import is authoritative for that ship: only the changes listed above are fitted, and every other slot —
+      including skipped slots and slots not in this loadout — is reset to stock.
+    </p>
   );
 }

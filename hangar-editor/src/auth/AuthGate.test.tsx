@@ -118,4 +118,32 @@ describe('AuthGate', () => {
     await waitFor(() => expect(screen.getByRole('link', { name: 'Sign in with Discord' })).toBeInTheDocument());
     expect(calls.some((c) => c.method === 'POST' && c.url === '/api/auth/logout')).toBe(true);
   });
+
+  it('reports a failed sign-out and stays signed in (no unhandled rejection)', async () => {
+    mockFetch({
+      'GET /api/me': { body: ME },
+      'GET /api/v1/members/111/hangar': { body: { member: '111', ships: [] } },
+      'POST /api/auth/logout': { status: 403, body: { error: 'forbidden', message: 'cross-origin write refused' } },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out failed: Not allowed: cross-origin write refused');
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Sign in with Discord' })).toBeNull();
+  });
+
+  it('says the Discord profile and server membership are used to sign in', async () => {
+    mockFetch({ 'GET /api/me': { status: 401, body: { error: 'unauthenticated', message: 'x' } } });
+    renderWithProviders(
+      <AuthGate>
+        <Secret />
+      </AuthGate>,
+    );
+    expect(
+      await screen.findByText(
+        "Your Discord profile and your membership in the org's Discord server are used to sign you in.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

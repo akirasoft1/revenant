@@ -766,3 +766,20 @@ a:focus-visible {
   flex-basis: 100%;
   margin: 0;
 }
+
+.member-id {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+h1 .member-id {
+  font-size: 0.8rem;
+}
+.overwrite-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+.header-error {
+  flex-basis: 100%;
+  margin: 0;
+}

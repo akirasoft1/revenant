@@ -110,6 +110,8 @@ describe('ShipDetailPage', () => {
     expect(await screen.findByText('read-only')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
     expect(await screen.findByRole('link', { name: 'Wingman’s hangar' })).toHaveAttribute('href', '/members/222');
+    // The (spoofable) display name is always accompanied by the Discord ID.
+    expect(document.querySelector('.crumbs')).toHaveTextContent('Wingman’s hangar 222');
   });
 
   it("lets admins edit another member's ship", async () => {

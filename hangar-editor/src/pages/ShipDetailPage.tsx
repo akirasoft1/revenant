@@ -9,7 +9,7 @@ import { sizeLabel } from '../lib/picker';
 import { shipTitle } from '../components/HangarView';
 import { SlotPicker } from '../components/SlotPicker';
 import { ErrorNote, Loading, errorText } from '../components/Status';
-import { useMemberName } from './MemberHangarPage';
+import { MemberId, useMemberName } from './MemberHangarPage';
 
 export function groupSlots(loadout: LoadoutSlot[]): [string, LoadoutSlot[]][] {
   const groups = new Map<string, LoadoutSlot[]>();
@@ -77,7 +77,14 @@ export function ShipDetailPage() {
   return (
     <>
       <p className="crumbs">
-        <Link to={hangarLink}>{memberId === me.discordId ? 'My hangar' : `${ownerName}’s hangar`}</Link> ›
+        <Link to={hangarLink}>{memberId === me.discordId ? 'My hangar' : `${ownerName}’s hangar`}</Link>
+        {memberId !== me.discordId && (
+          <>
+            {' '}
+            <MemberId id={memberId} name={ownerName} />
+          </>
+        )}{' '}
+        ›
       </p>
       <h1>
         {shipTitle(ship)} {!editable && <span className="badge">read-only</span>}

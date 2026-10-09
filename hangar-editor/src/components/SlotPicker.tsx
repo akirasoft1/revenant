@@ -120,6 +120,13 @@ export function SlotOptionList({ options, currentUuid, stockUuid, busy, onPick }
   );
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusables(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)];
+}
+
 interface PickerProps {
   vehicleUuid: string;
   slot: LoadoutSlot;
@@ -141,10 +148,39 @@ export function SlotPicker({ vehicleUuid, slot, stockUuid, busy, error, onPick, 
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
+    // Remember the opener ("Change" button) and give focus back to it on close.
+    const opener = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialog.current) return;
+      // Focus trap: Tab / Shift+Tab cycle inside the dialog.
+      const items = focusables(dialog.current);
+      if (items.length === 0) {
+        e.preventDefault();
+        dialog.current.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      const inside = dialog.current.contains(active);
+      if (e.shiftKey && (active === first || active === dialog.current || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !inside)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener('keydown', onKey);
     dialog.current?.focus();
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (opener && opener.isConnected) opener.focus();
+    };
   }, []);
 
   return (

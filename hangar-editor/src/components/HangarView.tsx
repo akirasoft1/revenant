@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { deleteShip, getHangar, renameShip } from '../api/client';
 import type { Ship } from '../api/types';
+import { useMe } from '../auth/AuthGate';
 import { AddShipForm } from './AddShipForm';
 import { ErrorNote, Loading, errorText } from './Status';
 
@@ -112,6 +113,7 @@ function ShipCard({ ship, memberId, editable }: { ship: Ship; memberId: string; 
 }
 
 export function HangarView({ memberId, editable }: { memberId: string; editable: boolean }) {
+  const me = useMe();
   const hangar = useQuery({ queryKey: ['hangar', memberId], queryFn: () => getHangar(memberId) });
   const [adding, setAdding] = useState(false);
 
@@ -128,7 +130,10 @@ export function HangarView({ memberId, editable }: { memberId: string; editable:
           <button className="btn btn-primary" onClick={() => setAdding((v) => !v)}>
             {adding ? 'Close' : '+ Add ship'}
           </button>
-          <Link className="btn btn-ghost" to="/import">
+          <Link
+            className="btn btn-ghost"
+            to={memberId === me.discordId ? '/import' : `/import?member=${encodeURIComponent(memberId)}`}
+          >
             Import from spviewer
           </Link>
         </div>

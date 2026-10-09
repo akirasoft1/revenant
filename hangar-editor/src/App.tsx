@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { AuthGate, useMe } from './auth/AuthGate';
 import { logout } from './api/client';
+import { errorText } from './components/Status';
 import { ME_KEY } from './queryClient';
 import { MyHangarPage } from './pages/MyHangarPage';
 import { MemberHangarPage } from './pages/MemberHangarPage';
@@ -14,15 +16,20 @@ function Header() {
   const me = useMe();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   async function signOut() {
+    setSignOutError(null);
     try {
       await logout();
-    } finally {
-      navigate('/');
-      // Drop every other member's cached data, then re-ask /api/me (now 401 -> sign-in page).
-      qc.removeQueries({ predicate: (q) => q.queryKey[0] !== ME_KEY[0] });
-      await qc.resetQueries({ queryKey: ME_KEY });
+    } catch (err) {
+      // The session cookie is still valid, so stay signed in and say why.
+      setSignOutError(`Sign-out failed: ${errorText(err)}`);
+      return;
     }
+    navigate('/');
+    // Drop every other member's cached data, then re-ask /api/me (now 401 -> sign-in page).
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== ME_KEY[0] });
+    await qc.resetQueries({ queryKey: ME_KEY });
   }
   return (
     <header className="topbar">
@@ -44,6 +51,11 @@ function Header() {
           Sign out
         </button>
       </div>
+      {signOutError && (
+        <p className="alert alert-error header-error" role="alert">
+          {signOutError}
+        </p>
+      )}
     </header>
   );
 }

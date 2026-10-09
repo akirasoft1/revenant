@@ -37,7 +37,12 @@ export function MembersPage() {
           {shown.map((m) => (
             <li key={m.discordId}>
               <Link to={m.discordId === me.discordId ? '/' : `/members/${m.discordId}`}>
-                <span className="member-name">{memberName(m, me)}</span>
+                <span className="member-name">
+                  {memberName(m, me)}
+                  {memberName(m, me) !== m.discordId && (
+                    <span className="muted small member-id"> {m.discordId}</span>
+                  )}
+                </span>
                 {m.discordId === me.discordId && <span className="badge">you</span>}
                 <span className="muted">
                   {m.shipCount} {m.shipCount === 1 ? 'ship' : 'ships'}
