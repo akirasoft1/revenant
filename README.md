@@ -102,6 +102,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 - **Web editor at https://hangar.aklabs.io**: sign in with Discord (members of the org's Discord server only), add/rename/remove ships, fit components slot by slot from only-compatible items (ranked by key stat, with the cheapest shop price), reset to stock, browse other members' hangars, and import saved loadouts from spviewer.eu. Source in `hangar-editor/`; served by `hangar-service` behind a GCP load balancer
 - Ask in chat or voice: "what's a purchasable upgraded shield for my Harbinger?", "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?", "can Micro use it?", "what's on my Connie?"
 - Ship data is looked up only for questions about a member's own ships — never mentioned unprompted
+- **Chat edits (text and voice)**: tell the bot what you did — "I put the Hemera in my Connie", "I just bought a Cutlass Black", "I put my Harbinger's shields back to stock" — and it records it right away and says what changed ("Connie's quantum drive: Bolon → Hemera"). Only your own hangar: the speaker is taken from Discord (the message author, or the current voice speaker), never from what's said. Questions like "should I…?" never write; if a ship, item or slot is ambiguous the bot asks which
 
 ### Additional Features
 
@@ -400,12 +401,13 @@ Backs channel-voice text chat and voice sessions with live Star Citizen data (it
 
 ### Member Hangar Configuration
 
-Set on the **bot** (for `/hangar`) and on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools). See `CLAUDE.md`'s "Member hangar" section and `hangar-service/README.md`.
+Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `CLAUDE.md`'s "Member hangar" section and `hangar-service/README.md`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HANGAR_API_URL` | `` | hangar-service URL, also the ID-token audience — must equal the service's `HANGAR_AUDIENCE` exactly (`https://hangar-service-hvmf2jpuca-uc.a.run.app`, no trailing slash). Unset on the bot → `/hangar` is not registered; unset on sc-knowledge → the hangar tools answer "unavailable" |
 | `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | `hangar-api@` service-account key (Secret `hangar-api-sa`) used to mint the ID token |
+| `HANGAR_EDITS_ENABLED` | `true` when `HANGAR_API_URL` is set | Agent + voice sidecars: chat edits of the speaker's own hangar. `false` turns them off; without `HANGAR_API_URL` they are always off |
 | `HANGAR_EDITOR_URL` | `` | Bot only: web editor URL (`https://hangar.aklabs.io`). When set, `/hangar list` ends with "Edit in the browser: <url>" |
 
 ## Commands

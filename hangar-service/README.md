@@ -4,8 +4,9 @@ Per-member Star Citizen ship loadouts. A small FastAPI service on **Cloud Run**
 (GCP project `revenant-discord-bot-2`, region `us-central1`) that stores each
 Discord member's ships in **Firestore** (`members/{discordId}/ships/{shipId}`)
 and derives every ship's component slots from the **Star Citizen Wiki API**.
-Callers: the bot's `/hangar` command and sc-knowledge's `sc_member_hangar` /
-`sc_member_fit_check` tools (Google ID tokens), and the web editor at
+Callers: the bot's `/hangar` command, sc-knowledge's `sc_member_hangar` /
+`sc_member_fit_check` tools, and the agent and voice sidecars' chat-edit tools
+`hangar_fit` / `hangar_add_ship` / `hangar_reset` (Google ID tokens), and the web editor at
 `https://hangar.aklabs.io` (Discord login, signed session cookie).
 
 Specs: `docs/superpowers/specs/2026-10-09-member-hangar-design.md` (service),
@@ -90,6 +91,10 @@ the real speaker as `X-Acting-Member` (same write rule as every other write:
 acting member == path member, or an admin; browser sessions need a
 same-origin request). The server does ALL resolution; every resolution error
 is returned before anything is written.
+The callers bind `X-Acting-Member` from trusted plumbing, never from a tool
+argument (agent: `ChatRequest.user_id`; voice: the current `SetSpeaker.user_id`,
+else the session opener), and their tools have no member parameter — see
+`CLAUDE.md` "Member hangar" → "Chat edits".
 
 - **Ship** (`ship`, `shipRef`): an exact `shipId`, else free text resolved
   within the member's own hangar by `src/ship_resolve.py` — exact nickname →
