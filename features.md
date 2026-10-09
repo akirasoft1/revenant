@@ -159,6 +159,14 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Works in Voice Too**: The same tools are available as Gemini Live function calls during a live voice conversation, so you can ask Star Citizen questions out loud and get an answer sourced from current game data.
 - **Graceful Degradation**: If the knowledge service is unreachable, chat and voice turns continue normally without the tools (no error, no dropped turn) — controlled independently per sidecar by `SC_KNOWLEDGE_ENABLED`.
 
+### Member hangar (per-member ship loadouts)
+- **Your ships, your loadouts**: each member's Star Citizen ships (with optional nicknames) and what is fitted in every component slot — stock, or changed from stock — are stored in `hangar-service` (FastAPI + Firestore on Cloud Run); component slots come from the Star Citizen Wiki
+- **Ask about them in chat or voice**: "what's a purchasable upgraded shield for my Harbinger?" (finds your current shield, then ranks better ones of that size that shops sell right now — `sc_compare_components(purchasable_only=True)`), "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?" (per-ship, per-slot `upgrade`/`downgrade`/`sidegrade`/`same` verdicts, plus which ships can't take it and why), "can Micro use it?" (someone else's ships), "what's on my Connie?" (nicknames and shorthand like "Connie" resolve)
+- **Only when asked**: ship data is fetched by tool only for questions about a member's own ships — never injected into prompts or mentioned unprompted; "my" means whoever is speaking, other members resolve via the identity roster
+- **`/hangar`**: `list [member]`, `add ship [nickname] [member]` (catalog autocomplete), `rename ship nickname [member]`, `remove ship [member]` — ephemeral; anyone can list anyone's hangar, edits are self-only unless you're a bot admin
+- **Graceful degradation**: a hangar outage returns "unavailable" to the model (the turn continues) and "Hangar service is unavailable right now." to `/hangar`
+- **Limitations / planned**: no loadout editing yet (slot changes exist in the API; a web loadout editor and chat edits like "I put the Hemera in my Connie" are the next two projects); missiles aren't tracked; no loose inventory (items in storage); no org-wide queries ("who has a ship that fits a size-2 quantum drive?"); optional spviewer import into the editor
+
 ### Member Identity (who said what)
 - **Registry**: Mongo `member_identities` holds each member's preferred address name and aliases, cached in memory (3s startup retry, 60s refresh, serialised writes); it is the first layer of `SpeakerNames` resolution, so chat, recall, `/tldr` and voice `[SPEAKER:]` markers all use it
 - **`/whois`**: `show`, `address`, `alias-add`, `alias-remove` (ephemeral); anyone edits themselves, admins edit anyone; names validated (letters required, 2+ characters, longer names shortened to 24, no 15+ digit runs, max 10 aliases) and unique across members
@@ -235,6 +243,11 @@ The "planned" section below reflects items that have NOT yet shipped. Anything p
 ### Chat / personality
 - [ ] **More personality archetypes beyond `channel-voice`.** All other personalities were removed in v2.8.x; reintroducing distinct ones is a backlog item.
 - [ ] **Custom personality creation via commands.**
+
+### Member hangar follow-ups
+- [ ] **Web loadout editor** (project 2): Discord-OAuth browser editor on hangar-service for bulk-seeding loadouts; needs a public-access approach other than Cloud Run invoker IAM.
+- [ ] **Chat edits** (project 3): "I put the Hemera in my Connie" records the change via the existing slot `PUT`.
+- [ ] **Loose inventory**, **org-wide queries**, **spviewer import** (from a member's own exported `SCSPVDatabase`/`vehiclesLoadout` rows).
 
 ### Digests
 - [ ] **Digests channel feature.** Blocked on a dedicated Discord channel being set up; see project memory.

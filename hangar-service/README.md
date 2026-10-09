@@ -46,12 +46,33 @@ catalog can't supply that ship's slots (the rest of the response still works).
 Slot ids contain `/` for nested slots
 (`hardpoint_gun_laser_top_left/hardpoint_class_2`); put them in the URL raw or
 `%2F`-encoded, both route. Fitting a slot's stock item resets it (`fitted`
-holds only changes from stock). Full shapes: Task 2 report /
-`src/app.py`.
+holds only changes from stock). Full shapes: `src/app.py`.
 
 **Use `/health`, not `/healthz`, against Cloud Run.** Cloud Run's front end
 reserves URL paths ending in `z`, so `/healthz` gets Google's own 404 before it
 ever reaches the container. `/healthz` is kept for local and in-cluster parity.
+
+## Catalog rules (Star Citizen Wiki `GET /api/vehicles/{slug|uuid}` → `ports[]`)
+
+- A port is a **slot** when its OWN `editable` is true and its `type` (or,
+  for a port empty in stock, one of its `compatible_types`) is in
+  `SLOT_TYPES` = QuantumDrive, Shield, PowerPlant, Cooler, Radar, WeaponGun,
+  Turret, MissileLauncher, WeaponMining, TractorBeam.
+- **Nesting:** ports are walked at every depth and the parent's
+  `editable_children` flag is NOT used — live data has S5 turret gimbals with
+  `editable_children: false` while the gun inside is `editable: true`. Slot
+  ids join the port names with `/` (up to three levels, e.g.
+  `hardpoint_turret_base_upper/hardpoint_weapon_left/hardpoint_class_2`).
+- **Refitting a parent hides its stock children** in the effective loadout
+  (an explicitly fitted child stays).
+- **Missiles are not tracked** (`Missile` isn't a slot type; sc-knowledge's
+  fit check answers `not_tracked`). A `MissileLauncher` rack is a slot only
+  where the Wiki marks the port editable — on the Taurus and Harbinger the
+  racks are `editable: false`, so they don't appear.
+- Every loadout slot carries `compatibleTypes`; sc-knowledge's fit check
+  applies the same compatibility rule as `check_compatible` here (type in
+  `compatibleTypes`, sub-types only when the slot lists some and the item's
+  isn't `UNDEFINED`, size within range) — change both together.
 
 ## Auth
 
