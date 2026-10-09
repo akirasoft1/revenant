@@ -614,3 +614,58 @@ async def test_find_item_asr_retry_not_attempted_when_vehicle_ambiguous():
     }, uex_routes=uex_routes).find_item("Freelancer")
     assert r["error"] == "ambiguous"
     assert set(r["candidates"]) == {"Freelancer MAX", "Freelancer MIS"}
+
+
+# --- purchasable_only (member hangar UC1) -----------------------------------
+# The shield S2 fixture has 7 shields with no UEX shop buy price at all.
+_UNPRICED_S2_SHIELDS = {"CoverAll", "FR-76", "FullStop", "SecureShield", "Sheut", "Sukoran", "Umbra"}
+
+
+async def test_compare_purchasable_only_excludes_items_without_a_shop_price():
+    r = await _tools().compare_components("shield", 2, purchasable_only=True, limit=20)
+    names = {x["name"] for x in r["results"]}
+    assert names and not (names & _UNPRICED_S2_SHIELDS)
+    assert all(x["cheapest"] and x["cheapest"]["price_auec"] > 0 for x in r["results"])
+    assert r["excluded_not_purchasable"] == len(_UNPRICED_S2_SHIELDS)
+    assert r["purchasable_only"] is True
+
+
+async def test_compare_default_still_includes_unpurchasable_items():
+    r = await _tools().compare_components("shield", 2, limit=20)
+    names = {x["name"] for x in r["results"]}
+    # The unpriced 10560-HP shields outrank every priced one by default.
+    assert "CoverAll" in names
+    assert "excluded_not_purchasable" not in r
+    assert r["results"][0]["cheapest"] is None
+
+
+async def test_compare_purchasable_only_ranking_unchanged_among_purchasable():
+    all_rows = (await _tools().compare_components("shield", 2, limit=20))["results"]
+    expected = [x["name"] for x in all_rows if x["cheapest"]]
+    got = [x["name"] for x in (await _tools().compare_components(
+        "shield", 2, purchasable_only=True, limit=20))["results"]]
+    # The unfiltered list is capped at 20 of 22 rows, so it can stop short
+    # of the filtered one; the order must agree over the shared prefix.
+    assert got[:len(expected)] == expected and len(got) > len(expected)
+
+
+# --- component(): item profile for the hangar fit-check -----------------------
+
+async def test_component_returns_type_size_key_stats_and_uuid():
+    r = await _tools().component("V801-12")
+    assert "error" not in r
+    assert r["item"]["name"] == "V801-12"
+    assert r["item"]["type"] == "Radar" and r["item"]["size"] == 2
+    assert "assignment_range_max" in r["item"]["key_stats"]
+    assert r["uuid"]
+
+
+async def test_component_ambiguous_passes_through():
+    r = await _tools().component("V801")
+    assert r["error"] == "ambiguous" and "V801-12" in r["candidates"]
+
+
+async def test_component_not_found():
+    wiki = build_wiki(load(), transport=fixture_transport(_EMPTY_WIKI_ROUTES))
+    r = await ItemTools(wiki, TTLCache()).component("Nonexistium")
+    assert r["error"] == "not_found"

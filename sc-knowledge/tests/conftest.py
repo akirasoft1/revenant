@@ -22,3 +22,14 @@ def fixture_transport(routes: dict[str, str]) -> httpx.MockTransport:
                 return httpx.Response(200, json=load_fixture(fname))
         return httpx.Response(404, json={"status": "not_found"})
     return httpx.MockTransport(handler)
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_hangar_env(monkeypatch):
+    """Tests build Config via load(); never let a developer's shell point
+    them at the real hangar-service."""
+    monkeypatch.delenv("HANGAR_API_URL", raising=False)
+    monkeypatch.delenv("HANGAR_SA_KEY_PATH", raising=False)

@@ -27,7 +27,9 @@ from . import tracing
 from .cache import TTLCache
 from .config import Config, load
 from .envelope import error
+from .hangar import build_hangar_client
 from .tools_guides import GuideStore, GuideTools
+from .tools_hangar import HangarTools
 from .tools_items import ItemTools
 from .tools_missions import MissionTools
 from .tools_shops import ShopTools
@@ -69,7 +71,7 @@ def _patch_note(result_game_version: str | None, live_game_version: str | None) 
 
 def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = None,
               wiki_transport: httpx.AsyncBaseTransport | None = None,
-              guides_dir: str | None = None) -> Starlette:
+              guides_dir: str | None = None, hangar_client=None) -> Starlette:
     cache = TTLCache()
     uex = build_uex(config, uex_transport)
     wiki = build_wiki(config, wiki_transport)
@@ -81,6 +83,16 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     # spawn resolves lazily: _spawn is defined below, and routing the shop
     # tool's background refreshes through it means the lifespan cancels them.
     shop_tools = ShopTools(uex, cache, spawn=lambda coro: _spawn(coro))
+    # READ-ONLY hangar-service client; None when HANGAR_API_URL is unset, in
+    # which case the hangar tools answer error("unavailable") rather than
+    # failing startup. Tests inject a fake.
+    if hangar_client is None:
+        hangar_client = build_hangar_client(config)
+    if hangar_client is None:
+        logger.info("HANGAR_API_URL unset: sc_member_hangar / sc_member_fit_check will answer 'unavailable'")
+    else:
+        logger.info("member hangar tools enabled against %s", config.hangar_api_url or "injected client")
+    hangar_tools = HangarTools(hangar_client, item_tools)
 
     async def _live_game_version() -> str | None:
         # Broad `except Exception` deliberately, not just UpstreamError: this
@@ -194,7 +206,7 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
     @mcp.tool(name="sc_compare_components")
     async def sc_compare_components(type: str, size: int, rank_by: str | None = None,
                                     grade: str | None = None, component_class: str | None = None,
-                                    limit: int = 5) -> dict:
+                                    limit: int = 5, purchasable_only: bool = False) -> dict:
         """Rank Star Citizen ship components of one type and size (shield,
         power_plant, cooler, quantum_drive, radar, weapon, missile) against
         each other by their real in-game stats, best first, optionally
@@ -204,12 +216,17 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         rank_by="most powerful" or "shield_hp") -- an unrecognised rank_by
         never fails the call, it falls back to the type's default stat and
         the result explains the substitution. Returns each component's
-        key stats and cheapest known shop price. Numbers are pre-computed
+        key stats and cheapest known shop price. purchasable_only=true keeps
+        only components with at least one current player-reported shop
+        price (use it for "what can I BUY" / "purchasable upgrade" questions;
+        for an upgrade to a member's ship, get the slot's size and current
+        item from sc_member_hangar first). Numbers are pre-computed
         from live game data -- prefer this over memory; component balance
         changes every patch. Do NOT compute rankings yourself or use the
         sandbox."""
         return await _guarded("sc_compare_components", lambda: item_tools.compare_components(
-            type=type, size=size, rank_by=rank_by, grade=grade, class_=component_class, limit=limit))
+            type=type, size=size, rank_by=rank_by, grade=grade, class_=component_class, limit=limit,
+            purchasable_only=purchasable_only))
 
     @mcp.tool(name="sc_faction_missions")
     async def sc_faction_missions(faction: str, current_rank: str | None = None,
@@ -287,6 +304,42 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
             return guide_tools.org_guides(query, limit=limit)  # sync method, no upstream I/O
         return await _guarded("sc_org_guides", _call)
 
+    @mcp.tool(name="sc_member_hangar")
+    async def sc_member_hangar(member_id: str, ship: str | None = None) -> dict:
+        """A Discord member's own recorded Star Citizen ships and what is
+        fitted on them (each component slot with its size, current item and
+        whether it is stock or member-fitted). Call this ONLY when the
+        question is about a member's own ships or loadouts ("what's on my
+        Connie?", "what does Akira's Harbinger run?", "what's the shield
+        size on my Cutlass?") -- never for general ship/game questions.
+        member_id is the member's numeric Discord ID, taken from the
+        conversation's "[Name · id]" message labels or the "People in this
+        conversation" roster; "my" means the labelled speaker of that
+        message. ship is optional: a nickname or model shorthand ("Connie",
+        "Harbinger"); omit it to list every ship. An ambiguous ship returns
+        candidates -- ask which one. If the member has no ships recorded,
+        say they can add them with /hangar add. Do NOT use the sandbox."""
+        return await _guarded("sc_member_hangar", lambda: hangar_tools.member_hangar(member_id, ship))
+
+    @mcp.tool(name="sc_member_fit_check")
+    async def sc_member_fit_check(member_id: str, item: str) -> dict:
+        """Is a component (e.g. "Hemera" quantum drive) usable by, and an
+        upgrade for, any ship a Discord member owns? Checks every recorded
+        ship: each slot the item fits (same component type, size in the
+        slot's range) with the currently fitted item and a verdict --
+        upgrade / downgrade / sidegrade / same -- on the key stat
+        sc_compare_components ranks by; ships it can't fit are listed
+        separately with the reason (size_mismatch: the ship has that kind of
+        slot but the wrong size; no_slot: no such slot at all). Call this
+        ONLY when the question is about a member's own ships ("I looted a
+        Hemera, is it an upgrade for any of my ships?", "can Micro use it?")
+        -- any member's ID works. member_id is the member's numeric Discord
+        ID, taken from the conversation's "[Name · id]" message labels or
+        the "People in this conversation" roster; "my" means the labelled
+        speaker of that message. Do NOT compute this yourself or use the
+        sandbox."""
+        return await _guarded("sc_member_fit_check", lambda: hangar_tools.member_fit_check(member_id, item))
+
     @mcp.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> JSONResponse:
         # Health means "process serving"; upstream outages are reported per
@@ -342,6 +395,11 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
                     task.cancel()
                 if _background_tasks:
                     await asyncio.gather(*_background_tasks, return_exceptions=True)
+                if hangar_client is not None:
+                    try:
+                        await hangar_client.aclose()
+                    except Exception:
+                        logger.warning("hangar client close failed", exc_info=True)
 
     base_app.router.lifespan_context = _lifespan
     return base_app
