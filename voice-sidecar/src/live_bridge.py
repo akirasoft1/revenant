@@ -10,6 +10,9 @@ from google.genai import types
 from opentelemetry import trace
 
 from . import voice_pb2
+from .hangar_edit import TOOL_NAMES as HANGAR_TOOL_NAMES
+from .hangar_edit import UNKNOWN_SPEAKER as _HANGAR_UNKNOWN_SPEAKER
+from .hangar_edit import valid_member_id as _valid_member_id
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -126,6 +129,70 @@ CONTROL_NOTE = (
     "(with minutes, if they say how long) when asked to stop listening or be quiet for a while. "
     "When you call either, say only a very short confirmation."
 )
+
+# Hangar chat edits (spec 2026-10-09-hangar-chat-edits-design.md). Local tools,
+# like the control tools: declared to Live only when a hangar edit client is
+# configured (HANGAR_EDITS_ENABLED), answered IN THE SIDECAR via
+# hangar_edit.HangarEditClient -- never the MCP executor. They deliberately
+# have NO member parameter: the acting member is the current floor holder's
+# Discord id from SetSpeaker.user_id (else the SessionStart opener), bound by
+# `_spawn_tool_call` when the call arrives. The model cannot pick whose
+# hangar it edits.
+_OWN_ONLY = ("Edits ONLY the hangar of the person speaking right now -- there is no way to "
+             "edit anyone else's. ")
+HANGAR_TOOL_DECLARATIONS = (
+    types.FunctionDeclaration(
+        name="hangar_fit",
+        description=(
+            "Record that the speaker fitted an item to one of their own ships (\"I put the "
+            "Hemera in my Connie\"). " + _OWN_ONLY + "Call ONLY when they say they DID it, never "
+            "for questions or advice. `ship` is how they named the ship (nickname or model, e.g. "
+            "\"Connie\"); `item` is the part; `slot` is optional -- a slot hint such as "
+            "\"left\", \"nose\", \"2\" or \"all\" when they said which."),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {"ship": {"type": "string"}, "item": {"type": "string"},
+                           "slot": {"type": "string"}},
+            "required": ["ship", "item"]},
+    ),
+    types.FunctionDeclaration(
+        name="hangar_add_ship",
+        description=(
+            "Record that the speaker bought or now owns a ship (\"I just bought a Cutlass "
+            "Black\"). " + _OWN_ONLY + "Call ONLY when they say they DID it. `vehicle` is the "
+            "ship model; `nickname` only if they gave one."),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {"vehicle": {"type": "string"}, "nickname": {"type": "string"}},
+            "required": ["vehicle"]},
+    ),
+    types.FunctionDeclaration(
+        name="hangar_reset",
+        description=(
+            "Put parts of one of the speaker's own ships back to stock (\"I put my Harbinger's "
+            "shields back to stock\"). " + _OWN_ONLY + "`slot` is required: a slot hint such "
+            "as \"shields\" or \"left\", or \"all\" for the whole ship -- ask if they "
+            "didn't say which."),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {"ship": {"type": "string"}, "slot": {"type": "string"}},
+            "required": ["ship", "slot"]},
+    ),
+)
+# Appended to the system instruction ONLY when the hangar declarations are
+# attached -- exactly once, with or without the sc_* tools (mirrors the
+# agent-sidecar sc_tools_preamble sentence).
+HANGAR_EDIT_NOTE = (
+    "Only when the person speaking says they DID something to their own ships (bought one, "
+    "fitted or swapped a part, put something back to stock) record it with hangar_fit, "
+    "hangar_add_ship or hangar_reset -- never for \"should I...\" or other questions or "
+    "hypotheticals; on choose_slot or ambiguous ask a short follow-up naming at most three "
+    "options; after a write say briefly what changed, using the item name the tool returned; "
+    "these edit only the speaker's own hangar, never anyone else's."
+)
+# Whole hangar tool call (token mint + POST), on top of the client's own 5s.
+HANGAR_CALL_TIMEOUT_S = 6.0
+
 # Control.seconds is an int32 on the wire.
 _INT32_MAX = 2**31 - 1
 
@@ -273,7 +340,8 @@ class _SessionStats:
                  "audio_out_bytes", "turns", "interruptions",
                  "in_tx_chars", "out_tx_chars", "speaker_markers",
                  "deferral_acks", "tool_calls", "sc_fallbacks",
-                 "search_turns", "search_queries", "turn_search_queries")
+                 "search_turns", "search_queries", "turn_search_queries",
+                 "hangar_edits")
 
     def __init__(self):
         self.audio_in_chunks = 0
@@ -294,6 +362,8 @@ class _SessionStats:
         self.search_turns = 0
         self.search_queries = 0
         self.turn_search_queries = {}
+        # Hangar chat edits answered without an error (writes and no-ops).
+        self.hangar_edits = 0
 
 
 class _ResumeState:
@@ -308,21 +378,57 @@ class _ResumeState:
         self.reconnects = 0
 
 
+class _SpeakerIdentity:
+    """Who is speaking, by Discord id -- the acting member for hangar edits.
+
+    Written by `_pump_client` from SetSpeaker (trusted bot plumbing, the floor
+    holder), read by `_spawn_tool_call` when a hangar tool call arrives. Lives
+    on the `_SessionRef`, so it survives reconnects like the speaker name.
+    Before the first SetSpeaker the SessionStart opener is the speaker (the
+    bot only sends SetSpeaker for a speaker whose name resolved). An empty
+    SetSpeaker CLEARS it -- the opener fallback does NOT come back, because
+    after a floor release the opener may no longer be the one talking."""
+    __slots__ = ("opener_id", "current_id", "announced")
+
+    def __init__(self):
+        self.opener_id = None
+        self.current_id = None
+        self.announced = False
+
+    def set(self, user_id):
+        self.current_id = (user_id or "").strip() or None
+        self.announced = True
+
+    def clear(self):
+        self.current_id = None
+        self.announced = True
+
+    def acting_member(self):
+        return self.current_id if self.announced else ((self.opener_id or "").strip() or None)
+
+
 class _SessionRef:
     """Mutable holder for the CURRENT Live session. `_pump_client` lives for the
     whole gRPC call and reads this each event, so a reconnect can swap the
-    session underneath it without dropping the bot's stream."""
-    __slots__ = ("session",)
+    session underneath it without dropping the bot's stream. Also carries the
+    speaker identity, shared by both pumps across reconnects."""
+    __slots__ = ("session", "speaker")
 
     def __init__(self):
         self.session = None
+        self.speaker = _SpeakerIdentity()
 
 
 class LiveBridge:
     def __init__(self, session_factory, *, model, default_voice,
                  compression_trigger_tokens=25000, resumption_enabled=True,
-                 max_reconnects=5, sc_executor=None, control_tools_enabled=False):
+                 max_reconnects=5, sc_executor=None, control_tools_enabled=False,
+                 hangar_editor=None):
         self._session_factory = session_factory
+        # hangar_edit.HangarEditClient (or a fake with the same `call`), or
+        # None when HANGAR_EDITS_ENABLED is off -- then no hangar declaration
+        # or note is added and the config is unchanged.
+        self._hangar = hangar_editor
         # Local end_conversation/go_quiet tools. The constructor default is
         # OFF so a bare LiveBridge keeps the pre-control config; server.py
         # passes config.control_tools_enabled (VOICE_CONTROL_TOOLS_ENABLED,
@@ -366,10 +472,14 @@ class LiveBridge:
         # SC_MECHANICS_VOICE_NOTE (SC absent/fallback) is always appended, so
         # the disputed-mechanics rule reaches every session once. Re-derived
         # on every call, so the search-only fallback swaps one for the other.
+        # Hangar edit tools ride the control layer (with_control): kept on the
+        # SC fallback, dropped with the control tools on the second step.
         declarations = []
         notes = []
         if with_control and self._control_enabled:
             declarations.extend(CONTROL_TOOL_DECLARATIONS)
+        if with_control and self._hangar is not None:
+            declarations.extend(HANGAR_TOOL_DECLARATIONS)
         if with_sc and self._sc_tools_attachable():
             declarations.extend(self._sc.declarations)
             notes.append(SC_VOICE_NOTE)
@@ -379,6 +489,8 @@ class LiveBridge:
             notes.append(SC_MECHANICS_VOICE_NOTE)
         if with_control and self._control_enabled:
             notes.append(CONTROL_NOTE)
+        if with_control and self._hangar is not None:
+            notes.append(HANGAR_EDIT_NOTE)
         if declarations:
             tools.append(types.Tool(function_declarations=declarations))
         # An empty persona is dropped rather than joined as a leading blank.
@@ -444,6 +556,7 @@ class LiveBridge:
         resume = _ResumeState()
         try:
             session_ref = _SessionRef()
+            session_ref.speaker.opener_id = start.user_id
             # Created ONCE -- it owns the bot's gRPC request stream and must
             # survive every reconnect below (only the server-side pump is
             # per-session) -- but NOT until the first session is actually open
@@ -498,7 +611,9 @@ class LiveBridge:
                     client_exc = None
                     server_exc = None
                     sc_attached = use_sc and self._sc_tools_attachable()
-                    control_attached = use_control and self._control_enabled
+                    # "Local" layer: control tools and/or hangar edit tools.
+                    control_attached = use_control and (
+                        self._control_enabled or self._hangar is not None)
                     try:
                         async with self._session_factory(
                                 self._model,
@@ -613,8 +728,8 @@ class LiveBridge:
                             if control_attached:
                                 logger.warning(
                                     "voice: Live session open failed with sc_* function declarations "
-                                    "attached (%s: %s); retrying once without sc_* tools (control "
-                                    "tools kept) -- this Converse stays without sc_* tools "
+                                    "attached (%s: %s); retrying once without sc_* tools (control/"
+                                    "hangar-edit tools kept) -- this Converse stays without sc_* tools "
                                     "(sc_fallbacks=%d)",
                                     type(open_or_body_exc).__name__, open_or_body_exc,
                                     stats.sc_fallbacks, exc_info=True)
@@ -635,10 +750,11 @@ class LiveBridge:
                             # phrase backstop still catches the commands.
                             use_control = False
                             logger.warning(
-                                "voice: Live session open failed with the control tool declarations "
-                                "(end_conversation/go_quiet) attached (%s: %s); retrying once "
+                                "voice: Live session open failed with the local control/hangar-edit "
+                                "tool declarations attached (%s: %s); retrying once "
                                 "without them -- this Converse stays search-only; spoken control "
-                                "commands fall back to the bot's phrase matcher",
+                                "commands fall back to the bot's phrase matcher and hangar chat "
+                                "edits are off for this session",
                                 type(open_or_body_exc).__name__, open_or_body_exc, exc_info=True)
                             continue
                         # The (re)open itself failed. Retry it against the same
@@ -727,20 +843,21 @@ class LiveBridge:
             span.set_attribute("voice.sc_fallbacks", stats.sc_fallbacks)
             span.set_attribute("voice.search_turns", stats.search_turns)
             span.set_attribute("voice.search_queries", stats.search_queries)
+            span.set_attribute("voice.hangar_edits", stats.hangar_edits)
             span.end()
             logger.info(
                 "voice: session END user=%s outcome=%s dur=%.1fs "
                 "audio_in=%d chunks/%dB audio_out=%d chunks/%dB "
                 "turns=%d interruptions=%d in_tx_chars=%d out_tx_chars=%d reconnects=%d "
                 "speaker_markers=%d deferral_acks=%d tool_calls=%d sc_fallbacks=%d "
-                "search_turns=%d search_queries=%d",
+                "search_turns=%d search_queries=%d hangar_edits=%d",
                 start.user_id or "?", outcome, dur,
                 stats.audio_in_chunks, stats.audio_in_bytes,
                 stats.audio_out_chunks, stats.audio_out_bytes,
                 stats.turns, stats.interruptions, stats.in_tx_chars, stats.out_tx_chars,
                 resume.reconnects, stats.speaker_markers, stats.deferral_acks,
                 stats.tool_calls, stats.sc_fallbacks,
-                stats.search_turns, stats.search_queries,
+                stats.search_turns, stats.search_queries, stats.hangar_edits,
             )
 
     async def _pump_client(self, request_iter, session_ref, stats) -> None:
@@ -814,9 +931,14 @@ class LiveBridge:
                     # identity instead of being re-announced.
                     current_speaker = None
                     pending_speaker = None
-                elif name != current_speaker:
-                    current_speaker = name
-                    pending_speaker = name
+                    session_ref.speaker.clear()
+                else:
+                    # The id is tracked on every named SetSpeaker (not only on
+                    # a name change): it is the acting member for hangar edits.
+                    session_ref.speaker.set(ev.set_speaker.user_id)
+                    if name != current_speaker:
+                        current_speaker = name
+                        pending_speaker = name
             if pending_ack and session is not None:
                 # Flushed in the SAME iteration it was latched -- unlike the
                 # speaker marker, this does not wait for the next audio chunk.
@@ -1047,7 +1169,13 @@ class LiveBridge:
         if previous is not None and not previous.done():
             previous.cancel()   # a re-issued id supersedes the earlier call
         name = getattr(fc, "name", None) or ""
-        if self._control_enabled and name in CONTROL_TOOL_NAMES:
+        if self._hangar is not None and name in HANGAR_TOOL_NAMES:
+            # Bind the acting member NOW, when the call arrives -- a speaker
+            # change while the edit runs must not redirect it.
+            member_id = (session_ref.speaker.acting_member()
+                         if session_ref is not None else None)
+            coro = self._answer_hangar_call(session, session_ref, fc, member_id, stats)
+        elif self._control_enabled and name in CONTROL_TOOL_NAMES:
             # Local control tool: same per-call task machinery (cancellation,
             # CURRENT-session targeting, cleanup on pump exit), but answered
             # in-sidecar -- never the MCP executor, never unknown_tool.
@@ -1101,6 +1229,63 @@ class LiveBridge:
                 logger.warning(
                     "voice: control tool_call %s id=%s send_tool_response failed (%s: %s); "
                     "control event already sent", name, call_id, type(e).__name__, e)
+
+    async def _answer_hangar_call(self, session, session_ref, fc, member_id, stats) -> None:
+        """Answer hangar_fit/hangar_add_ship/hangar_reset locally for the bound
+        `member_id` and send the FunctionResponse to the CURRENT session only
+        (a late result after a reconnect is dropped, like an sc_* answer --
+        the write itself still happened and is logged)."""
+        name = getattr(fc, "name", None) or ""
+        call_id = getattr(fc, "id", None)
+        args = dict(getattr(fc, "args", None) or {})
+        started = time.monotonic()
+        try:
+            if not _valid_member_id(member_id):
+                result = dict(_HANGAR_UNKNOWN_SPEAKER)
+            else:
+                async with asyncio.timeout(HANGAR_CALL_TIMEOUT_S):
+                    result = await self._hangar.call(name, member_id, args)
+        except asyncio.CancelledError:
+            logger.info("voice: hangar edit %s id=%s member=%s -> cancelled (%dms)", name, call_id,
+                        member_id or "?", int((time.monotonic() - started) * 1000))
+            raise
+        except TimeoutError:
+            result = {"error": "unavailable",
+                      "message": f"the hangar service took longer than {HANGAR_CALL_TIMEOUT_S:g}s"}
+        except Exception as e:  # noqa: BLE001 - the client never raises; belt and braces
+            result = {"error": "unavailable", "message": f"{type(e).__name__}: {e}"}
+        if not isinstance(result, dict):
+            result = {"error": "unavailable", "message": "unexpected hangar-service response"}
+        code = result.get("error")
+        if not code:
+            stats.hangar_edits += 1
+        ms = int((time.monotonic() - started) * 1000)
+        changes = result.get("changes") if isinstance(result.get("changes"), list) else []
+        detail = "; ".join(
+            f"{c.get('slot')}: {((c.get('from') or {}).get('name')) or 'empty'} -> "
+            f"{((c.get('to') or {}).get('name')) or 'empty'}"
+            for c in changes if isinstance(c, dict))
+        ship_label = (result.get("ship") or {}).get("label") if isinstance(result.get("ship"), dict) else None
+        # One INFO line per edit call, never truncated; no tokens in here.
+        logger.info(
+            "voice: hangar edit %s id=%s member=%s ship=%r item=%r vehicle=%r slot=%r -> %s "
+            "(%dms)%s%s%s",
+            name, call_id, member_id or "?", args.get("ship"), args.get("item"),
+            args.get("vehicle"), args.get("slot"), code or "ok", ms,
+            f" ship_label={ship_label!r}" if ship_label else "",
+            f" changes=[{detail}]" if detail else "",
+            f" message={result.get('message')!r}" if code else "")
+        if session_ref is not None and session_ref.session is not session:
+            logger.info(
+                "voice: hangar edit %s id=%s -> %s but its Live session is gone; dropping the "
+                "response", name, call_id, code or "ok")
+            return
+        try:
+            await session.send_tool_response(function_responses=[
+                types.FunctionResponse(id=call_id, name=name, response=result)])
+        except Exception as e:  # noqa: BLE001 - the session is dying; the reconnect path owns that
+            logger.warning("voice: hangar edit %s id=%s send_tool_response failed (%s: %s)",
+                           name, call_id, type(e).__name__, e)
 
     async def _answer_tool_call(self, session, session_ref, fc) -> None:
         name = getattr(fc, "name", None) or ""

@@ -226,3 +226,14 @@ def test_build_bridge_passes_control_tools_flag(monkeypatch):
                             context_compression_trigger_tokens=1, session_resumption_enabled=True,
                             max_session_reconnects=1, control_tools_enabled=flag)
         assert server_mod._build_bridge(c)._control_enabled is flag
+
+
+def test_build_bridge_passes_hangar_editor(monkeypatch):
+    from google import genai
+    monkeypatch.setattr(genai, "Client", lambda *a, **k: SimpleNamespace())
+    c = SimpleNamespace(voice_live_model="m", default_voice_name="Puck",
+                        context_compression_trigger_tokens=1, session_resumption_enabled=True,
+                        max_session_reconnects=1, control_tools_enabled=True)
+    editor = object()
+    assert server_mod._build_bridge(c, hangar_editor=editor)._hangar is editor
+    assert server_mod._build_bridge(c)._hangar is None

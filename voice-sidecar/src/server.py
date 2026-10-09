@@ -122,7 +122,19 @@ async def _prime_sc_tools(executor, retry_interval_s: float = SC_REFRESH_RETRY_I
     return asyncio.create_task(_retry())
 
 
-def _build_bridge(config, sc_executor=None):
+def _build_hangar_editor(config):
+    """HangarEditClient when HANGAR_EDITS_ENABLED (needs HANGAR_API_URL), else None."""
+    from .hangar_edit import build_hangar_edit_client
+    client = build_hangar_edit_client(config)
+    if client is None:
+        logger.info("hangar chat edits off (HANGAR_EDITS_ENABLED false or HANGAR_API_URL unset)")
+    else:
+        logger.info("hangar chat edits enabled against %s (key %s)",
+                    config.hangar_api_url, config.hangar_sa_key_path)
+    return client
+
+
+def _build_bridge(config, sc_executor=None, hangar_editor=None):
     from google import genai  # lazy: keep google-genai out of unit-test imports
     from .live_bridge import LiveBridge
 
@@ -137,7 +149,8 @@ def _build_bridge(config, sc_executor=None):
                        resumption_enabled=config.session_resumption_enabled,
                        max_reconnects=config.max_session_reconnects,
                        sc_executor=sc_executor,
-                       control_tools_enabled=getattr(config, "control_tools_enabled", True))
+                       control_tools_enabled=getattr(config, "control_tools_enabled", True),
+                       hangar_editor=hangar_editor)
 
 
 def serve() -> None:
@@ -148,7 +161,7 @@ def serve() -> None:
     config = load_config()
     setup_tracing(config)
     sc_executor = _build_sc_executor(config)
-    bridge = _build_bridge(config, sc_executor)
+    bridge = _build_bridge(config, sc_executor, _build_hangar_editor(config))
 
     async def _run() -> None:
         sc_retry = await _prime_sc_tools(sc_executor)

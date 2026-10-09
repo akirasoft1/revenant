@@ -5,6 +5,13 @@ from dataclasses import dataclass
 # Same default as the agent sidecar (agent-sidecar/src/config.py).
 DEFAULT_SC_KNOWLEDGE_URL = "http://sc-knowledge.discord-article-bot.svc.cluster.local:8080/mcp"
 
+DEFAULT_HANGAR_SA_KEY_PATH = "/var/secrets/hangar/key.json"
+
+
+def _hangar_url(raw: str | None) -> str | None:
+    url = (raw or "").strip().rstrip("/")
+    return url or None
+
 
 @dataclass(frozen=True)
 class Config:
@@ -25,6 +32,13 @@ class Config:
     # Live model and answered in-sidecar (never MCP). On by default; off =
     # today's Live config, byte-identical.
     control_tools_enabled: bool = True
+    # Hangar chat edits (hangar_fit / hangar_add_ship / hangar_reset), local
+    # tools answered in-sidecar against hangar-service. HANGAR_API_URL is also
+    # the ID-token audience, so it must match the service URL byte for byte
+    # (no trailing slash). Enabled by default only when the URL is set.
+    hangar_api_url: str | None = None
+    hangar_sa_key_path: str = DEFAULT_HANGAR_SA_KEY_PATH
+    hangar_edits_enabled: bool = False
 
 
 def load() -> Config:
@@ -61,5 +75,12 @@ def load() -> Config:
         sc_knowledge_url=os.environ.get("SC_KNOWLEDGE_URL", DEFAULT_SC_KNOWLEDGE_URL),
         control_tools_enabled=os.environ.get(
             "VOICE_CONTROL_TOOLS_ENABLED", "true").strip().lower()
+        not in ("false", "0", "no", "off"),
+        hangar_api_url=_hangar_url(os.environ.get("HANGAR_API_URL")),
+        hangar_sa_key_path=os.environ.get("HANGAR_SA_KEY_PATH") or DEFAULT_HANGAR_SA_KEY_PATH,
+        # Default on when the URL is set; the flag can only turn it off (it
+        # cannot enable edits with nowhere to send them).
+        hangar_edits_enabled=bool(_hangar_url(os.environ.get("HANGAR_API_URL")))
+        and os.environ.get("HANGAR_EDITS_ENABLED", "true").strip().lower()
         not in ("false", "0", "no", "off"),
     )
