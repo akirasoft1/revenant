@@ -1,0 +1,52 @@
+# Member hangar (per-member Star Citizen ship loadouts) — Design
+
+**Date:** 2026-10-09 · **Status:** approved (brainstorming) · **Branch:** `feat/member-hangar`
+**Project 1 of 3.** Project 2 = web loadout editor (Discord OAuth) on the same service; project 3 = chat edits ("I put the Hemera in my Connie"). This spec designs the data model and API so both plug in without rework.
+
+## Use cases
+- **UC1 — Upgrade a slot on a named ship:** "what's a purchasable upgraded shield for my Harbinger?" Resolve "my Harbinger" (shorthand/nickname) to the speaker's owned ship, know its CURRENT shield (recorded or stock) and slot size, rank better shields of that size that are currently sold in shops.
+- **UC2 — Is this item an upgrade for anything I own?** "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?" Identify the item (type, size, stats); check every owned ship with a compatible slot against what is fitted there now; answer per ship.
+- **UC2b — Someone else's ships:** "I can't use this Hemera, can Micro?" Same as UC2 for another member.
+- **UC3 — Record a change** (project 3): "I put the Hemera in my Connie."
+- **UC4 — What's fitted:** "what's on my Connie?" / "what does Akira's Harbinger run?"
+- **Cross-cutting:** works in text and voice; ship data is used only when the question is about ships (tool-called, never prompt-injected); one place to manage ships (the bot, with the web editor as the bulk-seeding UI).
+- **Future (documented, not built):** loose inventory (items in storage, not fitted); org-wide queries ("who has a ship that fits a size-2 QD?"); optional spviewer import into the editor (spviewer keeps saved loadouts in browser IndexedDB `SCSPVDatabase` → table `vehiclesLoadout`; a member could export their own rows — its server APIs are not for third parties).
+
+## Decisions
+- **Hosting:** new Python FastAPI service `hangar-service/` on **Cloud Run** in GCP project `revenant-discord-bot-2`, region `us-central1`, min instances 0. Image pushed to **Artifact Registry** (`us-central1-docker.pkg.dev/revenant-discord-bot-2/revenant/hangar-service:<git-short-sha>`), never `:latest`.
+- **Store:** **Firestore** (Native mode, `us-central1`). Document `members/{discordId}/ships/{shipId}`:
+  `{ vehicleUuid, vehicleName, vehicleClassName, nickname: string|null, fitted: { <slotName>: { itemUuid, itemName } }, createdAt, updatedAt, updatedBy }`.
+  `fitted` holds ONLY changes from stock. A member may own several of the same model (distinct `shipId`s; nicknames disambiguate).
+- **Catalog (game data) from the Star Citizen Wiki API** (`api.star-citizen.wiki`, already used by sc-knowledge): `GET /api/vehicles/{slug|uuid}` exposes `ports[]`; a port is a component slot when `editable == true` and `type` ∈ {`QuantumDrive`, `Shield`, `PowerPlant`, `Cooler`, `Radar`, `WeaponGun`, `Turret`, `MissileLauncher`, `WeaponMining`, `TractorBeam`} — each with `name` (slot id), `sizes.{min,max}`, `compatible_types`, and `equipped_item` (stock `uuid`, `name`). Nested children (e.g. a gimbal's weapon) are flattened with slot ids `parent/child` when `editable_children` is true. Compatible items: Wiki `v2/items` filtered by type and size. Cached in-process, TTL 12h, stale-on-error (same posture as sc-knowledge's `TTLCache`).
+- **Effective loadout** = stock slots with `fitted` overrides applied; each slot reports `{slot, type, sizeMin, sizeMax, item: {uuid, name}, source: "stock"|"fitted"}`.
+- **API (all JSON, all authenticated):**
+  - `GET /healthz` (unauthenticated, no upstream calls).
+  - `GET /v1/members/{discordId}/hangar` → `{ member, ships: [{shipId, vehicleName, vehicleUuid, nickname, loadout: [...]}] }`.
+  - `POST /v1/members/{discordId}/ships` `{vehicle, nickname?}` → resolves `vehicle` (name/slug/uuid, fuzzy) against the catalog; 409 with candidates if ambiguous, 404 if unknown.
+  - `PATCH /v1/members/{discordId}/ships/{shipId}` `{nickname}`; `DELETE …/ships/{shipId}`.
+  - `PUT /v1/members/{discordId}/ships/{shipId}/slots/{slot}` `{item}` and `DELETE …/slots/{slot}` (reset to stock) — validates item type ∈ slot's compatible types and size within `[min,max]`; 422 otherwise. (Used by projects 2 and 3; built and tested now.)
+  - `GET /v1/catalog/vehicles?q=` (autocomplete, ≤25), `GET /v1/catalog/vehicles/{uuid}/slots`, `GET /v1/catalog/items?type=&size=&q=`.
+- **Auth:** Cloud Run service deployed `--allow-unauthenticated` (the project-2 browser editor must reach it); the app enforces auth itself:
+  - **Service callers** (bot, sc-knowledge): Google-signed **ID token** (`Authorization: Bearer`), audience = the service URL, issuer Google, email ∈ `HANGAR_ALLOWED_CALLERS` (default: SA `hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com`). Service callers must pass `X-Acting-Member: <discordId>` on writes; reads need none.
+  - **Write permission:** acting member == path `discordId`, or acting member ∈ `HANGAR_ADMIN_IDS` (same IDs as the bot's `BOT_ADMIN_USER_IDS`). Reads of any member are allowed (UC2b).
+  - Project 2 adds Discord-OAuth browser sessions as a second credential type resolving to an acting member; the permission rule is unchanged.
+- **Credentials in the cluster:** SA `hangar-api@…` (no project roles needed; it only mints ID tokens for itself) with a JSON key in Secret `hangar-api-sa`, mounted read-only into the bot and sc-knowledge at `/var/secrets/hangar/key.json` (`HANGAR_SA_KEY_PATH`). Service URL via `HANGAR_API_URL`. The Cloud Run runtime SA gets `roles/datastore.user`.
+- **Bot tools (in sc-knowledge, so text AND voice get them):**
+  - `sc_member_hangar(member_id: str, ship: str | None = None)` → UC4. Resolves `ship` against that member's ships: exact nickname → nickname fuzzy → owned model name/token match (e.g. "Connie" → Constellation Taurus when it's the only Constellation; ambiguous → candidates). Returns ships with effective loadouts (compact: slot, size, item name, stock/fitted).
+  - `sc_member_fit_check(member_id: str, item: str)` → UC2/UC2b. Resolves the item via the existing item lookup (type, size, key stats); for every owned ship, lists each compatible slot (type ∈ compatible types, size within range) with the currently fitted item and a stat comparison using the same per-type key stat `sc_compare_components` ranks by; verdicts `upgrade` / `downgrade` / `sidegrade` / `same`; ships with no compatible slot listed separately ("too big for your Cutlass" style reason: size mismatch vs no such slot).
+  - `sc_compare_components` gains `purchasable_only: bool = False` (only items with at least one current UEX shop price) → UC1 = `sc_member_hangar` + `sc_compare_components(purchasable_only=True)`.
+  - sc-knowledge calls hangar-service with an ID token minted from the mounted key (google-auth), cached until near expiry; responses cached 30s; per-call timeout 3s (voice's 6s bound). Hangar unreachable → tool returns `error("unavailable", …)`, never raises.
+  - Tool descriptions + one sentence in `SC_TOOLS_PREAMBLE`/`SC_VOICE_NOTE`: call these only when the question is about a member's own ships/loadouts; `member_id` is the Discord ID from the conversation labels/roster ("my" = the labelled speaker).
+- **`/hangar` slash command (bot)** — seeding path until the editor exists: `list [member]`, `add ship [nickname] [member]` (ship option autocompletes from `/v1/catalog/vehicles`), `rename ship nickname [member]`, `remove ship [member]`. `ship` options on rename/remove autocomplete from the target's hangar. Ephemeral replies. Omitted `member` = self; another member requires admin (bot enforces, service re-enforces via `X-Acting-Member`). Service unavailable → "Hangar service is unavailable right now."
+
+## Error handling
+Every upstream (Wiki, Firestore) failure maps to a JSON error with a stable `error` code (`unavailable`, `not_found`, `ambiguous` + `candidates`, `incompatible`, `forbidden`, `unauthenticated`). Logs never truncated. The bot/sc-knowledge degrade to a clear message; a hangar outage never fails a chat turn.
+
+## Testing
+- **hangar-service (pytest):** catalog parsing from a recorded Wiki vehicle fixture (Constellation Taurus: QD S2 Bolon, Shield S3 Stronghold, 2× PowerPlant S2, 2× Cooler S1–2, Radar S1–2, 4× Turret S5 with nested weapons); effective-loadout merge; slot compatibility (type + size range); vehicle resolution (exact/fuzzy/ambiguous); auth (valid SA token, wrong audience/email, missing token; self vs other vs admin writes); Firestore via the emulator or an in-memory fake behind a repository interface.
+- **sc-knowledge (pytest):** ship shorthand resolution; fit-check verdicts and no-slot reasons; `purchasable_only`; token minting/caching; unavailable path.
+- **Bot (Jest):** `/hangar` subcommands, autocomplete, permissions, unavailable.
+- **Real model (in-cluster eval):** seeded test member with a Harbinger and a Constellation Taurus + a second member: "what's a purchasable upgraded shield for my Harbinger?", "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?", "can <second member> use it?", "what's on my Connie?" — expect the hangar tools to be called, 0 sandbox attempts, and no hangar mention on the existing control prompts.
+
+## Docs
+`hangar-service/README.md` (deploy, env, auth), CLAUDE.md (new "Member hangar" section under Star Citizen), README (`/hangar`), features.md.
