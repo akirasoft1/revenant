@@ -369,7 +369,7 @@ describe('buildTurnContext member identity grounding', () => {
     { discordId: AKIRA, addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] },
     { discordId: CAROL, addressName: 'Carol', aliases: ['Caz'] },
   ];
-  const ROSTER_HEAD = '\n\n## People in this conversation\nMessages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters.\n';
+  const ROSTER_HEAD = '\n\n## People in this conversation\nMessages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters. Never start your own replies with a label.\n';
 
   function makeIdentity(records = RECORDS) {
     const byId = new Map(records.map((r) => [r.discordId, r]));
@@ -496,6 +496,33 @@ describe('buildTurnContext member identity grounding', () => {
     ]);
     expect(ctx.currentTurn).toBe('');
     expect(ctx.systemPrompt).toContain(`${ROSTER_HEAD}- Carol (Discord ${CAROL}) — also called Caz; address as Carol  ← current speaker\n- bob (Discord ${BOB})\n- Akira (Discord ${AKIRA}) — also called Akirasoft, Phalabala; address as Akira`);
+  });
+
+  test('one name per person: registry name, then stored authorName, then Discord names (history + current turn agree)', async () => {
+    // Bob has no registry record; his stored authorName is 'Bobby' and his
+    // Discord globalName 'Robert'. Akira's registry name beats both.
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'Bobby', content: 'earlier', isBot: false },
+      { authorId: AKIRA, authorName: 'akirasoft', content: 'hey', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: BOB, userTag: 'robert1', channelId: 'c1', userMessage: 'again',
+      speaker: { id: BOB, username: 'robert1', globalName: 'Robert' },
+    });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: `[Bobby · ${BOB}]: earlier` },
+      { role: 'user', content: `[Akira · ${AKIRA}]: hey` },
+    ]);
+    expect(ctx.currentTurn).toBe(`[Bobby · ${BOB}]: again`);
+    expect(ctx.systemPrompt).not.toContain('Robert');
+
+    // No stored row for the speaker -> Discord names via resolve(speaker).
+    const svc2 = makeIdentityChat([]);
+    const ctx2 = await svc2.buildTurnContext({
+      userId: BOB, userTag: 'robert1', channelId: 'c1', userMessage: 'hi',
+      speaker: { id: BOB, username: 'robert1', globalName: 'Robert' },
+    });
+    expect(ctx2.currentTurn).toBe(`[Robert · ${BOB}]: hi`);
   });
 
   test('recall is still queried with the RAW text', async () => {

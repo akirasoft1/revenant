@@ -6,7 +6,7 @@
 
 const ROSTER_CAP = 20;
 const ROSTER_HEADING = '## People in this conversation';
-const ROSTER_INSTRUCTION = 'Messages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters.';
+const ROSTER_INSTRUCTION = 'Messages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters. Never start your own replies with a label.';
 const CURRENT_SPEAKER_MARK = '  ← current speaker';
 
 /** `[<name> · <discordId>]` — middle dot U+00B7 with single spaces. */

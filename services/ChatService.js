@@ -406,10 +406,12 @@ ${context}`;
 
   /**
    * Resolve label names and the "People in this conversation" roster for one
-   * turn. Name order per Discord ID: SpeakerNames (registry address name →
-   * VOICE_SPEAKER_NAMES → Discord names) → most recent stored authorName →
-   * (current speaker only) the passed Discord user's globalName/username and
-   * userTag → 'Unknown'. Registry reads are wrapped: a throwing or unloaded
+   * turn. Name order per Discord ID (identical for history authors and the
+   * current speaker, so nobody is named two ways in one context): registry
+   * address name → most recent stored authorName → SpeakerNames
+   * (VOICE_SPEAKER_NAMES → Discord names; the current speaker's Discord user
+   * when passed) → (current speaker only) globalName/username/userTag →
+   * registry alias → 'Unknown'. Registry reads are wrapped: a throwing or unloaded
    * registry just contributes nothing.
    * @returns {{nameFor: (id: string) => string, roster: string}}
    * @private
@@ -442,21 +444,22 @@ ${context}`;
       const id = String(rawId);
       if (cache.has(id)) return cache.get(id);
       const isCurrent = userId && id === String(userId);
-      let name = null;
-      if (speakerNames && typeof speakerNames.resolve === 'function') {
+      const rec = safeGet(id);
+      // One name per person in one context, same order for history authors
+      // and the current speaker: registry address name, then the latest
+      // stored authorName, then SpeakerNames (override + Discord names).
+      let name = pick([rec && rec.addressName, storedName.get(id)]);
+      if (!name && speakerNames && typeof speakerNames.resolve === 'function') {
         try {
           const userLike = isCurrent && speaker ? speaker : { id };
           name = pick([speakerNames.resolve(userLike, null)]);
         } catch (_) { name = null; }
       }
       if (!name) {
-        const rec = safeGet(id);
         name = pick([
-          storedName.get(id),
           isCurrent && speaker ? (speaker.globalName || speaker.global_name) : null,
           isCurrent && speaker ? speaker.username : null,
           isCurrent ? userTag : null,
-          rec && rec.addressName,
           ...(rec && Array.isArray(rec.aliases) ? rec.aliases : []),
         ]);
       }

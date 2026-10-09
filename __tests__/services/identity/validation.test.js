@@ -19,11 +19,28 @@ describe('normalizeName', () => {
 
   test('accepts non-Latin letters', () => {
     expect(normalizeName('Ølaf')).toBe('Ølaf');
-    expect(normalizeName('明')).toBe('明');
+    // Single-character names (incl. a lone CJK character) fail the 2-char minimum.
+    expect(normalizeName('明子')).toBe('明子');
+    expect(normalizeName('明')).toBeNull();
   });
 
   test('caps length at 24 (sanitize cap)', () => {
     expect(normalizeName('A'.repeat(80)).length).toBeLessThanOrEqual(24);
+  });
+
+  test('rejects names containing a run of 15+ digits (Discord-ID lookalikes)', () => {
+    expect(normalizeName('A · 161644375040983040')).toBeNull();
+    expect(normalizeName('Bob 123456789012345')).toBeNull();
+    expect(normalizeName('Bob 12345678901234')).toBe('Bob 12345678901234');
+    expect(normalizeName('R2D2')).toBe('R2D2');
+  });
+
+  test('requires at least 2 characters after sanitising', () => {
+    expect(normalizeName('a')).toBeNull();
+    expect(normalizeName('I')).toBeNull();
+    expect(normalizeName(' 🔥 J 🔥 ')).toBeNull();
+    expect(normalizeName('Jo')).toBe('Jo');
+    expect(normalizeName('明子')).toBe('明子');
   });
 
   test('strips bracket characters that could escape a label', () => {

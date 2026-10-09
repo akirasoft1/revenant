@@ -36,6 +36,10 @@ function sanitize(raw) {
   // in the stored Mongo authorName, re-injected via recall/tldr).
   s = s.replace(/[\[\]{}()<>]/g, ' ');
   s = s.replace(/[_*~`|]/g, ' ');                          // markdown-ish noise
+  // Identity labels are `[Name · Discord ID]` (services/identity/roster.js):
+  // the middle dot and look-alike separators would let a name forge a second
+  // "· <id>" inside its own label.
+  s = s.replace(/[\u00B7\u2022\u2219\u2027\u22C5]/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();
   if (s.length > MAX_LEN) {
     const cut = s.slice(0, MAX_LEN);

@@ -111,7 +111,7 @@ describe('formatRoster', () => {
     });
     expect(out).toBe([
       '## People in this conversation',
-      'Messages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters.',
+      'Messages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters. Never start your own replies with a label.',
       '- Akira (Discord 161644375040983040) — also called Akirasoft, Phalabala; address as Akira  ← current speaker',
     ].join('\n'));
   });

@@ -9,10 +9,17 @@ const { sanitize, usable } = require('../SpeakerNames');
 const MAX_ALIASES = 10;
 
 // Sanitise a user-supplied name; null when nothing sayable is left (empty
-// after sanitising, or no letter in it).
+// after sanitising, or no letter in it), when it is shorter than 2 characters
+// (a single-letter alias like "a"/"I" would whole-word-match nearly every
+// message and put its owner in every roster), or when it contains a run of
+// 15+ digits (a Discord-ID lookalike that could impersonate an identity label).
+const MIN_NAME_LEN = 2;
 function normalizeName(raw) {
   const s = sanitize(raw);
-  return usable(s) ? s : null;
+  if (!usable(s)) return null;
+  if ([...s].length < MIN_NAME_LEN) return null;
+  if (/\d{15,}/.test(s)) return null;
+  return s;
 }
 
 function nameKey(name) {
