@@ -54,6 +54,7 @@ const QdrantService = require('./services/QdrantService');
 const NickMappingService = require('./services/NickMappingService');
 const ChannelContextService = require('./services/ChannelContextService');
 const { createSpeakerNames } = require('./services/SpeakerNames');
+const MemberIdentityService = require('./services/MemberIdentityService');
 const { buildUserMessageDoc, recordBotReply } = require('./utils/channelMessageRecorder');
 const ImagePromptAnalyzerService = require('./services/ImagePromptAnalyzerService');
 const CatchMeUpService = require('./services/CatchMeUpService');
@@ -168,7 +169,20 @@ class DiscordBot {
     // native-dependent bits, which stay lazily required behind VOICE_ENABLED
     // below). One instance is reused by ChannelContextService (chat/recall)
     // and by VoiceService (voice) so both paths resolve the same names.
-    this.speakerNames = createSpeakerNames({ overrides: config.voice.speakerNames });
+    //
+    // The member identity registry (Mongo `member_identities`, managed via
+    // /whois) is its first layer: a member's chosen address name wins over the
+    // VOICE_SPEAKER_NAMES table and Discord's own names. Its reads are sync
+    // from an in-memory cache. start() loads immediately and retries every
+    // ~3s until Mongo (which connects asynchronously) is up, then refreshes
+    // every 60s; until the first load the registry is simply empty and
+    // resolution behaves as before. Timers are unref'd; never blocks startup.
+    this.memberIdentity = new MemberIdentityService({ mongoService: this.mongoService });
+    this.memberIdentity.start();
+    this.speakerNames = createSpeakerNames({
+      overrides: config.voice.speakerNames,
+      identity: this.memberIdentity,
+    });
 
     // Initialize Channel Context service for passive conversation awareness
     this.channelContextService = null;
@@ -246,7 +260,10 @@ class DiscordBot {
     this.chatService = new ChatService(
       this.openaiClient, config, this.mongoService, this.mem0Service,
       this.channelContextService, this.voiceProfileService, this.qdrantService,
-      this.agentClient, this.recallService
+      this.agentClient, this.recallService,
+      // Member identity grounding: speaker labels + "People in this
+      // conversation" roster in buildTurnContext (text and voice).
+      { memberIdentity: this.memberIdentity, speakerNames: this.speakerNames }
     );
 
     // VoiceClient/VoiceService - live Discord voice channel presence via the
@@ -624,6 +641,10 @@ class DiscordBot {
     // Register admin observability command (degrades gracefully if the agent
     // sidecar is disabled — this.agentClient is null in that case).
     this.slashCommandHandler.register(new ObserveSlashCommand(this.agentClient));
+
+    // Member identity (/whois) -- always registered; degrades to "unavailable" without Mongo
+    const WhoisSlashCommand = require('./commands/slash/WhoisCommand');
+    this.slashCommandHandler.register(new WhoisSlashCommand(this.memberIdentity, this.speakerNames));
 
     // Register voice slash command (only if voice is enabled and initialized)
     if (config.voice.enabled && this.voiceService) {

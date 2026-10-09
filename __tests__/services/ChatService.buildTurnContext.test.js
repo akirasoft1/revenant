@@ -148,6 +148,10 @@ test('buildTurnContext preserves a trailing user turn that merely ENDS WITH user
 describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
   const REF = { id: 'bot-msg-9', content: 'Aaron Halo is the best spot for Aluminum.', authorId: 'bot-id' };
   const prefixed = (refText, msg) => `[Replying to your earlier message: "${refText}"]\n${msg}`;
+  // Every current turn now carries the speaker label (member identity
+  // grounding). makeChat() has no speakerNames/registry and these calls pass
+  // no userTag, so the u1 speaker resolves to 'Unknown'.
+  const u1 = (msg) => `[Unknown · u1]: ${msg}`;
 
   const LEVSKI_Q = 'are there any ship parts or fps equipment that are unique to Levski that you cannot buy anywhere else?';
   const LEVSKI_A = 'yeah, uex has dozens of exclusives logged there — e.g. the FS-9 LMG variant, a couple of armor sets, and several ship components you won\'t find in Stanton.';
@@ -158,11 +162,11 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
   test('2026-09-29 regression: in-window target + newer unrelated question -> history chronological, currentTurn names the Levski message in full', async () => {
     const svc = makeChat();
     const docs = [
-      { messageId: 'u1', content: LEVSKI_Q, isBot: false, authorId: 'user-a' },
+      { messageId: 'u1', content: LEVSKI_Q, isBot: false, authorId: 'user-a', authorName: 'Ann' },
       { messageId: '1554284024082731139', content: LEVSKI_A, isBot: true },
-      { messageId: 'u2', content: PASTED, isBot: false, authorId: 'user-a' },
-      { messageId: 'u3', content: RUIN_Q, isBot: false, authorId: 'user-b' },
-      { messageId: 'cur', content: CURRENT, isBot: false, authorId: 'user-a' },
+      { messageId: 'u2', content: PASTED, isBot: false, authorId: 'user-a', authorName: 'Ann' },
+      { messageId: 'u3', content: RUIN_Q, isBot: false, authorId: 'user-b', authorName: 'Ben' },
+      { messageId: 'cur', content: CURRENT, isBot: false, authorId: 'user-a', authorName: 'Ann' },
     ];
     svc.mongoService.getRecentChannelMessages = async () => docs;
     const ctx = await svc.buildTurnContext({
@@ -170,13 +174,14 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
       referencedMessage: { id: '1554284024082731139', content: LEVSKI_A, authorId: 'bot-id' },
     });
     // History: chronological, unchanged except the deduped current turn.
+    // User turns now carry `[Name · ID]: ` speaker labels.
     expect(ctx.historyTurns).toEqual([
-      { role: 'user', content: LEVSKI_Q },
+      { role: 'user', content: `[Ann · user-a]: ${LEVSKI_Q}` },
       { role: 'assistant', content: LEVSKI_A },
-      { role: 'user', content: PASTED },
-      { role: 'user', content: RUIN_Q },
+      { role: 'user', content: `[Ann · user-a]: ${PASTED}` },
+      { role: 'user', content: `[Ben · user-b]: ${RUIN_Q}` },
     ]);
-    expect(ctx.currentTurn).toBe(prefixed(LEVSKI_A, CURRENT));
+    expect(ctx.currentTurn).toBe(prefixed(LEVSKI_A, `[Ann · user-a]: ${CURRENT}`));
   });
 
   test('does not truncate a long referenced message', async () => {
@@ -185,7 +190,7 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
     const ctx = await svc.buildTurnContext({
       userId: 'u1', channelId: 'c1', userMessage: 'why?', referencedMessage: { id: 'r', content: long },
     });
-    expect(ctx.currentTurn).toBe(prefixed(long, 'why?'));
+    expect(ctx.currentTurn).toBe(prefixed(long, u1('why?')));
   });
 
   test('out-of-window reference -> prefix, and NO assistant turn appended to history', async () => {
@@ -203,7 +208,7 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
       { role: 'user', content: 'unrelated chatter' },
       { role: 'assistant', content: 'unrelated bot reply' },
     ]);
-    expect(ctx.currentTurn).toBe(prefixed(REF.content, 'and where would it be best to refine it?'));
+    expect(ctx.currentTurn).toBe(prefixed(REF.content, u1('and where would it be best to refine it?')));
   });
 
   test('dedupe still compares against the RAW userMessage (prefix applied after _dropDuplicatedCurrentTurn)', async () => {
@@ -216,7 +221,7 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
       userId: 'u1', channelId: 'c1', userMessage: 'refine it where?', referencedMessage: REF,
     });
     expect(ctx.historyTurns).toEqual([{ role: 'assistant', content: 'Aaron Halo.' }]);
-    expect(ctx.currentTurn).toBe(prefixed(REF.content, 'refine it where?'));
+    expect(ctx.currentTurn).toBe(prefixed(REF.content, u1('refine it where?')));
   });
 
   test('strips display-only decoration (fallback banner, <url> wrapping) from the prefix', async () => {
@@ -230,12 +235,12 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
       },
     });
     expect(ctx.historyTurns).toEqual([]);
-    expect(ctx.currentTurn).toBe(prefixed('See https://example.com/a and [wiki](https://w.example/b).', 'more?'));
+    expect(ctx.currentTurn).toBe(prefixed('See https://example.com/a and [wiki](https://w.example/b).', u1('more?')));
   });
 
-  test('no referencedMessage -> currentTurn equals userMessage, history unchanged', async () => {
+  test('no referencedMessage -> currentTurn is just the labelled userMessage, history unchanged', async () => {
     const ctx = await makeChat().buildTurnContext({ userId: 'u1', channelId: 'c1', userMessage: 'hi' });
-    expect(ctx.currentTurn).toBe('hi');
+    expect(ctx.currentTurn).toBe(u1('hi'));
     expect(ctx.historyTurns).toEqual([
       { role: 'user', content: 'can you write something for me?' },
       { role: 'assistant', content: 'what document?' },
@@ -248,7 +253,7 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
       const ctx = await makeChat().buildTurnContext({
         userId: 'u1', channelId: 'c1', userMessage: 'hi', referencedMessage: { id: 'z', content },
       });
-      expect(ctx.currentTurn).toBe('hi');
+      expect(ctx.currentTurn).toBe(u1('hi'));
       expect(ctx.historyTurns).toEqual(base.historyTurns);
     }
   });
@@ -260,7 +265,7 @@ describe('buildTurnContext referencedMessage -> currentTurn prefix', () => {
       userId: 'u1', channelId: 'c1', userMessage: 'refine?', referencedMessage: REF,
     });
     expect(ctx.historyTurns).toEqual([]);
-    expect(ctx.currentTurn).toBe(prefixed(REF.content, 'refine?'));
+    expect(ctx.currentTurn).toBe(prefixed(REF.content, u1('refine?')));
   });
 
   test('recall is queried with the RAW user text, not the annotated turn', async () => {
@@ -324,7 +329,8 @@ describe('chat() forwards options.referencedMessage to buildTurnContext', () => 
     await svc.chat('channel-voice', 'are they unique stats?', { id: 'u1', username: 'a' }, 'c1', 'g1', null,
       { referencedMessage: { id: 'b1', content: 'Levski has exclusives.' } });
     const sent = svc.agentClient.chat.mock.calls[0][0];
-    expect(sent.userMessage).toBe('[Replying to your earlier message: "Levski has exclusives."]\nare they unique stats?');
+    // chat() passes the Discord user as the speaker -> username 'a'.
+    expect(sent.userMessage).toBe('[Replying to your earlier message: "Levski has exclusives."]\n[a · u1]: are they unique stats?');
     expect(sent.history).toEqual([
       { role: 'assistant', content: 'Levski has exclusives.' },
       { role: 'user', content: 'what about Ruin Station?' },
@@ -343,5 +349,199 @@ describe('chat() forwards options.referencedMessage to buildTurnContext', () => 
     const svc = makeAgentChat();
     await svc.chat('channel-voice', 'hi', { id: 'u1', username: 'a' }, 'c1', 'g1');
     expect(svc.agentClient.chat.mock.calls[0][0].userMessage).toBe('hi');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Member identity grounding: every user history turn and the current turn are
+// labelled `[Name · Discord ID]: …`, and a scoped "People in this
+// conversation" roster is appended to the system prompt.
+//
+// Incident: someone wrote "Akira …" in a message to the bot, Akira then
+// replied, and the bot did not know the replier IS Akira.
+// ---------------------------------------------------------------------------
+describe('buildTurnContext member identity grounding', () => {
+  const { createSpeakerNames } = require('../../services/SpeakerNames');
+  const AKIRA = '161644375040983040';
+  const BOB = '222333444555666777';
+  const CAROL = '888999000111222333';
+  const RECORDS = [
+    { discordId: AKIRA, addressName: 'Akira', aliases: ['Akirasoft', 'Phalabala'] },
+    { discordId: CAROL, addressName: 'Carol', aliases: ['Caz'] },
+  ];
+  const ROSTER_HEAD = '\n\n## People in this conversation\nMessages are labelled [Name · Discord ID]. "I", "me" and "my" mean the labelled speaker of that message. Use this list only to work out who is who; don\'t mention these aliases unless it matters. Never start your own replies with a label.\n';
+
+  function makeIdentity(records = RECORDS) {
+    const byId = new Map(records.map((r) => [r.discordId, r]));
+    return { get: (id) => byId.get(id) || null, all: () => records.slice(), isLoaded: () => true };
+  }
+
+  function makeIdentityChat(docs, { identity = makeIdentity() } = {}) {
+    const svc = makeChat();
+    svc.memberIdentity = identity;
+    svc.speakerNames = createSpeakerNames({ overrides: {}, identity });
+    svc.mongoService.getRecentChannelMessages = async () => docs;
+    return svc;
+  }
+
+  test('incident replay: an alias mentioned by another user maps to the current speaker', async () => {
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'bob', content: 'Akira, did you ever fit the Scorpius with the new shields?', isBot: false },
+      { authorId: 'bot-id', authorName: 'Revenant', content: 'Not that I know of.', isBot: true },
+      { authorId: AKIRA, authorName: 'akirasoft', content: 'yeah I did, last night', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: AKIRA, userTag: 'akirasoft', channelId: 'c1', userMessage: 'yeah I did, last night',
+      speaker: { id: AKIRA, username: 'akirasoft', globalName: 'Akirasoft' },
+    });
+
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: `[bob · ${BOB}]: Akira, did you ever fit the Scorpius with the new shields?` },
+      { role: 'assistant', content: 'Not that I know of.' },
+    ]);
+    expect(ctx.currentTurn).toBe(`[Akira · ${AKIRA}]: yeah I did, last night`);
+    expect(ctx.systemPrompt.endsWith(
+      `${ROSTER_HEAD}- Akira (Discord ${AKIRA}) — also called Akirasoft, Phalabala; address as Akira  ← current speaker\n- bob (Discord ${BOB})`,
+    )).toBe(true);
+    // Non-participant registry member (Carol) is never listed.
+    expect(ctx.systemPrompt).not.toContain(CAROL);
+  });
+
+  test('a registry member mentioned by alias (whole word) is listed even when not a participant', async () => {
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'bob', content: 'ask Caz about mining', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({ userId: BOB, userTag: 'bob', channelId: 'c1', userMessage: 'well?' });
+    expect(ctx.systemPrompt).toContain(`- Carol (Discord ${CAROL}) — also called Caz; address as Carol`);
+    expect(ctx.systemPrompt).toContain(`- bob (Discord ${BOB})  ← current speaker`);
+    expect(ctx.systemPrompt).not.toContain(AKIRA);
+  });
+
+  test('whole-word only: "Caz" inside "Cazzle" does not pull Carol in', async () => {
+    const svc = makeIdentityChat([{ authorId: BOB, authorName: 'bob', content: 'Cazzle is a game', isBot: false }]);
+    const ctx = await svc.buildTurnContext({ userId: BOB, userTag: 'bob', channelId: 'c1', userMessage: 'hmm' });
+    expect(ctx.systemPrompt).not.toContain(CAROL);
+  });
+
+  test('bot turns stay unlabelled; rows without authorId stay unlabelled', async () => {
+    const svc = makeIdentityChat([
+      { content: 'legacy row with no author', isBot: false },
+      { authorId: 'bot', authorName: 'Revenant', content: 'voice bot reply', isBot: true },
+    ]);
+    const ctx = await svc.buildTurnContext({ userId: BOB, userTag: 'bob', channelId: 'c1', userMessage: 'hi' });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: 'legacy row with no author' },
+      { role: 'assistant', content: 'voice bot reply' },
+    ]);
+    expect(ctx.currentTurn).toBe(`[bob · ${BOB}]: hi`);
+  });
+
+  test('dedupe still compares RAW text before labelling, and history/doc alignment survives the drop', async () => {
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'bob', content: 'first', isBot: false },
+      { authorId: AKIRA, authorName: 'akirasoft', content: '<@1> current msg', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({ userId: AKIRA, userTag: 'akirasoft', channelId: 'c1', userMessage: 'current msg' });
+    expect(ctx.historyTurns).toEqual([{ role: 'user', content: `[bob · ${BOB}]: first` }]);
+    expect(ctx.currentTurn).toBe(`[Akira · ${AKIRA}]: current msg`);
+  });
+
+  test('reply prefix composes as prefix line, then the labelled message', async () => {
+    const svc = makeIdentityChat([]);
+    const ctx = await svc.buildTurnContext({
+      userId: AKIRA, userTag: 'akirasoft', channelId: 'c1', userMessage: 'are they unique?',
+      referencedMessage: { id: 'b1', content: 'Levski has exclusives.' },
+    });
+    expect(ctx.currentTurn).toBe(`[Replying to your earlier message: "Levski has exclusives."]\n[Akira · ${AKIRA}]: are they unique?`);
+  });
+
+  test('registry unavailable (throws) -> no crash, labels fall back to stored authorName, no aliases', async () => {
+    const broken = { get: () => { throw new Error('boom'); }, all: () => { throw new Error('boom'); }, isLoaded: () => false };
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'bob', content: 'Akira, you there?', isBot: false },
+      { authorId: AKIRA, authorName: 'akirasoft', content: 'older', isBot: false },
+    ], { identity: broken });
+    const ctx = await svc.buildTurnContext({ userId: AKIRA, userTag: 'akirasoft', channelId: 'c1', userMessage: 'yes' });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: `[bob · ${BOB}]: Akira, you there?` },
+      { role: 'user', content: `[akirasoft · ${AKIRA}]: older` },
+    ]);
+    expect(ctx.currentTurn).toBe(`[akirasoft · ${AKIRA}]: yes`);
+    expect(ctx.systemPrompt).toContain(`- akirasoft (Discord ${AKIRA})  ← current speaker`);
+    expect(ctx.systemPrompt).not.toContain('also called');
+  });
+
+  test('no memberIdentity/speakerNames at all -> stored authorName labels, userTag for the current speaker', async () => {
+    const svc = makeChat();
+    svc.mongoService.getRecentChannelMessages = async () => ([
+      { authorId: BOB, authorName: 'bob', content: 'yo', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({ userId: AKIRA, userTag: 'akirasoft', channelId: 'c1', userMessage: 'hey' });
+    expect(ctx.historyTurns).toEqual([{ role: 'user', content: `[bob · ${BOB}]: yo` }]);
+    expect(ctx.currentTurn).toBe(`[akirasoft · ${AKIRA}]: hey`);
+    expect(ctx.systemPrompt).toContain(`- akirasoft (Discord ${AKIRA})  ← current speaker\n- bob (Discord ${BOB})`);
+  });
+
+  test('voice-style call (userMessage: \'\') -> labelled history + roster with the session opener as current speaker', async () => {
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'bob', content: 'what is Phalabala up to?', isBot: false },
+      { authorId: 'bot', authorName: 'Revenant', content: 'no idea', isBot: true },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: CAROL, userTag: '', channelId: 'c1', guildId: 'g1', userMessage: '', personalityId: 'channel-voice',
+    });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: `[bob · ${BOB}]: what is Phalabala up to?` },
+      { role: 'assistant', content: 'no idea' },
+    ]);
+    expect(ctx.currentTurn).toBe('');
+    expect(ctx.systemPrompt).toContain(`${ROSTER_HEAD}- Carol (Discord ${CAROL}) — also called Caz; address as Carol  ← current speaker\n- bob (Discord ${BOB})\n- Akira (Discord ${AKIRA}) — also called Akirasoft, Phalabala; address as Akira`);
+  });
+
+  test('one name per person: registry name, then stored authorName, then Discord names (history + current turn agree)', async () => {
+    // Bob has no registry record; his stored authorName is 'Bobby' and his
+    // Discord globalName 'Robert'. Akira's registry name beats both.
+    const svc = makeIdentityChat([
+      { authorId: BOB, authorName: 'Bobby', content: 'earlier', isBot: false },
+      { authorId: AKIRA, authorName: 'akirasoft', content: 'hey', isBot: false },
+    ]);
+    const ctx = await svc.buildTurnContext({
+      userId: BOB, userTag: 'robert1', channelId: 'c1', userMessage: 'again',
+      speaker: { id: BOB, username: 'robert1', globalName: 'Robert' },
+    });
+    expect(ctx.historyTurns).toEqual([
+      { role: 'user', content: `[Bobby · ${BOB}]: earlier` },
+      { role: 'user', content: `[Akira · ${AKIRA}]: hey` },
+    ]);
+    expect(ctx.currentTurn).toBe(`[Bobby · ${BOB}]: again`);
+    expect(ctx.systemPrompt).not.toContain('Robert');
+
+    // No stored row for the speaker -> Discord names via resolve(speaker).
+    const svc2 = makeIdentityChat([]);
+    const ctx2 = await svc2.buildTurnContext({
+      userId: BOB, userTag: 'robert1', channelId: 'c1', userMessage: 'hi',
+      speaker: { id: BOB, username: 'robert1', globalName: 'Robert' },
+    });
+    expect(ctx2.currentTurn).toBe(`[Robert · ${BOB}]: hi`);
+  });
+
+  test('recall is still queried with the RAW text', async () => {
+    const svc = makeIdentityChat([]);
+    const spy = jest.spyOn(svc, '_composeRecallContexts');
+    await svc.buildTurnContext({ userId: AKIRA, channelId: 'c1', userMessage: 'raw text' });
+    expect(spy.mock.calls[0][1]).toBe('raw text');
+  });
+
+  test('chat() passes the Discord user as the speaker', async () => {
+    const svc = makeChat();
+    svc.agentClient = {
+      isHealthy: () => true,
+      chat: jest.fn(async () => ({ messageText: 'ok', summary: null, fallbackOccurred: false })),
+    };
+    const spy = jest.spyOn(svc, 'buildTurnContext');
+    const user = { id: AKIRA, username: 'akirasoft', globalName: 'Akirasoft' };
+    await svc.chat('channel-voice', 'hi', user, 'c1', 'g1');
+    expect(spy.mock.calls[0][0].speaker).toBe(user);
+    expect(svc.agentClient.chat.mock.calls[0][0].userMessage).toBe(`[Akirasoft · ${AKIRA}]: hi`);
   });
 });

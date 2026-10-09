@@ -159,6 +159,13 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 - **Works in Voice Too**: The same tools are available as Gemini Live function calls during a live voice conversation, so you can ask Star Citizen questions out loud and get an answer sourced from current game data.
 - **Graceful Degradation**: If the knowledge service is unreachable, chat and voice turns continue normally without the tools (no error, no dropped turn) — controlled independently per sidecar by `SC_KNOWLEDGE_ENABLED`.
 
+### Member Identity (who said what)
+- **Registry**: Mongo `member_identities` holds each member's preferred address name and aliases, cached in memory (3s startup retry, 60s refresh, serialised writes); it is the first layer of `SpeakerNames` resolution, so chat, recall, `/tldr` and voice `[SPEAKER:]` markers all use it
+- **`/whois`**: `show`, `address`, `alias-add`, `alias-remove` (ephemeral); anyone edits themselves, admins edit anyone; names validated (letters required, 2+ characters, longer names shortened to 24, no 15+ digit runs, max 10 aliases) and unique across members
+- **Speaker labels**: history and the current turn are labelled `[Name · discordId]: …` so first-person messages are attributed to the right person; bot turns stay unlabelled
+- **Roster**: a `## People in this conversation` block (current speaker first, participants plus members mentioned by name or alias, cap 20) maps names and aliases to Discord IDs; works for text and voice (voice limitation: mid-session newcomers are not in the roster)
+- **Seeding**: `scripts/seed-member-identities.js` seeds address names from `VOICE_SPEAKER_NAMES` (dry run by default, never overwrites)
+
 ### Voice Channel Conversation
 - **Live Voice Sessions**: `/voice join` puts the bot in your current voice channel; it listens for a wake phrase ("hey jarvis" by default) and replies out loud via a dedicated Gemini Live session
 - **Dedicated Sidecar**: A separate Python gRPC sidecar (`discord-article-bot-voice`, distinct from the agent sandbox sidecar) hosts the Live session per active voice channel — `RollingUpdate` and horizontally scalable, since it holds long-lived real-time audio streams (unlike the agent sidecar's single-replica `Recreate`)

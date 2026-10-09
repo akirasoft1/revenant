@@ -31,7 +31,8 @@ const {
   ContextSlashCommand,
   ChannelTrackSlashCommand,
   ObserveSlashCommand,
-  VoiceSlashCommand
+  VoiceSlashCommand,
+  WhoisSlashCommand
 } = require('../commands/slash');
 
 async function registerCommands() {
@@ -99,6 +100,8 @@ async function registerCommands() {
     commands.push(new ThrowbackSlashCommand(null));
     console.log('Including IRC history commands (qdrant enabled)');
   }
+
+  commands.push(new WhoisSlashCommand(null, null));
 
   if (config.voice?.enabled) {
     commands.push(new VoiceSlashCommand(null));

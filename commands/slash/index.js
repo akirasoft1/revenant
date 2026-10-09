@@ -40,5 +40,8 @@ module.exports = {
   ObserveSlashCommand: require('./ObserveCommand'),
 
   // Voice commands
-  VoiceSlashCommand: require('./voice')
+  VoiceSlashCommand: require('./voice'),
+
+  // Identity
+  WhoisSlashCommand: require('./WhoisCommand')
 };

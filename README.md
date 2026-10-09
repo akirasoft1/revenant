@@ -14,6 +14,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 - **Simple Interface**: `/chat <message>` — no personality picker needed
 - **TLDR**: `/tldr` sends a DM summary of what you missed while away
 - **Stats**: `/stats` shows top token consumers
+- **Who's Who**: The bot labels who said what in multi-user chat and knows each person's preferred name and aliases; `/whois` shows or sets them
 - **Image Vision**: Attach images to chat messages for analysis and discussion
 - **Channel-Scoped Memory**: Conversation history per channel
 - **Reply to Continue**: Reply directly to bot messages to continue conversations
@@ -460,6 +461,16 @@ All commands use Discord's native slash command system. Type `/` to see availabl
 | `/voice join` | Bot joins your current voice channel; say the wake phrase (default `"hey jarvis"`) to talk to it |
 | `/voice leave` | Bot leaves the voice channel |
 | `/voice resume` | Ends "go quiet" mode early (quiet mode is started by saying e.g. "go quiet for ten minutes" or "stop listening for 20 minutes"; "thanks jarvis, that's all" only ends the current conversation and does NOT start quiet mode) — reports how much quiet time was left, cancels a quiet request whose confirmation hadn't finished playing yet, or says it wasn't in quiet mode |
+
+### Identity
+
+- `/whois show [member]` - see the name and aliases I use for you (or another member)
+- `/whois address <name> [member]` - set the name I call you
+- `/whois alias-add <alias> [member]` / `/whois alias-remove <alias> [member]` - manage other names you go by (max 10)
+
+Anyone can edit their own entry; editing another member requires a bot admin (`BOT_ADMIN_USER_IDS`). Names need at least one letter and 2 or more characters (longer names are shortened to 24), and can't be a long run of digits; a name already used by someone else is refused. Replies are only visible to you.
+
+To seed address names from `VOICE_SPEAKER_NAMES`: `node scripts/seed-member-identities.js` (dry run) then `--apply` (never overwrites existing entries).
 
 ### Utility
 | Command | Description |
