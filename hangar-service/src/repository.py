@@ -117,6 +117,15 @@ class ShipRepository(abc.ABC):
         """Reset ``slot`` to stock (no-op success if it already is)."""
 
     @abc.abstractmethod
+    async def update_slots(self, member_id: str, ship_id: str, slots: dict, *,
+                           updated_by: str, owner_name: str | None = None) -> dict | None:
+        """Set and/or clear several slots in ONE write: ``slots`` maps a slot
+        id to ``{itemUuid, itemName}`` (record that item) or ``None`` (reset to
+        stock). Slots not named are left exactly as stored (concurrent edits to
+        other slots survive) -- chat edits use this so a multi-slot change is
+        all-or-nothing."""
+
+    @abc.abstractmethod
     async def replace_fitted(self, member_id: str, ship_id: str, fitted: dict, *,
                              updated_by: str, owner_name: str | None = None) -> dict | None:
         """Replace the WHOLE ``fitted`` map (slots not in ``fitted`` go back to
@@ -194,6 +203,17 @@ class InMemoryShipRepository(ShipRepository):
     async def clear_slot(self, member_id, ship_id, slot, *, updated_by, owner_name=None):
         return await self._mutate(member_id, ship_id, updated_by, owner_name,
                                   lambda d: d["fitted"].pop(slot, None))
+
+    async def update_slots(self, member_id, ship_id, slots, *, updated_by, owner_name=None):
+        changes = copy.deepcopy(slots)
+
+        def apply(d):
+            for slot, entry in changes.items():
+                if entry is None:
+                    d["fitted"].pop(slot, None)
+                else:
+                    d["fitted"][slot] = entry
+        return await self._mutate(member_id, ship_id, updated_by, owner_name, apply)
 
     async def replace_fitted(self, member_id, ship_id, fitted, *, updated_by, owner_name=None):
         new = copy.deepcopy(fitted)
@@ -288,6 +308,13 @@ class FirestoreShipRepository(ShipRepository):
         from google.cloud import firestore
         return await self._update(member_id, ship_id, {self._slot_path(slot): firestore.DELETE_FIELD},
                                   updated_by, owner_name)
+
+    async def update_slots(self, member_id, ship_id, slots, *, updated_by, owner_name=None):
+        from google.cloud import firestore
+        fields = {self._slot_path(slot): (firestore.DELETE_FIELD if entry is None
+                                          else {"itemUuid": entry["itemUuid"], "itemName": entry["itemName"]})
+                  for slot, entry in slots.items()}
+        return await self._update(member_id, ship_id, fields, updated_by, owner_name)
 
     async def replace_fitted(self, member_id, ship_id, fitted, *, updated_by, owner_name=None):
         # Top-level "fitted" path: the update mask replaces the whole map; the

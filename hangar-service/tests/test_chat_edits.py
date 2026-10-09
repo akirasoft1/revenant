@@ -434,3 +434,162 @@ def test_fit_exact_slot_id_of_too_small_slot_is_size_mismatch(client):
     add_ship(client, vehicle=TAURUS_UUID)
     r = fit(client, "Connie", LORICA, slot="hardpoint_shield_generator")
     assert r.status_code == 422 and r.json()["reason"] == "size_mismatch"
+
+
+# ---------- fix round 1: one atomic write per request ----------
+
+class WriteSpy:
+    def __init__(self, repo):
+        self.repo, self.calls = repo, []
+        for name in ("set_slot", "clear_slot", "replace_fitted"):
+            setattr(repo, name, self._forbidden(name))
+        self._orig = repo.update_slots
+        repo.update_slots = self._update
+        self.before = None
+
+    def _forbidden(self, name):
+        async def f(*a, **k):
+            raise AssertionError(f"chat edits must not call {name}")
+        return f
+
+    async def _update(self, member, ship_id, slots, **kw):
+        self.calls.append(dict(slots))
+        if self.before is not None:
+            await self.before(member, ship_id)
+        return await self._orig(member, ship_id, slots, **kw)
+
+
+def test_fit_all_is_one_update_slots_write(client, repo):
+    harb = add_ship(client, vehicle=HARBINGER_UUID)
+    spy = WriteSpy(repo)
+    r = fit(client, "Harbinger", LORICA, slot="all")
+    assert r.status_code == 200
+    assert spy.calls == [{SHIELD_1: {"itemUuid": LORICA_UUID, "itemName": "7MA 'Lorica'"},
+                          SHIELD_2: {"itemUuid": LORICA_UUID, "itemName": "7MA 'Lorica'"}}]
+    assert set(fitted(client, harb["shipId"])) == {SHIELD_1, SHIELD_2}
+
+
+def test_fit_noop_does_not_write(client, repo):
+    add_ship(client, vehicle=TAURUS_UUID)
+    fit(client, "Connie", "Hemera")
+    spy = WriteSpy(repo)
+    assert fit(client, "Connie", "Hemera").json()["unchanged"] is True
+    assert spy.calls == []
+
+
+def test_reset_all_deletes_exactly_the_slots_read(client, repo):
+    harb = add_ship(client, vehicle=HARBINGER_UUID)
+    fit(client, "Harbinger", LORICA, slot="all")
+    fit(client, "Harbinger", "Hemera")
+    spy = WriteSpy(repo)
+    orig_set = type(repo).set_slot
+
+    async def concurrent_editor(member, ship_id):   # lands between the read and the write
+        await orig_set(repo, member, ship_id, "hardpoint_radar", item_uuid="rad", item_name="New Radar",
+                       updated_by=member)
+    spy.before = concurrent_editor
+    r = reset(client, "Harbinger", "all")
+    assert r.status_code == 200
+    assert spy.calls == [{SHIELD_1: None, SHIELD_2: None, QD: None}]
+    assert {c["slot"] for c in r.json()["changes"]} == {SHIELD_1, SHIELD_2, QD}
+    assert fitted(client, harb["shipId"]) == {"hardpoint_radar": {"itemUuid": "rad", "itemName": "New Radar"}}
+
+
+def test_partial_reset_is_one_write(client, repo):
+    add_ship(client, vehicle=HARBINGER_UUID)
+    fit(client, "Harbinger", LORICA, slot="all")
+    fit(client, "Harbinger", "Hemera")
+    spy = WriteSpy(repo)
+    r = reset(client, "Harbinger", "shields")
+    assert r.status_code == 200 and spy.calls == [{SHIELD_1: None, SHIELD_2: None}]
+
+
+def test_failed_write_is_503_and_logs_no_change(client, repo, caplog):
+    import logging
+    from src.repository import RepositoryError
+    add_ship(client, vehicle=HARBINGER_UUID)
+
+    async def boom(*a, **k):
+        raise RepositoryError("firestore down")
+    repo.update_slots = boom
+    with caplog.at_level(logging.INFO, logger="src.app"):
+        r = fit(client, "Harbinger", LORICA, slot="all")
+    assert r.status_code == 503
+    assert not any("chat fit" in rec.getMessage() for rec in caplog.records)
+
+
+def test_reset_with_vehicle_gone_from_catalog(client, repo):
+    import asyncio as _a
+    harb = add_ship(client, vehicle=HARBINGER_UUID)
+    _a.run(repo.update_slots(SELF, harb["shipId"], {"a": {"itemUuid": "1", "itemName": "A"},
+                                                     "b": {"itemUuid": "2", "itemName": "B"}}, updated_by=SELF))
+
+    async def gone(_uuid):
+        return None
+    client.app.state.catalog.slots = gone
+    r = reset(client, "Harbinger", "a")
+    assert r.status_code == 200
+    assert r.json()["changes"] == [{"slot": "a", "from": {"name": "A", "uuid": "1"},
+                                    "to": {"name": None, "uuid": None}}]
+    r = reset(client, "Harbinger", "all")
+    assert r.status_code == 200 and [c["slot"] for c in r.json()["changes"]] == ["b"]
+    assert fitted(client, harb["shipId"]) == {}
+
+
+def test_both_with_more_than_two_slots_asks(client):
+    harb = add_ship(client, vehicle=HARBINGER_UUID)
+    r = fit(client, "Harbinger", BRVS, slot="both")
+    assert r.status_code == 409 and r.json()["error"] == "choose_slot" and len(r.json()["slots"]) == 4
+    assert fit(client, "Harbinger", BRVS, slot="all").status_code == 200
+    r = reset(client, "Harbinger", "both")
+    assert r.status_code == 409 and r.json()["error"] == "choose_slot"
+    assert len(fitted(client, harb["shipId"])) == 4
+    r = fit(client, "Harbinger", LORICA, slot="both")
+    assert r.status_code == 200 and len(r.json()["changes"]) == 2
+
+
+# ---------- fix round 1: fuzzy item resolution ----------
+
+@pytest.mark.parametrize("text,by", [("Hemera", "exact"), ("hemera qd", "exact"),
+                                     ("the hemera quantum drive", "exact"), ("hemra", "fuzzy")])
+def test_fit_spoken_item_names(client, text, by):
+    taurus = add_ship(client, vehicle=TAURUS_UUID)
+    r = fit(client, "Connie", text)
+    assert r.status_code == 200, r.text
+    assert r.json()["item"]["name"] == "Hemera" and r.json()["item"]["matchedBy"] == by
+    assert fitted(client, taurus["shipId"]) == {QD: {"itemUuid": HEMERA_UUID, "itemName": "Hemera"}}
+
+
+def test_fit_lorica_shields(client):
+    add_ship(client, vehicle=HARBINGER_UUID)
+    r = fit(client, "Harbinger", "lorica shields", slot="1")
+    assert r.status_code == 200, r.text
+    assert r.json()["item"] == {"uuid": LORICA_UUID, "name": "7MA 'Lorica'", "type": "Shield", "size": 2,
+                                "matchedBy": "fuzzy"}
+
+
+def test_fit_ambiguous_item_409_field_item(client):
+    taurus = add_ship(client, vehicle=TAURUS_UUID)
+    r = fit(client, "Connie", "bol")
+    assert r.status_code == 409
+    body = r.json()
+    assert body["error"] == "ambiguous" and body["field"] == "item"
+    assert [c["name"] for c in body["candidates"]] == ["Bolon", "Bolt"]
+    assert set(body["candidates"][0]) == {"uuid", "name", "type", "size"}
+    assert fitted(client, taurus["shipId"]) == {}
+
+
+def test_fit_unknown_item_has_field_and_suggestions(client):
+    add_ship(client, vehicle=TAURUS_UUID)
+    r = fit(client, "Connie", "Hemeroid quantum drive")
+    assert r.status_code == 404
+    body = r.json()
+    assert body["error"] == "not_found" and body["field"] == "item"
+    assert isinstance(body["suggestions"], list) and len(body["suggestions"]) <= 3
+
+
+def test_ship_errors_carry_field_ship(client):
+    add_ship(client, vehicle=TAURUS_UUID)
+    add_ship(client, vehicle=TAURUS_UUID)
+    assert fit(client, "Connie", "Hemera").json()["field"] == "ship"
+    assert fit(client, "Polaris", "Hemera").json()["field"] == "ship"

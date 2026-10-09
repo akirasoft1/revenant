@@ -90,7 +90,11 @@ The bot's agent and voice sidecars record "I put the Hemera in my Connie" /
 the real speaker as `X-Acting-Member` (same write rule as every other write:
 acting member == path member, or an admin; browser sessions need a
 same-origin request). The server does ALL resolution; every resolution error
-is returned before anything is written.
+is returned before anything is written, and each request makes at most ONE
+write (`update_slots`: one Firestore update setting / deleting exactly the
+target `fitted.<slot>` fields), so a multi-slot change is all-or-nothing,
+never wipes other slots edited concurrently, and `changes` is exactly the
+written set (logged only after the write succeeds).
 The callers bind `X-Acting-Member` from trusted plumbing, never from a tool
 argument (agent: `ChatRequest.user_id`; voice: the current `SetSpeaker.user_id`,
 else the session opener), and their tools have no member parameter — see
@@ -103,29 +107,48 @@ else the session opener), and their tools have no member parameter — see
   model fuzzy. **KEEP IN SYNC** with `sc-knowledge/src/tools_hangar.py`
   (`sc_member_hangar` reads with the same rules and labels);
   `tests/test_ship_resolve.py` fails if the copies drift. Several → 409
-  `ambiguous` `candidates: [{shipId, label}]`; none → 404 `not_found` with
-  `owned: [{shipId, label}]`. Labels: `"Nickname" (Model)`, else the model
+  `ambiguous` `field: "ship"`, `candidates: [{shipId, label}]`; none → 404
+  `not_found` `field: "ship"` with `owned: [{shipId, label}]`. Labels: `"Nickname" (Model)`, else the model
   name, plus `(ship <id>)` when two would read the same.
-- **Item** (`/fit` only): catalog lookup by uuid, exact Wiki name or class
-  name; unknown → 404 `not_found`.
+- **Item** (`/fit` only, `src/item_resolve.py`, shared by text and voice):
+  exact catalog lookup (uuid / exact Wiki name / class name); else drop
+  leading "my/the", possessives and component-type words ("the hemera
+  quantum drive" → "Hemera", types → QuantumDrive) and retry exact; else
+  score a pool = `catalog.items(type)` for the spoken type(s), or every type
+  the ship's slots accept: exact casefold name → every word a whole token or
+  ≥3-char prefix of the name (quotes stripped: "lorica" → `7MA 'Lorica'`) →
+  fuzzy ratio ≥ 85 with a 5-point lead ("hemra" → Hemera). Ties prefer items
+  that fit one of the ship's slots (type + size). Several → 409 `ambiguous`
+  `field: "item"`, `candidates: [{uuid, name, type, size}]` (≤5); none → 404
+  `not_found` `field: "item"`, `suggestions: [name]` (≤3, score ≥ 60). The
+  response's `item.matchedBy` is `"exact"` or `"fuzzy"`, `item.name` the
+  canonical name. Cold pool lists cost one Wiki fetch per type (then cached
+  12h).
 - **Target slots** (`/fit`): the ship's visible slots `check_compatible`
   accepts; a mount of another type (Turret gimbal) that also accepts the item
   is skipped when a fitting child is visible. None → 422 `incompatible` with
   `reason` `size_mismatch` (+ `slots` it would go in, by size) or `no_slot`.
   `slot` (`src/slot_hint.py`):
   - omitted: exactly one compatible slot → it; several → 409 `choose_slot`;
-  - `"all"` / `"both"` / `"every"` → every compatible slot;
+  - `"all"` / `"every"` / `"everything"` / `"each"` → every compatible slot;
+    `"both"` → only when exactly two remain, else 409 `choose_slot`;
   - an exact slot id (case-insensitive) → that slot (incompatible → 422);
-  - a hint matched against slot-id tokens: "left", "right", "nose", "upper",
-    "front"(=nose), "1"/"001"/"first" (numbers compare numerically, and tokens
+  - a hint matched against slot-id tokens. Position words are equivalence
+    sets — {top, upper}, {bottom, lower, under}, {front, nose, fwd, forward},
+    {left, port, l}, {right, starboard, r}, {rear, back, aft} — so "top left"
+    and "upper left" both hit `hardpoint_gun_laser_top_left/...`. Number words
+    "two".."six" / "first".."sixth" are digits; "one" only after a type word
+    ("shield one"), otherwise filler ("the top left one"). Numbers compare
+    numerically ("1" == "001"), and tokens
     every candidate shares — e.g. the `hardpoint_class_2` suffix on all
     Harbinger nose guns — are ignored first, so "2" means `..._fixed_002`).
     Component words filter by type ("shield 2", "left cooler", "qd"); a
     plural one ("shields", "both coolers") selects every slot it leaves. One
     match → it; several → 409 `choose_slot`; none → 409 `choose_slot` listing
     every compatible slot.
-- **Writes** go through the same per-slot path as `PUT .../slots/{slot}`
-  (fitting the stock item clears the override). Slots already holding the
+- **Writes**: one `update_slots` call for every target slot, with the same
+  stock rule as `PUT .../slots/{slot}` (fitting the stock item deletes the
+  override). Slots already holding the
   item are skipped; nothing to change → `changes: []`, `unchanged: true`.
 - **Reset** (`slot` omitted / `"all"` / id / hint): resets slots to stock.
   Only non-stock slots matter: a ship with nothing fitted is always
@@ -133,8 +156,10 @@ else the session opener), and their tools have no member parameter — see
   listing the refitted slots; `"all"` → every refitted slot in one write; a
   hint matching several slots narrows to the refitted ones (one → it, several
   → `choose_slot`, none → `unchanged`); no match → `choose_slot` listing the
-  refitted slots. Fitted ids the catalog no longer has (renamed in a patch)
-  are resettable by exact id.
+  refitted slots; `"both"` alone → the refitted slots when there are at most
+  two, else `choose_slot`. Fitted ids the catalog no longer has (renamed in a
+  patch, or the whole vehicle gone from the catalog) are resettable by exact
+  id and by `"all"` (`to` names are then null).
 - `Change` = `{slot, from: {name, uuid}, to: {name, uuid}}` (`from` is the
   previously effective item, `to` the new one — the stock item for a reset;
   `null` names for an empty slot or an orphaned slot's stock).

@@ -81,7 +81,8 @@ from .loadout import check_compatible, effective_loadout
 from .options import slot_options
 from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
 from .ship_resolve import resolve_ship, ship_labels
-from .slot_hint import ALL_WORDS, match_slots
+from .item_resolve import resolve_item
+from .slot_hint import ALL_WORDS, BOTH, match_slots
 from .static_site import NO_CACHE, StaticSite, build_csp
 from .spviewer import MAX_ROWS, MAX_UPLOAD_BYTES, DecodeBudget, RowResult, analyze_row
 
@@ -687,7 +688,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     #
     # The bot's agent / voice sidecars call these for "I put the Hemera in my
     # Connie" with the speaker as X-Acting-Member. Every resolution error
-    # (ship, item, slot) is raised BEFORE the first write.
+    # (ship, item, slot) is raised BEFORE the write, and each request makes at
+    # most ONE write (``update_slots``): a multi-slot change is all-or-nothing
+    # and ``changes`` is exactly the written set.
 
     async def _owned_ship(member: str, ref: str) -> tuple[dict, str]:
         """(ship, display label) for free text within ``member``'s hangar --
@@ -702,12 +705,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         status, hits, _tier = resolve_ship(ref, ships)
         if status == "ambiguous":
             raise ApiError(409, "ambiguous", f"{ref!r} matches several of member {member}'s ships: "
-                                             f"{', '.join(labels[s['shipId']] for s in hits)}",
+                                             f"{', '.join(labels[s['shipId']] for s in hits)}", field="ship",
                            candidates=[{"shipId": s["shipId"], "label": labels[s["shipId"]]} for s in hits])
         if status != "match":
             have = ", ".join(o["label"] for o in owned) or "none recorded"
             raise ApiError(404, "not_found", f"member {member} has no ship matching {ref!r} (owned: {have})",
-                           owned=owned)
+                           field="ship", owned=owned)
         return hits[0], labels[hits[0]["shipId"]]
 
     def _ship_ref(ship: dict, label: str) -> dict:
@@ -718,11 +721,13 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                         slots=[{"slot": e["slot"], "type": e["type"], "size": _size_label(e["sizeMin"], e["sizeMax"]),
                                 "current": {"name": (e.get("item") or {}).get("name")}} for e in entries])
 
-    async def _ship_slots(ship: dict):
-        slots = await app.state.catalog.slots(ship["vehicleUuid"])
-        if slots is None:
-            raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
-        return slots
+    async def _write_slots(member: str, ship: dict, writes: dict, principal: Principal) -> None:
+        """The ONE write of a chat edit; 404 if the ship vanished meanwhile."""
+        updated = await app.state.repository.update_slots(
+            member, ship["shipId"], writes, updated_by=principal.acting_member,
+            owner_name=owner_name_for(principal, member))
+        if updated is None:
+            raise _not_found(f"member {member} has no ship {ship['shipId']}")
 
     @router.post("/members/{discordId}/fit")
     async def chat_fit(request: Request, discordId: str, principal: Principal = Depends(write_member)):
@@ -730,15 +735,23 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         ship_text = _required_text(body, "ship")
         item_text = _required_text(body, "item")
         hint = _optional_text(body, "slot")
-        repo, catalog = app.state.repository, app.state.catalog
+        catalog = app.state.catalog
         ship, label = await _owned_ship(discordId, ship_text)
-        slots = await _ship_slots(ship)
-        item = await catalog.item(item_text)
-        if item is None:
-            raise _not_found(f"no item {item_text!r} in the game catalog (use the exact Wiki name, "
-                             f"class name or uuid)")
+        slots = await catalog.slots(ship["vehicleUuid"])
+        if slots is None:
+            raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
         loadout = {e["slot"]: e for e in effective_loadout(slots, ship.get("fitted"))}
         visible = [s for s in slots if s.name in loadout]
+        res = await resolve_item(catalog, item_text, visible)
+        if res.status == "ambiguous":
+            raise ApiError(409, "ambiguous", f"{item_text!r} matches several items: "
+                                             f"{', '.join(c['name'] for c in res.candidates)}",
+                           field="item", candidates=res.candidates)
+        if res.status != "match":
+            hint_txt = f" (closest: {', '.join(res.suggestions)})" if res.suggestions else ""
+            raise ApiError(404, "not_found", f"no item matching {item_text!r} in the game catalog{hint_txt}",
+                           field="item", suggestions=res.suggestions)
+        item = res.item
         reasons = {s.name: check_compatible(s, item) for s in visible}
         fits = [s for s in visible if reasons[s.name] is None]
         # A mount of another type that also accepts the item (a Turret gimbal
@@ -794,29 +807,28 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                                    f"(or 'all')", ship, label, fit_entries)
             targets = [s for s in fits if s.name in chosen]
 
-        changes = []
-        updated = ship
-        by, owner = principal.acting_member, owner_name_for(principal, discordId)
+        writes, changes = {}, []
         for s in targets:
             current = loadout[s.name].get("item")
             if current and current.get("uuid") == item.get("uuid"):
                 continue
-            if s.stock_item and s.stock_item.get("uuid") == item.get("uuid"):
-                updated = await repo.clear_slot(discordId, ship["shipId"], s.name, updated_by=by, owner_name=owner)
-            else:
-                updated = await repo.set_slot(discordId, ship["shipId"], s.name, item_uuid=item["uuid"],
-                                              item_name=iname, updated_by=by, owner_name=owner)
-            if updated is None:
-                raise _not_found(f"member {discordId} has no ship {ship['shipId']}")
+            # `fitted` holds only changes from stock: fitting the stock item is a reset.
+            stock = s.stock_item and s.stock_item.get("uuid") == item.get("uuid")
+            writes[s.name] = None if stock else {"itemUuid": item["uuid"], "itemName": iname}
             changes.append({"slot": s.name, "from": _ref(current), "to": _ref(item)})
-            log.info("hangar: chat fit: member %s ship %s (%s) slot %s: %s -> %s (%s) (by %s)",
-                     discordId, ship["shipId"], label, s.name, (current or {}).get("name") or "empty",
-                     iname, item.get("uuid"), by)
-        if not changes:
+        by = principal.acting_member
+        if writes:
+            await _write_slots(discordId, ship, writes, principal)
+            for c in changes:
+                log.info("hangar: chat fit: member %s ship %s (%s) slot %s: %s -> %s (%s) (by %s)",
+                         discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
+                         iname, item.get("uuid"), by)
+        else:
             log.info("hangar: chat fit: member %s ship %s (%s): %s already fitted in %s -- no change (by %s)",
                      discordId, ship["shipId"], label, iname, ", ".join(s.name for s in targets), by)
         return {"member": discordId, "ship": _ship_ref(ship, label),
-                "item": {"uuid": item.get("uuid"), "name": iname, "type": itype, "size": item.get("size")},
+                "item": {"uuid": item.get("uuid"), "name": iname, "type": itype, "size": size,
+                         "matchedBy": res.matched_by},
                 "changes": changes, "unchanged": not changes}
 
     @router.post("/members/{discordId}/ships/{shipRef}/reset")
@@ -826,10 +838,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         hint = _optional_text(body, "slot")
         if len(shipRef) > FREE_TEXT_MAX:
             raise _bad(f"ship must be at most {FREE_TEXT_MAX} characters")
-        repo = app.state.repository
         ship, label = await _owned_ship(discordId, shipRef.strip())
         fitted = ship.get("fitted") or {}
-        slots = await _ship_slots(ship) if fitted else []
+        # A vehicle gone from the catalog (None) leaves every fitted key an
+        # orphan: "all" and exact-id resets still work without stock names.
+        slots = (await app.state.catalog.slots(ship["vehicleUuid"]) or []) if fitted else []
         stock = {s.name: s.stock_item for s in slots}
         entries = effective_loadout(slots, fitted)
         known = {e["slot"] for e in entries}
@@ -839,14 +852,16 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                     for k, v in fitted.items() if k not in known]
         by_slot = {e["slot"]: e for e in entries}
         refitted = [e for e in entries if e["slot"] in fitted]
+        h = (hint or "").casefold()
         if not fitted:
             targets = []
-        elif hint is None:
-            if len(refitted) > 1:
+        elif hint is None or h == BOTH:
+            # omitted -> the one refitted slot; "both" -> at most two
+            if len(refitted) > (1 if hint is None else 2):
                 raise _choose_slot(f"{label} has {len(refitted)} non-stock slots; say which to reset (or 'all')",
                                    ship, label, refitted)
             targets = [e["slot"] for e in refitted]
-        elif hint.casefold() in ALL_WORDS:
+        elif h in ALL_WORDS:
             targets = [e["slot"] for e in refitted]
         else:
             status, chosen = match_slots(hint, [(e["slot"], e["type"]) for e in entries])
@@ -859,17 +874,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                                    f"(or 'all')", ship, label, [by_slot[c] for c in chosen_fitted])
             targets = chosen_fitted
 
-        by, owner = principal.acting_member, owner_name_for(principal, discordId)
+        by = principal.acting_member
         changes = [{"slot": t, "from": _ref(by_slot[t]["item"]), "to": _ref(stock.get(t))} for t in targets]
         if targets:
-            if set(targets) == set(fitted):
-                updated = await repo.replace_fitted(discordId, ship["shipId"], {}, updated_by=by, owner_name=owner)
-                if updated is None:
-                    raise _not_found(f"member {discordId} has no ship {ship['shipId']}")
-            else:
-                for t in targets:
-                    if await repo.clear_slot(discordId, ship["shipId"], t, updated_by=by, owner_name=owner) is None:
-                        raise _not_found(f"member {discordId} has no ship {ship['shipId']}")
+            # Delete exactly the slots read above -- never a whole-map replace,
+            # so a concurrent editor change to another slot survives.
+            await _write_slots(discordId, ship, {t: None for t in targets}, principal)
             for c in changes:
                 log.info("hangar: chat reset: member %s ship %s (%s) slot %s: %s -> %s (stock) (by %s)",
                          discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
@@ -878,6 +888,7 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             log.info("hangar: chat reset: member %s ship %s (%s) slot %r: already stock -- no change (by %s)",
                      discordId, ship["shipId"], label, hint, by)
         return {"member": discordId, "ship": _ship_ref(ship, label), "changes": changes, "unchanged": not changes}
+
 
     # ----- catalog -----
 
