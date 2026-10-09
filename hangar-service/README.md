@@ -122,8 +122,8 @@ else the session opener), and their tools have no member parameter — see
   `field: "item"`, `candidates: [{uuid, name, type, size}]` (≤5); none → 404
   `not_found` `field: "item"`, `suggestions: [name]` (≤3, score ≥ 60). The
   response's `item.matchedBy` is `"exact"` or `"fuzzy"`, `item.name` the
-  canonical name. Cold pool lists cost one Wiki fetch per type (then cached
-  12h).
+  canonical name. Pool lists are prefetched at startup (see "Runtime
+  behaviour"); a cold one costs one Wiki fetch per type, then cached 12h.
 - **Target slots** (`/fit`): the ship's visible slots `check_compatible`
   accepts; a mount of another type (Turret gimbal) that also accepts the item
   is skipped when a fitting child is visible. None → 422 `incompatible` with
@@ -456,8 +456,10 @@ Sessions are stateless signed cookies, so there is no per-session revoke; use:
 
 ## Runtime behaviour
 
-- The Wiki vehicle index (~299 vehicles, 6 requests) is warmed by a background
-  task at startup; startup doesn't wait for it and a failure is only logged.
+- The Wiki vehicle index (~299 vehicles, 6 requests) and then the item list of
+  every slot type (one type at a time, rate-limiter friendly — the lists chat
+  edits' fuzzy item resolution reads) are warmed by a background task at
+  startup; startup doesn't wait for it and each failure is only logged.
   Catalog data is cached 12h, stale-while-revalidate (not-found entries 10min).
 - Cloud Run runs with request-only CPU, so a background refresh may stall
   between requests and finish on the next one. That's accepted: stale catalog

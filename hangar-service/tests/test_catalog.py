@@ -365,3 +365,25 @@ async def test_index_cached_flag_true_after_warm():
     c = _cat_spawn()
     await c.warm()
     assert c.vehicle_index_cached() is True
+
+
+async def test_warm_prefetches_every_slot_type_item_list_sequentially():
+    from src.catalog import SLOT_TYPES
+    calls = []
+    c = _cat_spawn(calls)
+    await c.warm()
+    item_calls = [r for r in calls if r.url.path == "/api/v2/items"]
+    assert sorted({r.url.params["filter[type]"] for r in item_calls}) == sorted(SLOT_TYPES)
+    # the exact keys item_resolve's catalog.items(type) reads
+    assert all(c._cache.peek(f"items:{t}:None") is not None for t in SLOT_TYPES)
+    n = len(calls)
+    assert len(await c.items("QuantumDrive")) > 0 and len(calls) == n   # served from the warmed cache
+
+
+async def test_warm_item_list_failures_are_isolated_and_never_raise():
+    calls = []
+    c = _cat_spawn(calls, fail=lambda r: r.url.params.get("filter[type]") == "Shield")
+    await c.warm()                       # logged, not raised
+    assert c._cache.peek("items:Shield:None") is None
+    assert c._cache.peek("items:QuantumDrive:None") is not None
+    assert c.vehicle_index_cached()

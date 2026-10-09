@@ -293,11 +293,20 @@ class Catalog:
         return len(self._lookup_keys)
 
     async def warm(self) -> None:
-        """Startup prefetch of the vehicle index. Best effort: never raises."""
+        """Startup prefetch of the vehicle index, then the per-type item lists
+        (``items:<type>:None``, the keys chat-edit fuzzy item resolution reads
+        via ``items(type)``) one type at a time so the Wiki's rate limit isn't
+        hit with a burst. Best effort: each step is isolated and logged; never
+        raises."""
         try:
             await self.vehicle_index()
         except Exception:
             log.warning("catalog: warm-up of the vehicle index failed", exc_info=True)
+        for type_ in sorted(SLOT_TYPES):
+            try:
+                await self._item_records(type_, None)
+            except Exception:
+                log.warning("catalog: warm-up of the %s item list failed", type_, exc_info=True)
 
     # ----- vehicles -----
 
