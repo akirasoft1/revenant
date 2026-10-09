@@ -108,3 +108,44 @@ def test_agent_health_breaker_env_overrides(monkeypatch):
     cfg = config_mod.load()
     assert cfg.agent_health_failure_threshold == 5
     assert cfg.agent_health_cooldown_seconds == 12.5
+
+
+# --- hangar chat edits (2026-10-09 hangar-chat-edits spec) -------------------
+
+_HANGAR_URL = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+
+
+@pytest.fixture
+def _no_hangar_env(monkeypatch):
+    monkeypatch.setenv("MONGO_URI", "mongodb://x")
+    for var in ("HANGAR_API_URL", "HANGAR_SA_KEY_PATH", "HANGAR_EDITS_ENABLED"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_hangar_edits_off_without_an_api_url(_no_hangar_env, monkeypatch):
+    cfg = config_mod.load()
+    assert cfg.hangar_api_url is None
+    assert cfg.hangar_edits_enabled is False
+    assert cfg.hangar_sa_key_path == "/var/secrets/hangar/key.json"
+    # an explicit true can't enable edits with nowhere to send them
+    monkeypatch.setenv("HANGAR_EDITS_ENABLED", "true")
+    assert config_mod.load().hangar_edits_enabled is False
+
+
+def test_hangar_edits_default_on_when_api_url_set(_no_hangar_env, monkeypatch):
+    monkeypatch.setenv("HANGAR_API_URL", f"  {_HANGAR_URL}  ")
+    cfg = config_mod.load()
+    # the URL is the ID-token audience: kept byte for byte (whitespace only stripped)
+    assert cfg.hangar_api_url == _HANGAR_URL
+    assert cfg.hangar_edits_enabled is True
+
+
+def test_hangar_edits_can_be_switched_off(_no_hangar_env, monkeypatch):
+    monkeypatch.setenv("HANGAR_API_URL", _HANGAR_URL)
+    monkeypatch.setenv("HANGAR_EDITS_ENABLED", "false")
+    assert config_mod.load().hangar_edits_enabled is False
+
+
+def test_hangar_key_path_overridable(_no_hangar_env, monkeypatch):
+    monkeypatch.setenv("HANGAR_SA_KEY_PATH", "/tmp/k.json")
+    assert config_mod.load().hangar_sa_key_path == "/tmp/k.json"

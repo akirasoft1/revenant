@@ -278,6 +278,9 @@ class AgentServicer(agent_pb2_grpc.AgentServicer):
                 span.set_attribute(
                     "web_search.queries", int(getattr(result, "web_search_queries", 0) or 0),
                 )
+                # Hangar chat edits: successful writes (that changed
+                # something) the turn made to the speaker's own hangar.
+                span.set_attribute("hangar.edits", int(getattr(result, "hangar_edits", 0) or 0))
         except asyncio.CancelledError:
             self._breaker.record_failure(
                 "Chat cancelled before it produced a reply — the client's deadline expired "
@@ -398,9 +401,16 @@ def serve() -> None:
         sc_tools = ScToolsProvider.disabled()
         log.info("sc_knowledge=disabled")
 
+    from .hangar_edit import HangarEditClient
+    hangar_edits = HangarEditClient.from_config(config)
+    if hangar_edits is not None:
+        log.info("hangar_edits=enabled url=%s key=%s", config.hangar_api_url, config.hangar_sa_key_path)
+    else:
+        log.info("hangar_edits=disabled")
+
     agent = ChannelVoiceAgent(
         config=config, orchestrator=orch, base_system_prompt=_load_base_prompt(),
-        sc_tools=sc_tools,
+        sc_tools=sc_tools, hangar_edits=hangar_edits,
     )
     log.info(
         "agent LLM resolved: AGENT_MODEL=%s genai_backend=%s project=%s location=%s",

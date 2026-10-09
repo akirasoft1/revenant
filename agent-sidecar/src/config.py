@@ -85,9 +85,30 @@ class Config:
     # google-adk 2.10 (PydanticSerializationError / MockValSer).
     agent_web_search_enabled: bool = True
 
+    # Hangar chat edits (2026-10-09 hangar-chat-edits spec): hangar_fit /
+    # hangar_add_ship / hangar_reset, bound per turn to ChatRequest.user_id.
+    # HANGAR_API_URL is also the ID-token audience, so it is kept exactly as
+    # configured (whitespace stripped only). Edits default ON when the URL is
+    # set and can never be on without it.
+    hangar_api_url: str | None = None
+    hangar_sa_key_path: str = "/var/secrets/hangar/key.json"
+    hangar_edits_enabled: bool = False
+
+
+def _hangar_settings() -> dict:
+    url = (os.environ.get("HANGAR_API_URL") or "").strip() or None
+    default = "true" if url else "false"
+    flag = os.environ.get("HANGAR_EDITS_ENABLED", default).strip().lower() in ("true", "1", "yes")
+    return {
+        "hangar_api_url": url,
+        "hangar_sa_key_path": os.environ.get("HANGAR_SA_KEY_PATH", "/var/secrets/hangar/key.json"),
+        "hangar_edits_enabled": bool(url) and flag,
+    }
+
 
 def load() -> Config:
     return Config(
+        **_hangar_settings(),
         grpc_listen_addr=os.environ.get("GRPC_LISTEN_ADDR", "0.0.0.0:50051"),
         agent_model=os.environ.get("AGENT_MODEL", "gemini-3.8-flash"),
         openai_api_key=os.environ.get("OPENAI_API_KEY"),

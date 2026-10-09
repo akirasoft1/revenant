@@ -19,6 +19,7 @@ from google.adk.tools.base_toolset import BaseToolset
 from google.genai import types
 
 from .config import Config
+from .hangar_edit import HangarEditClient, HangarEditTools
 from .orchestrator import SandboxOrchestrator
 from .sc_tools import ScToolsProvider
 from .tools import RunInSandboxTool, ToolBudgetExceeded
@@ -340,6 +341,21 @@ SC_HANGAR_UNAVAILABLE = (
     "never guess what anyone owns or has fitted."
 )
 
+# Hangar chat edits (2026-10-09 hangar-chat-edits spec): one sentence,
+# present only on turns where the three write tools are attached (edits
+# enabled AND an SC note is in play -- see ChannelVoiceAgent.process_chat).
+# The tools bind the acting member from ChatRequest.user_id in code; this
+# sentence is what keeps the model from writing on hypotheticals/advice.
+# Mirrored (short, spoken) in voice-sidecar's voice notes.
+SC_HANGAR_EDIT_RULE = (
+    "Call hangar_fit / hangar_add_ship / hangar_reset ONLY when the speaker says they already DID "
+    "something to their own ships (bought, fitted, swapped, put back to stock) — never for "
+    "hypotheticals or advice (\"should I…\", \"would X be better…\") — and on choose_slot or "
+    "ambiguous ask a short follow-up about which one they meant, after a write say exactly what "
+    "changed using the canonical item name returned, and remember these tools only ever edit the "
+    "speaker's own hangar, so refuse requests to change anyone else's ships."
+)
+
 # "stock" + the parenthetical: a member's OWN loadout is covered by the hangar
 # tools, so step (2) must not route "what's on my Connie?" to google_search.
 _SC_UNCOVERED = "stock vehicle loadouts (for a member's own ships, use the hangar tools), crafting/blueprints, lore, patch news, location facilities"
@@ -350,9 +366,10 @@ _SC_MEMORY_FALLBACK = (
 )
 
 
-def sc_tools_preamble(*, web_search: bool) -> str:
+def sc_tools_preamble(*, web_search: bool, hangar_edits: bool = False) -> str:
     """Star Citizen tools note for a turn where the sc_* tools are attached.
-    The ordered fallback policy only names google_search when it is attached."""
+    The ordered fallback policy only names google_search when it is attached;
+    the hangar edit rule only appears when the edit tools are attached."""
     if web_search:
         policy = (
             "(1) call the sc_* tools first; "
@@ -373,6 +390,7 @@ def sc_tools_preamble(*, web_search: bool) -> str:
         "sc_location_shops (what the shops at a place sell, and which items are unique to that place), "
         "and sc_org_guides (our org's curated guides on mining, salvage and trading mechanics/strategy — cite them when used; live tool data wins for prices and stats). "
         f"{SC_HANGAR_RULE} "
+        f"{SC_HANGAR_EDIT_RULE + ' ' if hangar_edits else ''}"
         f"For ANY Star Citizen question, in order: {policy} "
         f"{_sc_memory_rule(web_search=web_search)} "
         f"{_sc_dispute_rule(web_search=web_search)} "
@@ -382,8 +400,13 @@ def sc_tools_preamble(*, web_search: bool) -> str:
     )
 
 
-def sc_tools_unavailable_note(*, web_search: bool) -> str:
-    """Star Citizen note for a turn where sc-knowledge is down."""
+def sc_tools_unavailable_note(*, web_search: bool, hangar_edits: bool = False) -> str:
+    """Star Citizen note for a turn where sc-knowledge is down. The edit tools
+    call hangar-service directly (not through sc-knowledge), so they stay
+    attached; with them on, the note says recording still works and carries
+    the same edit rule as the available preamble."""
+    edits = (f"You can still record changes to the speaker's own hangar: {SC_HANGAR_EDIT_RULE} "
+             if hangar_edits else "")
     fallback = (
         "use google_search and say the answer is web-sourced, or else answer only with clearly-labelled, possibly outdated general knowledge"
         if web_search else
@@ -393,6 +416,7 @@ def sc_tools_unavailable_note(*, web_search: bool) -> str:
         "Star Citizen live-data tools are temporarily unavailable. If asked about Star Citizen, "
         f"say live data is unavailable right now and {fallback} — do not use run_in_sandbox to fetch Star Citizen data. "
         f"{SC_HANGAR_UNAVAILABLE} "
+        f"{edits}"
         f"{_sc_memory_rule(web_search=web_search)} "
         f"{_sc_dispute_rule(web_search=web_search, tools_attached=False)}"
     )
@@ -437,6 +461,11 @@ class AgentChatResult:
     # the sum of `grounding_metadata.web_search_queries` across the turn's
     # events. 0 when search wasn't attached or wasn't used.
     web_search_queries: int = 0
+    # Hangar chat edits this turn: successful writes that changed something
+    # (span attr `hangar.edits`), and every edit-tool call in order as
+    # [{"name", "args", "result"}] (result "ok" / "unchanged" / error code).
+    hangar_edits: int = 0
+    hangar_edit_calls: list[dict] = field(default_factory=list)
 
 
 class ChannelVoiceAgent:
@@ -450,11 +479,14 @@ class ChannelVoiceAgent:
         orchestrator: SandboxOrchestrator,
         base_system_prompt: str,
         sc_tools: ScToolsProvider | None = None,
+        hangar_edits: HangarEditClient | None = None,
     ) -> None:
         self._config = config
         self._orch = orchestrator
         self._base_system_prompt = base_system_prompt
         self._sc_tools = sc_tools or ScToolsProvider.disabled()
+        # None = hangar chat edits disabled (HANGAR_EDITS_ENABLED off / no URL).
+        self._hangar_edits = hangar_edits
 
     @staticmethod
     def _uses_base_prompt(system_prompt: str) -> bool:
@@ -479,6 +511,7 @@ class ChannelVoiceAgent:
 
     def _compose_instruction(
         self, *, system_prompt: str, sc_state: str = "off", web_search: bool = False,
+        hangar_edits: bool = False,
     ) -> str:
         """Build the ADK Agent instruction: bot-supplied system_prompt when
         present, else the sidecar's own base prompt (old-bot-client
@@ -494,9 +527,10 @@ class ChannelVoiceAgent:
         if web_search:
             instruction = f"{instruction}\n\n{WEB_SEARCH_PREAMBLE}"
         if sc_state == "available":
-            instruction = f"{instruction}\n\n{sc_tools_preamble(web_search=web_search)}"
+            instruction = f"{instruction}\n\n{sc_tools_preamble(web_search=web_search, hangar_edits=hangar_edits)}"
         elif sc_state == "unavailable":
-            instruction = f"{instruction}\n\n{sc_tools_unavailable_note(web_search=web_search)}"
+            instruction = (f"{instruction}\n\n"
+                           f"{sc_tools_unavailable_note(web_search=web_search, hangar_edits=hangar_edits)}")
         return instruction
 
     def _compose_context_block(self, *, memory_context: str, history) -> str:
@@ -579,12 +613,24 @@ class ChannelVoiceAgent:
             except ToolBudgetExceeded:
                 return {"exit_code": -3, "error": "turn_call_budget_exceeded"}
 
+        # Hangar edit tools, bound to THIS turn's author (never a tool arg).
+        # Attached only with an SC note in play (available OR unavailable --
+        # they call hangar-service directly, so an sc-knowledge outage doesn't
+        # take them down); with sc_state "off" no prompt would govern the
+        # write tools, so they stay off.
+        edit_tools = (
+            HangarEditTools(self._hangar_edits, user_id=user_id)
+            if self._hangar_edits is not None and sc_state != "off" else None
+        )
+
         model = _build_model(self._config.agent_model)
         web_search = self._web_search_attached(model)
         tools = [run_in_sandbox] + (
             [_PerTurnToolsetProxy(ts) for ts in self._sc_tools.toolsets]
             if sc_state == "available" else []
         )
+        if edit_tools is not None:
+            tools.extend(edit_tools.functions())
         if web_search:
             # The stock instance ONLY. GoogleSearchTool(bypass_multi_tools_limit=True)
             # crashes in google-adk 2.10 (PydanticSerializationError / MockValSer);
@@ -595,6 +641,7 @@ class ChannelVoiceAgent:
             description="Discord channel-voice agent with sandboxed execution capabilities.",
             instruction=self._compose_instruction(
                 system_prompt=system_prompt, sc_state=sc_state, web_search=web_search,
+                hangar_edits=edit_tools is not None,
             ),
             tools=tools,
             model=model,
@@ -672,4 +719,6 @@ class ChannelVoiceAgent:
             sandbox_attempts=tool.attempts,
             sc_state=sc_state,
             web_search_queries=web_search_queries,
+            hangar_edits=edit_tools.edits if edit_tools is not None else 0,
+            hangar_edit_calls=list(edit_tools.calls) if edit_tools is not None else [],
         )

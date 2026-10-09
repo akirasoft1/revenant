@@ -177,3 +177,26 @@ def test_chat_span_records_web_search_queries():
 def test_chat_span_records_zero_web_search_queries():
     s = _run_chat(0)
     assert s.attributes["web_search.queries"] == 0
+
+
+# --- hangar chat edits observability ------------------------------------------
+
+
+class _FakeAgentWithEdits:
+    def __init__(self, n):
+        self._n = n
+
+    async def process_chat(self, **kw):
+        return AgentChatResult(
+            message_text="ok", execution_ids=[], any_failed=False, hangar_edits=self._n,
+        )
+
+
+def test_chat_span_records_hangar_edits():
+    s = _run_chat_direct(_FakeAgentWithEdits(2))
+    assert s.attributes["hangar.edits"] == 2
+
+
+def test_chat_span_records_zero_hangar_edits():
+    s = _run_chat(0)
+    assert s.attributes["hangar.edits"] == 0
