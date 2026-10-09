@@ -113,6 +113,11 @@ def guild_login_gate(oauth: DiscordOAuth, allowed_guild_ids: frozenset[str]) -> 
                 log.warning("hangar: guild membership check for member %s: %s", user.discord_id, e)
                 unavailable = e
                 continue
+            if member is not None and member.get("pending") is True:
+                # Membership screening not passed yet: not (yet) a member.
+                log.info("hangar: member %s is pending membership screening in guild %s",
+                         user.discord_id, gid)
+                continue
             if member is not None:
                 nick = member.get("nick")
                 return dataclasses.replace(user, guild_id=gid,

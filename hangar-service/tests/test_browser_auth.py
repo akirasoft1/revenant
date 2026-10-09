@@ -658,6 +658,23 @@ def test_discord_guild_lookup_failure_is_discord_unavailable(client, discord, st
     assert not any(h.startswith("__Host-hangar_session=") for h in set_cookie_headers(r))
 
 
+def test_pending_member_is_not_member(client, discord):
+    # pending: true = membership screening not yet passed -> not a member yet.
+    discord.guilds = {GUILD: (200, {"pending": True, "roles": []})}
+    r = _callback(client)
+    _assert_login_error(r, "not_member")
+    assert not any(h.startswith("__Host-hangar_session=") for h in set_cookie_headers(r))
+
+
+def test_pending_in_one_guild_member_of_another_logs_in(repo, discord, clock):
+    discord.guilds = {GUILD: (200, {"pending": True}), GUILD2: (200, {"pending": False, "roles": []})}
+    app = _app(repo, discord, clock, HANGAR_ALLOWED_GUILD_IDS=f"{GUILD},{GUILD2}")
+    with TestClient(app, base_url=ORIGIN, follow_redirects=False) as c:
+        assert _callback(c).headers["location"] == "/"
+        assert SessionCodec(KEY, clock=clock).verify_session(
+            c.cookies.get("__Host-hangar_session")).guild_id == GUILD2
+
+
 def test_member_of_second_allowed_guild_and_nick_as_display_candidate(repo, discord, clock):
     discord.user = {"id": SELF, "username": "akira", "global_name": None, "avatar": None}
     discord.guilds = {GUILD2: (200, {"nick": "Captain A", "roles": []})}

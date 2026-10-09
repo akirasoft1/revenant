@@ -150,8 +150,8 @@ def test_public_origin_junk_rejected(raw):
 def test_max_ships_per_member():
     assert load({}).max_ships_per_member == 200
     assert load({"HANGAR_MAX_SHIPS_PER_MEMBER": "5"}).max_ships_per_member == 5
-    for bad in ("0", "-1", "x"):
-        with pytest.raises(ValueError):
+    for bad in ("0", "-1", "x", "\u00b2", "\u0665"):
+        with pytest.raises(ValueError, match="HANGAR_MAX_SHIPS_PER_MEMBER"):
             load({"HANGAR_MAX_SHIPS_PER_MEMBER": bad})
 
 
@@ -164,7 +164,7 @@ def test_session_rotation_settings():
     assert load({}).session_not_before is None
 
 
-@pytest.mark.parametrize("bad", ["soon", "-5", "1.5"])
+@pytest.mark.parametrize("bad", ["soon", "-5", "1.5", "\u00b2", "1\u00b2", "\u0661\u0662"])
 def test_bad_session_not_before_disables_browser_auth(bad):
     c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY, "HANGAR_ALLOWED_GUILD_IDS": "7",
               "HANGAR_SESSION_NOT_BEFORE": bad})
@@ -182,3 +182,6 @@ def test_allowed_guilds_must_be_snowflakes():
               "HANGAR_ALLOWED_GUILD_IDS": "323349603976216577,my-server"})
     assert not c.browser_auth_enabled and "HANGAR_ALLOWED_GUILD_IDS" in c.browser_auth_problem()
     assert load({}).allowed_guild_ids == frozenset()
+    c = load({"DISCORD_CLIENT_ID": "1", "DISCORD_CLIENT_SECRET": "s", "HANGAR_SESSION_KEY": KEY,
+              "HANGAR_ALLOWED_GUILD_IDS": "\u00b2\u00b3"})   # Unicode digits are not a snowflake
+    assert not c.browser_auth_enabled and "HANGAR_ALLOWED_GUILD_IDS" in c.browser_auth_problem()

@@ -1,5 +1,6 @@
 """Environment-driven configuration for hangar-service."""
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -13,6 +14,13 @@ CALLBACK_PATH = "/api/auth/callback"
 SESSION_KEY_MIN_LEN = 32
 DEFAULT_MAX_SHIPS_PER_MEMBER = 200
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+_ASCII_DIGITS = re.compile(r"[0-9]+")
+
+
+def _is_ascii_digits(raw: str) -> bool:
+    """str.isdigit() also accepts Unicode digits ('²', '٥') that int() rejects
+    or that are not Discord snowflakes -- config numbers are ASCII only."""
+    return _ASCII_DIGITS.fullmatch(raw) is not None
 
 
 def normalize_origin(raw: str) -> str | None:
@@ -69,8 +77,11 @@ class Config:
 
     @property
     def session_not_before(self) -> int | None:
+        # ASCII digits only (re.fullmatch): str.isdigit() also accepts e.g.
+        # '²', which int() then rejects -- a startup crash instead of
+        # "browser login off".
         raw = self.session_not_before_raw
-        return int(raw) if raw.isdigit() else None
+        return int(raw) if re.fullmatch(r"[0-9]+", raw) else None
 
     @property
     def redirect_uri(self) -> str:
@@ -85,7 +96,7 @@ class Config:
                    if not value]
         if missing:
             return f"{', '.join(missing)} not set"
-        bad_guilds = sorted(g for g in self.allowed_guild_ids if not g.isdigit() or len(g) > 32)
+        bad_guilds = sorted(g for g in self.allowed_guild_ids if not _is_ascii_digits(g) or len(g) > 32)
         if bad_guilds:
             return f"HANGAR_ALLOWED_GUILD_IDS has non-snowflake entries {bad_guilds}"
         if len(self.session_key) < SESSION_KEY_MIN_LEN:
@@ -146,6 +157,6 @@ def _positive_int(env: Mapping[str, str], name: str, default: int) -> int:
     raw = (env.get(name) or "").strip()
     if not raw:
         return default
-    if not raw.isdigit() or int(raw) < 1:
+    if not _is_ascii_digits(raw) or int(raw) < 1:
         raise ValueError(f"{name} must be a positive integer, got {raw!r}")
     return int(raw)

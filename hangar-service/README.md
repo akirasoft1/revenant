@@ -135,7 +135,8 @@ Two layers:
   calls `GET https://discord.com/api/users/@me/guilds/{guild_id}/member` (the
   user's own token) for each guild in `HANGAR_ALLOWED_GUILD_IDS` (sorted; first
   hit wins). 200 = member: the guild id and server nickname are recorded in the
-  session. 404/403 = not a member. No membership anywhere → `/?login_error=not_member`
+  session. 404/403 = not a member; a 200 member object with `pending: true`
+  (membership screening not passed yet) also counts as not a member. No membership anywhere → `/?login_error=not_member`
   and **no session cookie**. If no guild confirmed membership and a lookup hit
   429/5xx/a network error → `/?login_error=discord_unavailable` (try again).
   **Membership is checked only at login.** A member who leaves the server keeps
@@ -201,7 +202,7 @@ Two layers:
 | `DISCORD_CLIENT_SECRET` | *(empty → browser login off)* | From Secret Manager `hangar-discord-client-secret` (`--set-secrets`) |
 | `HANGAR_SESSION_KEY` | *(empty → browser login off)* | Cookie-signing key, ≥ 32 chars; Secret Manager `hangar-session-key`. Signs every new session |
 | `HANGAR_SESSION_KEY_PREVIOUS` | *(none)* | Previous signing key (≥ 32 chars), still accepted for verification during a rotation; never signs |
-| `HANGAR_SESSION_NOT_BEFORE` | *(none)* | Unix seconds: sessions issued (`iat`) before this are rejected — global logout. Malformed → browser login off |
+| `HANGAR_SESSION_NOT_BEFORE` | *(none)* | Unix seconds: sessions issued (`iat`) before this are rejected — global logout. Malformed (anything but ASCII digits) → browser login off |
 | `HANGAR_MAX_SHIPS_PER_MEMBER` | `200` | Ship cap per member (`409 limit` beyond it). Must be a positive integer (startup fails otherwise) |
 
 `HANGAR_PUBLIC_ORIGIN` is normalized at load (scheme/host lower-cased, default
