@@ -130,13 +130,31 @@ describe('ImportPage', () => {
     expect(await screen.findByLabelText('Ship to update for Harbinger PvE')).toHaveValue('their-1');
     await user.click(screen.getByRole('button', { name: 'Import 1 loadout' }));
     const summary = await screen.findByRole('region', { name: 'Import summary' });
-    expect(summary).toHaveTextContent('1 ship saved to Wingman’s hangar.');
+    expect(summary).toHaveTextContent('1 ship saved to Wingman (222)’s hangar.');
     expect(within(summary).getByRole('link', { name: 'Harbinger' })).toHaveAttribute('href', '/members/222/ships/their-1');
     expect(within(summary).getByRole('link', { name: 'Go to Wingman’s hangar' })).toHaveAttribute('href', '/members/222');
     expect(calls.find((c) => c.url.startsWith('/api/v1/import/spviewer/apply'))!.body).toEqual({
       file: EXPORT,
       rows: [{ rowIndex: 0, mode: 'existing', shipId: 'their-1' }],
     });
+  });
+
+  it('still previews when only the hangar fetch fails, defaulting to "New ship" (fitted counts unknown)', async () => {
+    mockFetch({
+      'GET /api/me': { body: ME },
+      'GET /api/v1/members/111/hangar': { status: 503, body: { error: 'unavailable', message: 'storage down' } },
+      'POST /api/v1/import/spviewer/preview': {
+        body: { rows: [{ ...PREVIEW[0], matchingShips: [{ shipId: 'mine-1', label: 'Harbinger' }] }] },
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.upload(await screen.findByLabelText('Loadout file'), upload(EXPORT));
+    const row = await screen.findByTestId('import-row');
+    expect(within(row).getByRole('radio', { name: 'New ship' })).toBeChecked();
+    expect(within(row).getByRole('radio', { name: 'Update existing' })).not.toBeChecked();
+    expect(screen.queryByText('storage down')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Import 1 loadout' })).toBeEnabled();
   });
 
   it('refuses ?member= for another member when not an admin', async () => {

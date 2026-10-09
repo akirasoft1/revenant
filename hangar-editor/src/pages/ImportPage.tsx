@@ -42,6 +42,8 @@ export function ImportPage() {
   const target = params.get('member') || me.discordId;
   const forOther = target !== me.discordId;
   const targetName = useMemberName(target);
+  // Display names are member-chosen; the ID beside them can't be spoofed.
+  const targetLabel = targetName !== target ? `${targetName} (${target})` : target;
   const allowed = canEdit(me, target);
   const [inputKey, setInputKey] = useState(0);
   const [fittedCounts, setFittedCounts] = useState<FittedCounts>({});
@@ -57,11 +59,15 @@ export function ImportPage() {
       const [r, hangar] = await Promise.all([
         importPreview(data, forOther ? target : undefined),
         // Fresh fitted counts decide the safe default (see defaultSelection).
-        qc.fetchQuery({ queryKey: ['hangar', target], queryFn: () => getHangar(target), staleTime: 0 }),
+        // A failed hangar fetch must not fail the preview: the counts are then
+        // unknown, which defaults every row to "New ship" (never overwrites).
+        qc
+          .fetchQuery({ queryKey: ['hangar', target], queryFn: () => getHangar(target), staleTime: 0 })
+          .catch(() => null),
       ]);
-      const counts: FittedCounts = Object.fromEntries(
-        hangar.ships.map((s) => [s.shipId, Object.keys(s.fitted ?? {}).length]),
-      );
+      const counts: FittedCounts = hangar
+        ? Object.fromEntries(hangar.ships.map((s) => [s.shipId, Object.keys(s.fitted ?? {}).length]))
+        : {};
       return { rows: r, counts };
     },
     onSuccess: ({ rows: r, counts }) => {
@@ -129,7 +135,7 @@ export function ImportPage() {
       {forOther && (
         <p className="alert alert-warn" data-testid="import-target">
           <span>
-            Importing into {targetName !== target ? `${targetName} (${target})` : target}’s hangar.
+            Importing into {targetLabel}’s hangar.
           </span>
         </p>
       )}
@@ -220,7 +226,7 @@ export function ImportPage() {
           <h2>Done</h2>
           <p>
             {result.ships.length} {result.ships.length === 1 ? 'ship' : 'ships'} saved to{' '}
-            {forOther ? `${targetName}’s` : 'your'} hangar.
+            {forOther ? `${targetLabel}’s` : 'your'} hangar.
           </p>
           <ul className="summary">
             {result.ships.map((s) => (
