@@ -1176,6 +1176,28 @@ describe('speaker identity', () => {
     expect(p).toMatch(/previous name/);
   });
 
+  // Names direct a reply in a multi-person room; using one on every turn is
+  // noise. The old "address people by name when it is natural" wording is gone.
+  test('voice persona uses names only when they help in a group, not on every reply', () => {
+    const { svc } = makeService(makeDeps({}), {}, undefined);
+    const p = svc._appendVoicePersona('BASE');
+    expect(p).not.toMatch(/address people by name when it is natural/);
+    expect(p).toMatch(/Use someone's name only when it helps in a group/);
+    expect(p).toMatch(/when a different person starts talking to you/);
+    expect(p).toMatch(/not on every reply/);
+  });
+
+  // gemini-live-2.5-flash spoke ~150 "[1]"/"[1, 3]" citation brackets across
+  // the 2026-10-10 spike runs. The rule is unconditional (not marker-gated).
+  test('voice persona forbids speaking citation numbers or source markers aloud', () => {
+    for (const deferralEnabled of [false, true]) {
+      const { svc } = makeService(makeDeps({}), { deferralEnabled }, undefined);
+      const p = svc._appendVoicePersona('');
+      expect(p).toMatch(/Never say citation numbers, bracketed references or source markers/);
+      expect(p).toMatch(/just say the facts/);
+    }
+  });
+
   test('voice persona instructs the model never to read the marker aloud', () => {
     const { svc } = makeService(makeDeps({}), {}, undefined);
     const p = svc._appendVoicePersona('BASE');
