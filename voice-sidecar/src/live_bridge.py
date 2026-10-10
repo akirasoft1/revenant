@@ -476,7 +476,7 @@ class LiveBridge:
         # web knowledge (e.g. game specifics) instead of only its training
         # data. Grounding is handled SERVER-SIDE for the built-in search tool
         # -- no client-side tool-response plumbing needed (that caveat is only
-        # for function_declarations). gemini-live-2.5-flash supports Search.
+        # for function_declarations). gemini-3.8-live supports Search.
         tools = [types.Tool(google_search=types.GoogleSearch())]
         # sc-knowledge function calling (spec §7): attached only when the
         # executor exists AND has loaded declarations -- otherwise this config
