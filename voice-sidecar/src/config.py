@@ -44,14 +44,17 @@ class Config:
 def load() -> Config:
     return Config(
         grpc_listen_addr=os.environ.get("GRPC_LISTEN_ADDR", "0.0.0.0:50051"),
-        # DO NOT "upgrade" blindly (2026-09-26): gemini-3.8-live returns 404 on
-        # our GEAP project (revenant-discord-bot-2) in `global`, and 3.8-live
-        # does not support session resumption or context-window compression,
-        # both of which this sidecar depends on (see live_bridge._live_config).
-        # The [SPEAKER: ...] markers also need send_client_content with
-        # turn_complete=False, which is restricted on Gemini 3.x Live.
-        # Pinned by tests/test_config.py::test_live_model_default_stays_on_2_5_flash.
-        voice_live_model=os.environ.get("VOICE_LIVE_MODEL", "gemini-live-2.5-flash"),
+        # gemini-3.8-live since 2026-10-10. On our GEAP project
+        # (revenant-discord-bot-2) it serves ONLY in us-central1 -- the
+        # 2026-09-26 "404" came from probing `global` (also 404 in us-east4 and
+        # europe-west4) -- so the voice sidecar MUST set
+        # GOOGLE_CLOUD_LOCATION=us-central1 (the agent sidecar stays `global`).
+        # It supports session resumption + context-window compression, which
+        # live_bridge._live_config depends on. Spike vs gemini-live-2.5-flash:
+        # 0 [SPEAKER:] marker leaks (2.5: 2/3 runs), 0 spoken citation brackets
+        # (2.5: ~150), end_conversation 6/6 (2.5: never), one sc_* call per
+        # question (2.5: two). Pinned by tests/test_config.py.
+        voice_live_model=os.environ.get("VOICE_LIVE_MODEL", "gemini-3.8-live"),
         default_voice_name=os.environ.get("VOICE_DEFAULT_VOICE", "Puck"),
         otlp_endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         google_cloud_project=os.environ.get("GOOGLE_CLOUD_PROJECT"),

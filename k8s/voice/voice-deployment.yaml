@@ -44,9 +44,11 @@ spec:
             # gRPC OTLP port 4317 (NOT 4318, the HTTP port): tracing.py uses the
             # OTLP/gRPC span exporter, so the HTTP port yields StatusCode.UNAVAILABLE.
             - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://telemetry-ingest.dynatrace.svc.cluster.local:4317" }
-            # Set from the Task 1 GEAP pre-flight probe at deploy time.
-            # GEAP-probe-validated on project revenant-discord-bot-2 / location=global (2026-08-07).
-            - { name: VOICE_LIVE_MODEL, value: "gemini-live-2.5-flash" }
+            # gemini-3.8-live since 2026-10-10 (spike vs gemini-live-2.5-flash:
+            # no [SPEAKER:] marker leaks, no spoken citation brackets, reliable
+            # end_conversation). It serves ONLY in us-central1 on project
+            # revenant-discord-bot-2 -- see GOOGLE_CLOUD_LOCATION below.
+            - { name: VOICE_LIVE_MODEL, value: "gemini-3.8-live" }
             - { name: VOICE_DEFAULT_VOICE, value: "Leda" }
             # Session longevity: sliding-window context compression (without it
             # audio-only sessions die at ~15 min) + session resumption so a
@@ -58,7 +60,9 @@ spec:
             # the agent sidecar. ADC via the agent-genai-sa Secret mounted below.
             - { name: GOOGLE_GENAI_USE_VERTEXAI, value: "true" }
             - { name: GOOGLE_CLOUD_PROJECT, value: "revenant-discord-bot-2" }
-            - { name: GOOGLE_CLOUD_LOCATION, value: "global" }
+            # us-central1, NOT global (unlike the agent sidecar): gemini-3.8-live
+            # 404s in global/us-east4/europe-west4 on this project.
+            - { name: GOOGLE_CLOUD_LOCATION, value: "us-central1" }
             - { name: GOOGLE_APPLICATION_CREDENTIALS, value: "/var/secrets/genai/key.json" }
             # Blank the shared-secret GEMINI_API_KEY so the SDK can't select
             # the consumer backend (explicit env wins over any envFrom).
