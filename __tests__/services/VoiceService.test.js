@@ -1187,6 +1187,18 @@ describe('speaker identity', () => {
     expect(p).toMatch(/not on every reply/);
   });
 
+  // gemini-3.8-live follows "never mention that you receive it" literally: asked
+  // "what's my name?" it answered "I don't have access to your personal
+  // information" 2/2 in a probe (4/4 "Sarah" without the clause, 2026-10-10).
+  // Hiding the marker's format is fine; hiding what it tells the model is not.
+  test('voice persona lets the model say who someone is when asked', () => {
+    const { svc } = makeService(makeDeps({}), {}, undefined);
+    const p = svc._appendVoicePersona('BASE');
+    expect(p).not.toMatch(/never mention that you receive it/);
+    expect(p).toMatch(/NEVER read it aloud/);
+    expect(p).toMatch(/if someone asks who they are or what their name is, just tell them/);
+  });
+
   // gemini-live-2.5-flash spoke ~150 "[1]"/"[1, 3]" citation brackets across
   // the 2026-10-10 spike runs. The rule is unconditional (not marker-gated).
   test('voice persona forbids speaking citation numbers or source markers aloud', () => {
