@@ -440,11 +440,16 @@ class _SessionRef:
     whole gRPC call and reads this each event, so a reconnect can swap the
     session underneath it without dropping the bot's stream. Also carries the
     speaker identity, shared by both pumps across reconnects."""
-    __slots__ = ("session", "speaker")
+    __slots__ = ("session", "speaker", "turn_ended")
 
     def __init__(self):
         self.session = None
         self.speaker = _SpeakerIdentity()
+        # Set by the server pump at each turn_complete, consumed by the client
+        # pump at the next audio chunk: the current named speaker's marker is
+        # re-announced at the start of every user turn (gemini-3.8-live loses
+        # a marker that is one exchange old -- 2026-10-10 smoke).
+        self.turn_ended = False
 
 
 class LiveBridge:
@@ -1028,6 +1033,12 @@ class LiveBridge:
                 continue
             try:
                 if kind == "audio":
+                    reannounce = False
+                    if session_ref.turn_ended:
+                        session_ref.turn_ended = False
+                        if current_speaker and not pending_speaker and last_marker_named:
+                            pending_speaker = current_speaker
+                            reannounce = True
                     if pending_speaker:
                         # Out-of-band identity for the audio that follows.
                         # turn_complete=False -> conversational CONTEXT only: the
@@ -1047,7 +1058,10 @@ class LiveBridge:
                             turn_complete=False,
                         )
                         stats.speaker_markers += 1
-                        logger.info("voice: speaker is now %s", pending_speaker)
+                        if reannounce:
+                            logger.info("voice: speaker re-announced for new turn: %s", pending_speaker)
+                        else:
+                            logger.info("voice: speaker is now %s", pending_speaker)
                         pending_speaker = None
                         last_marker_named = True
                     elif pending_neutral:
@@ -1200,6 +1214,7 @@ class LiveBridge:
                     await emit(voice_pb2.VoiceServerEvent(interrupted=voice_pb2.Interrupted()))
                 if getattr(sc, "turn_complete", False):
                     stats.turns += 1
+                    session_ref.turn_ended = True
                     # Counted before the turn-complete line so its figure is
                     # this turn's; the per-query line follows it.
                     pending = len(stats.turn_search_queries)
