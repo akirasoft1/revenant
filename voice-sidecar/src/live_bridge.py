@@ -145,7 +145,8 @@ NEUTRAL_SPEAKER_MARKER = "someone else"
 # have NO member parameter: the acting member is the current floor holder's
 # Discord id from SetSpeaker.user_id (else the SessionStart opener), bound by
 # `_spawn_tool_call` when the call arrives. The model cannot pick whose
-# hangar it edits.
+# hangar it edits. BLOCKING: gemini-3.8-live defaults calls to NON_BLOCKING,
+# which lets the model announce an edit before the write's result exists.
 _OWN_ONLY = ("Edits ONLY the hangar of the person speaking right now -- there is no way to "
              "edit anyone else's. ")
 HANGAR_TOOL_DECLARATIONS = (
@@ -163,6 +164,7 @@ HANGAR_TOOL_DECLARATIONS = (
             "properties": {"ship": {"type": "string"}, "item": {"type": "string"},
                            "slot": {"type": "string"}},
             "required": ["ship", "item"]},
+        behavior=types.Behavior.BLOCKING,
     ),
     types.FunctionDeclaration(
         name="hangar_add_ship",
@@ -175,6 +177,7 @@ HANGAR_TOOL_DECLARATIONS = (
             "type": "object",
             "properties": {"vehicle": {"type": "string"}, "nickname": {"type": "string"}},
             "required": ["vehicle"]},
+        behavior=types.Behavior.BLOCKING,
     ),
     types.FunctionDeclaration(
         name="hangar_reset",
@@ -189,6 +192,7 @@ HANGAR_TOOL_DECLARATIONS = (
             "type": "object",
             "properties": {"ship": {"type": "string"}, "slot": {"type": "string"}},
             "required": ["ship", "slot"]},
+        behavior=types.Behavior.BLOCKING,
     ),
 )
 # Appended to the system instruction ONLY when the hangar declarations are
