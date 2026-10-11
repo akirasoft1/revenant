@@ -46,9 +46,16 @@ our own CSS and inline SVG icons, no game assets). Spec:
   cheapest price on hover/focus); centre: `CURRENT → CANDIDATE` comparison (per
   stat: value, ▲ green better / ▼ red worse delta respecting lower-is-better, bar
   scaled to the best option; manufacturer, grade/class, description) and
-  **Install**; right: ship stats (mass, L × W × H, crew, ports per type — missing
-  fields omitted), the dimmed ship render, hardpoint markers, and the port rail
-  grouped by type.
+  **Install**; right: the framed **ship panel** (230px tall, full column width) above
+  the port rail grouped by type (the rail scrolls). The panel shows the whole ship
+  render at full strength (`object-fit: contain`, never cropped) over a blurred,
+  darkened `cover` copy of the same image (decorative, `aria-hidden`, never reports
+  an image error itself), under a light cyan tint + scanlines; the ship stats (mass,
+  L × W × H, crew, ports per type — missing fields omitted) as a translucent overlay
+  in the top-right corner (bounded so it never covers the whole image; it shrinks
+  in a narrow column via a container query); the manufacturer + model bottom-left.
+  No image, or the image fails to load → the large type icon and "No render
+  available", no blurred fill.
 - **Writes:** selecting a card is a preview only. Install = the per-slot fit API;
   Reset port / Reset ship = the existing reset APIs, both after a confirm. Install
   is hidden when the candidate is the current item. Read-only hangars (someone
@@ -68,9 +75,15 @@ our own CSS and inline SVG icons, no game assets). Spec:
 - **Positions:** `GET /api/v1/catalog/vehicles/{uuid}/positions` (Firestore
   `vehiclePositions/{vehicleUuid}`, `{}` when none). A marker is drawn over the
   matching view image at `(x, y)` (0–1) only for slots with a `view` point; `xyz`
-  points are stored but not drawn yet. Clicking a marker selects that port. With
-  several views, the selected port's view is shown (chips switch otherwise). No
-  positions → no markers; there is no write endpoint yet.
+  points are stored but not drawn yet. When a view exists, the ship panel shows that
+  view image (with markers) instead of the render. The view figure is sized to the
+  view's own aspect ratio (`width / height`, fit by width; the panel scrolls if it
+  is taller) and the image fills it exactly, so marker percentages land on the
+  rendered image — never on letterbox bars. Clicking a marker selects that port.
+  With several views, the selected port's view is shown; a view chip always
+  switches, and that choice is kept until you select a port whose marker is in a
+  different view (a port with no marker keeps the current view). No positions → no
+  markers; there is no write endpoint yet.
 
 ## API
 

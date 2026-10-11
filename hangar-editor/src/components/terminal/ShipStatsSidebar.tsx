@@ -4,7 +4,7 @@ import { typeLabel } from '../../lib/labels';
 const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 1 });
 
-/** Vehicle summary from the Wiki record; any missing field is omitted. */
+/** Vehicle summary from the Wiki record (overlaid on the ship panel); any missing field is omitted. */
 export function ShipStatsSidebar({ vehicle }: { vehicle?: VehicleSummary }) {
   const rows: [string, string][] = [];
   if (vehicle) {
@@ -21,7 +21,7 @@ export function ShipStatsSidebar({ vehicle }: { vehicle?: VehicleSummary }) {
   const counts = Object.entries(vehicle?.portCounts ?? {}).filter(([, n]) => num(n) && n > 0);
   if (rows.length === 0 && counts.length === 0) return <div className="t-shipstats" data-testid="ship-stats" hidden />;
   return (
-    <div className="t-shipstats t-frame" data-testid="ship-stats">
+    <div className="t-shipstats" data-testid="ship-stats">
       {rows.length > 0 && (
         <dl className="t-kv">
           {rows.map(([k, v]) => (

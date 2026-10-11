@@ -11,8 +11,7 @@ import { CategoryTabs } from './CategoryTabs';
 import { ComparePanel } from './ComparePanel';
 import { ItemGrid } from './ItemGrid';
 import { PortRail } from './PortRail';
-import { ShipStatsSidebar } from './ShipStatsSidebar';
-import { ShipVisual } from './ShipVisual';
+import { ShipPanel } from './ShipPanel';
 import './terminal.css';
 
 const SAVED_MS = 2500;
@@ -246,8 +245,14 @@ export function TerminalShipView({
         </section>
 
         <section className="t-right" aria-label="Ship">
-          <ShipStatsSidebar vehicle={vehicle} />
-          <ShipVisual vehicle={vehicle} positions={positions} loadout={loadout} selected={port?.slot ?? null} onSelect={selectAnywhere} />
+          <ShipPanel
+            vehicle={vehicle}
+            modelName={ship.vehicleName}
+            positions={positions}
+            loadout={loadout}
+            selected={port?.slot ?? null}
+            onSelect={selectAnywhere}
+          />
           <PortRail ports={ports} selected={port?.slot ?? null} onSelect={select} />
         </section>
       </div>
