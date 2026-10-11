@@ -783,3 +783,18 @@ h1 .member-id {
   flex-basis: 100%;
   margin: 0;
 }
+
+.site-footer {
+  max-width: 1100px;
+  margin: 2rem auto 1rem;
+  padding: 0 1rem;
+  font-size: 0.75rem;
+  color: var(--muted, #8a93a6);
+  text-align: center;
+}
+
+.view-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+}

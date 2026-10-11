@@ -64,6 +64,11 @@ export interface VehicleSummary {
   slug?: string | null;
   className?: string | null;
   manufacturer?: string | null;
+  image?: string;
+  dimension?: { length?: number; width?: number; height?: number };
+  mass?: number;
+  crew?: { min?: number; max?: number };
+  portCounts?: Record<string, number>;
 }
 
 export interface StockItem {
@@ -104,6 +109,14 @@ export interface CheapestPrice {
   location: string;
 }
 
+export interface StatValue {
+  key: string;
+  label: string;
+  value: number;
+  unit: string | null;
+  lowerIsBetter: boolean;
+}
+
 /** `GET /api/v1/catalog/slot-options?vehicle=&slot=` -> `items[]` (spec shape). */
 export interface SlotOption {
   uuid: string;
@@ -114,6 +127,49 @@ export interface SlotOption {
   class: string | null;
   keyStat: KeyStat | null;
   cheapestPrice?: CheapestPrice;
+  image?: string;
+  manufacturer?: string | null;
+  description?: string;
+  stats?: StatValue[];
+}
+
+// ----- terminal view -----
+
+export interface PositionPoint {
+  view?: string;
+  x?: number;
+  y?: number;
+  xyz?: [number, number, number];
+}
+
+/** `GET /api/v1/catalog/vehicles/{uuid}/positions` (`{}` when none known). */
+export interface VehiclePositions {
+  views?: Record<string, { imageUrl: string; width: number; height: number }>;
+  slots?: Record<string, PositionPoint>;
+  source?: string;
+  gameVersion?: string;
+}
+
+/** Props shared by the Classic and Terminal ship views (same data, same writes). */
+export interface ShipViewProps {
+  memberId: string;
+  ship: Ship;
+  loadout: LoadoutSlot[];
+  stockBySlot: Map<string, StockItem | null>;
+  vehicle?: VehicleSummary;
+  editable: boolean;
+  onFit(slot: string, item: SlotOption): Promise<unknown>;
+  onReset(slot: string): Promise<unknown>;
+  onResetShip(): Promise<unknown>;
+  busy: boolean;
+  error: string | null;
+  /** Clear a stale fit error (e.g. when the Classic picker closes). */
+  onDismissError?(): void;
+}
+
+/** Terminal adds the exit hook (Esc / Classic button: switch to Classic and persist). */
+export interface TerminalViewProps extends ShipViewProps {
+  onExit(): void;
 }
 
 // ----- [Task 2] spviewer import -----

@@ -15,6 +15,8 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
                                                              item / slot, resolved server side
     GET    /v1/catalog/vehicles?q=&limit=
     GET    /v1/catalog/vehicles/{uuid}/slots
+    GET    /v1/catalog/vehicles/{uuid}/positions                hardpoint positions doc or {}
+    POST   /api/v1/client-events/image-error                    browser-only, 204
     GET    /v1/catalog/items?type=&size=&q=
     GET    /v1/members                                      member directory (>= 1 ship)
     GET    /v1/catalog/slot-options?vehicle=<uuid>&slot=<id> compatible items for one slot
@@ -59,6 +61,7 @@ import re
 import secrets
 import time
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -79,6 +82,8 @@ from .config import Config
 from .http import UpstreamError
 from .loadout import check_compatible, effective_loadout
 from .options import slot_options
+from .client_events import SlidingWindowLimiter, log_image_error
+from .positions import FirestorePositionsStore, InMemoryPositionsStore, PositionsStore
 from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
 from .ship_resolve import resolve_ship, ship_labels
 from .item_resolve import resolve_item
@@ -170,6 +175,10 @@ def _err(status: int, code: str, message: str, headers: dict | None = None, **ex
 
 def _not_found(message: str) -> ApiError:
     return ApiError(404, "not_found", message)
+
+
+IMAGE_ERROR_MAX_BODY = 4096
+_IMAGE_CONTEXT_RE = re.compile(r"[a-z][a-z-]{0,39}")
 
 
 def _bad(message: str) -> ApiError:
@@ -435,7 +444,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                discord_transport: httpx.AsyncBaseTransport | None = None,
                clock: Callable[[], float] | None = None,
                monotonic: Callable[[], float] = time.monotonic,
-               login_gate: LoginGate | None = None) -> FastAPI:
+               login_gate: LoginGate | None = None,
+               positions: PositionsStore | None = None) -> FastAPI:
     owns_catalog = catalog is None
     if catalog is None:
         catalog = build_catalog(config.wiki_base, version=config.version)
@@ -463,7 +473,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             log.error("hangar: HANGAR_AUDIENCE is not set -- every authenticated request will be "
                       "rejected (401) until it is set to this service's URL")
         if app.state.repository is None:
-            app.state.repository = _build_repository(config)
+            app.state.repository, built_positions = _build_repository(config)
+            if app.state.positions is None:
+                app.state.positions = built_positions
         warm_task = asyncio.create_task(catalog.warm()) if warm else None
         log.info("hangar-service %s ready (storage=%s, wiki=%s, allowed callers=%s, admins=%d)",
                  config.version, config.storage, config.wiki_base,
@@ -489,6 +501,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     app.state.config = config
     app.state.catalog = catalog
     app.state.repository = repository
+    # Given a repository (tests), positions default to in-memory; otherwise the
+    # lifespan builds the Firestore store next to the Firestore repository.
+    app.state.positions = positions if positions is not None else (
+        InMemoryPositionsStore() if repository is not None else None)
+    app.state.image_error_limiter = SlidingWindowLimiter(limit=20, window_s=60)
     app.state.authenticator = Authenticator(resolvers)
     app.state.session_codec = codec
     app.state.member_directory = MemberDirectoryCache(MEMBER_DIRECTORY_TTL_S, monotonic)
@@ -907,7 +924,15 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         slots = await catalog.slots(uuid) if vehicle is not None else None
         if vehicle is None or slots is None:
             raise _not_found(f"no vehicle {uuid!r}")
-        return {"vehicle": vehicle, "slots": [s.to_dict() for s in slots]}
+        profile = await catalog.vehicle_profile(uuid)
+        return {"vehicle": profile if profile is not None else vehicle, "slots": [s.to_dict() for s in slots]}
+
+    @router.get("/catalog/vehicles/{uuid}/positions")
+    async def vehicle_positions(uuid: str, principal: Principal = Depends(get_principal)):
+        vehicle = await app.state.catalog.vehicle(uuid)
+        if vehicle is None:
+            raise _not_found(f"no vehicle {uuid!r}")
+        return await app.state.positions.get(vehicle["uuid"]) or {}
 
     @router.get("/catalog/items")
     async def list_items(type: str | None = None, size: str | None = None, q: str | None = None,
@@ -1108,6 +1133,47 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     for prefix in API_PREFIXES:
         app.include_router(router, prefix=prefix)
 
+    # ----- client events (browser only: /api/v1 prefix) -----
+
+    browser_router = APIRouter()
+
+    @browser_router.post("/client-events/image-error", status_code=204)
+    async def image_error(request: Request, principal: Principal = Depends(get_principal)):
+        if principal.kind != "session":
+            raise Forbidden("image-error reports come from browser sessions only")
+        check_same_origin(request, config.public_origin)
+        limiter_key = principal.acting_member or principal.subject
+        if not app.state.image_error_limiter.allow(limiter_key):
+            return _err(429, "rate_limited", "too many image-error reports; try again in a minute")
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                too_big = int(declared) > IMAGE_ERROR_MAX_BODY
+            except ValueError:
+                raise _bad("invalid Content-Length") from None
+            if too_big:
+                raise _bad(f"body must be at most {IMAGE_ERROR_MAX_BODY} bytes")
+        try:
+            body = await request.json()
+        except ValueError:
+            raise _bad("body must be JSON") from None
+        url = body.get("url") if isinstance(body, dict) else None
+        context = body.get("context", "") if isinstance(body, dict) else None
+        try:
+            scheme = urlsplit(url).scheme if isinstance(url, str) else None
+        except ValueError:
+            scheme = None
+        if (not isinstance(url, str) or not 1 <= len(url) <= 2048
+                or scheme not in ("http", "https")
+                or any(ch.isspace() or ord(ch) < 32 for ch in url)):
+            raise _bad("'url' must be an http(s) URL of at most 2048 characters")
+        if not isinstance(context, str) or (context and not _IMAGE_CONTEXT_RE.fullmatch(context)):
+            raise _bad("'context' must match ^[a-z][a-z-]{0,39}$ (or be empty)")
+        log_image_error(log, url=url, context=context, member=principal.acting_member)
+        return Response(status_code=204)
+
+    app.include_router(browser_router, prefix="/api/v1")
+
     # ----- browser login (web editor) -----
 
     def require_browser_auth() -> tuple[SessionCodec, DiscordOAuth]:
@@ -1202,10 +1268,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     return app
 
 
-def _build_repository(config: Config) -> ShipRepository:
+def _build_repository(config: Config) -> tuple[ShipRepository, PositionsStore]:
     if config.storage == "memory":
         log.warning("hangar: HANGAR_STORAGE=memory -- ships are NOT persisted (local dev only)")
-        return InMemoryShipRepository()
+        return InMemoryShipRepository(), InMemoryPositionsStore()
     from google.cloud import firestore
     from .repository import FirestoreShipRepository
-    return FirestoreShipRepository(firestore.AsyncClient(project=config.project))
+    client = firestore.AsyncClient(project=config.project)
+    return FirestoreShipRepository(client), FirestorePositionsStore(client)

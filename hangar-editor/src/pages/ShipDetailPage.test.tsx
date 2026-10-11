@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
@@ -167,5 +167,53 @@ describe('ShipDetailPage', () => {
     });
     renderShip('111');
     expect(await screen.findByText(/game catalog is unavailable/)).toBeInTheDocument();
+  });
+
+  describe('view toggle', () => {
+    const routes = () => ({
+      'GET /api/me': { body: ME },
+      'GET /api/v1/members/111/hangar': { body: { member: '111', ships: [SHIP] } },
+      'GET /api/v1/members': { body: { members: [] } },
+      'GET /api/v1/catalog/vehicles/v-harb/slots': { body: STOCK_SLOTS },
+      'GET /api/v1/catalog/vehicles/v-harb/positions': { body: {} },
+    });
+    const stubMedia = (wide: boolean) =>
+      vi.stubGlobal('matchMedia', (q: string) => ({ matches: wide && q.includes('900px'), media: q, addEventListener() {}, removeEventListener() {} }));
+    beforeEach(() => window.localStorage.removeItem('hangar.shipView'));
+    afterEach(() => window.localStorage.removeItem('hangar.shipView'));
+
+    it('wide: shows Classic/Terminal toggle and persists the choice', async () => {
+      stubMedia(true);
+      mockFetch(routes());
+      const user = userEvent.setup();
+      renderShip('111');
+      expect(await screen.findByRole('button', { name: 'Classic' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Terminal' })).toBeInTheDocument();
+      expect(screen.queryByTestId('terminal-view')).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Terminal' }));
+      expect(await screen.findByTestId('terminal-view')).toBeInTheDocument();
+      expect(window.localStorage.getItem('hangar.shipView')).toBe('terminal');
+      await user.click(screen.getByRole('button', { name: 'Classic' }));
+      expect(screen.queryByTestId('terminal-view')).toBeNull();
+      expect(window.localStorage.getItem('hangar.shipView')).toBe('classic');
+    });
+
+    it('wide: restores a persisted Terminal preference', async () => {
+      stubMedia(true);
+      window.localStorage.setItem('hangar.shipView', 'terminal');
+      mockFetch(routes());
+      renderShip('111');
+      expect(await screen.findByTestId('terminal-view')).toBeInTheDocument();
+    });
+
+    it('narrow: no toggle and Classic renders even if Terminal is persisted', async () => {
+      stubMedia(false);
+      window.localStorage.setItem('hangar.shipView', 'terminal');
+      mockFetch(routes());
+      renderShip('111');
+      expect(await screen.findByText('XL-1')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Terminal' })).toBeNull();
+      expect(screen.queryByTestId('terminal-view')).toBeNull();
+    });
   });
 });

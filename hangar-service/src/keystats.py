@@ -67,3 +67,40 @@ def key_stat(raw_item: dict) -> dict | None:
     block = raw_item.get(spec["stat_key"]) or {}
     return {"name": rank, "value": _number(_get(block, spec["stats"][rank])),
             "lowerIsBetter": rank in spec["lower_is_better"]}
+
+
+# stat key -> (label, unit). Missile ``speed`` shares the ``speed`` label; the
+# QuantumDrive unit (m/s) would be wrong for it, but the label table is keyed by
+# stat name only, so a per-type unit override is applied in ``all_stats``.
+STAT_LABELS: dict[str, tuple[str, str | None]] = {
+    "max_health": ("Shield HP", None), "regen_rate": ("Regen rate", "HP/s"),
+    "regen_delay_damage_s": ("Regen delay", "s"),
+    "power_segment_generation": ("Power output", "segments"),
+    "coolant_segment_generation": ("Cooling", "segments"),
+    "speed": ("Speed", "m/s"), "fuel_rate": ("Fuel rate", None),
+    "assignment_range_max": ("Lock range", "m"), "detection_lifetime": ("Detection lifetime", "s"),
+    "dps": ("Burst DPS", None), "sustained_dps_60s": ("Sustained DPS (60s)", None),
+    "range": ("Range", "m"), "damage": ("Damage", None),
+}
+# Per-type unit overrides where the shared label's unit would be wrong.
+_UNIT_OVERRIDES = {("Missile", "speed"): None}
+
+
+def all_stats(raw_item: dict) -> list[dict]:
+    """Every stat of the item's type that the Wiki record has, in the
+    mapping's order: ``[{key, label, value, unit, lowerIsBetter}]`` (missing
+    values skipped; unknown type -> ``[]``)."""
+    spec = KEY_STATS.get(raw_item.get("type") if isinstance(raw_item, dict) else None)
+    if spec is None:
+        return []
+    block = raw_item.get(spec["stat_key"]) or {}
+    out = []
+    for key, path in spec["stats"].items():
+        value = _number(_get(block, path))
+        if value is None:
+            continue
+        label, unit = STAT_LABELS.get(key, (key.replace("_", " ").capitalize(), None))
+        unit = _UNIT_OVERRIDES.get((raw_item.get("type"), key), unit)
+        out.append({"key": key, "label": label, "value": value, "unit": unit,
+                    "lowerIsBetter": key in spec["lower_is_better"]})
+    return out
