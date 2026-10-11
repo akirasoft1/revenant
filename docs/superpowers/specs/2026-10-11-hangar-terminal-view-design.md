@@ -25,7 +25,7 @@ Dark navy, cyan accents, thin bracket-corner frame lines, subtle CSS scanline/gl
 
 ## API (hangar-service; same auth as today; `/v1` and `/api/v1` prefixes as today)
 1. **`GET /api/v1/catalog/slot-options`** — each option gains optional fields (Classic ignores them): `image` (Wiki `images[0].thumbnail_url`, else `original_url`), `manufacturer` (name), `description` (`en_EN` text), and `stats: [{key, label, value, unit, lowerIsBetter}]` — every stat of the type from `keystats.py` `KEY_STATS` (already a copy of sc-knowledge `COMPONENT_TYPES`; keep-in-sync note stays), in the mapping's order, nulls skipped. The Wiki v2 items list already returns `images` and `description` (verified 2026-10-11), so no per-item fetches. `grade`/`class`/`keyStat`/`cheapestPrice` unchanged.
-2. **`GET /api/v1/catalog/vehicles/{uuid}`** — gains optional `image` (first Wiki vehicle image, thumbnail preferred), `dimension: {length, width, height}`, `mass`, `crew: {min, max}` where the Wiki record has them, and `portCounts: {<type>: n}` over the editable slots. Missing → omitted.
+2. **`GET /api/v1/catalog/vehicles/{uuid}/slots`** — its `vehicle` object (there is no standalone vehicle route) gains optional `image` (first Wiki vehicle image, thumbnail preferred), `dimension: {length, width, height}`, `mass`, `crew: {min, max}` where the Wiki record has them, and `portCounts: {<type>: n}` over the editable slots. Missing → omitted.
 3. **Hardpoint positions (read path only).** Firestore `vehiclePositions/{vehicleUuid}`:
    ```json
    {"views": {"top": {"imageUrl": "https://…", "width": 1600, "height": 900}},
