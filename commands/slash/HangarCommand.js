@@ -8,7 +8,7 @@
 // Reads (list) are open: the chat agent can already read any member's
 // hangar, so gating /hangar list would protect nothing.
 'use strict';
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, escapeMarkdown } = require('discord.js');
 const BaseSlashCommand = require('../base/BaseSlashCommand');
 const logger = require('../../logger');
 
@@ -51,7 +51,7 @@ function shipLabel(s) {
 }
 
 class HangarSlashCommand extends BaseSlashCommand {
-  constructor(hangarClient, { editorUrl = '' } = {}) {
+  constructor(hangarClient, { editorUrl = '', memberIdentity = null, speakerNames = null } = {}) {
     const member = (o) => o.setName('member').setDescription('Another member (admin only for changes; default: you)').setRequired(false);
     super({
       data: new SlashCommandBuilder()
@@ -76,6 +76,26 @@ class HangarSlashCommand extends BaseSlashCommand {
     });
     this.hangarClient = hangarClient;
     this.editorUrl = String(editorUrl || '').trim();
+    this.memberIdentity = memberIdentity;
+    this.speakerNames = speakerNames;
+  }
+
+  // Leaderboard display name: registry addressName -> SpeakerNames (override
+  // table; Discord names are not available from an id alone) -> the service's
+  // displayName -> a mention. Rendered text is markdown-escaped.
+  _displayName(e) {
+    let name = '';
+    try {
+      const rec = this.memberIdentity && typeof this.memberIdentity.get === 'function' ? this.memberIdentity.get(e.member) : null;
+      name = (rec && rec.addressName) || '';
+      if (!name && this.speakerNames && typeof this.speakerNames.resolve === 'function') {
+        name = this.speakerNames.resolve({ id: String(e.member) }, null) || '';
+      }
+    } catch (err) {
+      logger.warn(`/hangar leaderboard: name resolution failed for ${e.member}: ${err && err.stack ? err.stack : err}`);
+    }
+    name = name || e.displayName;
+    return name ? escapeMarkdown(String(name)) : `<@${e.member}>`;
   }
 
   // "\nEdit in the browser: <url>" for /hangar list replies, or '' when unset.
@@ -163,7 +183,7 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
     const caveat = res.data && res.data.caveat ? `\n_${res.data.caveat}_` : '';
     const lines = entries.map((e, n) => {
-      const name = e.displayName || `<@${e.member}>`;
+      const name = this._displayName(e);
       const parts = [`${e.ships} ship${e.ships === 1 ? '' : 's'}`];
       if (e.lti) parts.push(`${e.lti} LTI`);
       if (e.topPledge) parts.push(`top: ${e.topPledge.name} (${formatMoney(e.topPledge.amount, e.topPledge.currency)})`);

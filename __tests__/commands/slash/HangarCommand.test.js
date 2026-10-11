@@ -280,6 +280,36 @@ describe('/hangar', () => {
       expect(t).toContain(CAVEAT);
     });
 
+    test('registry addressName wins over the service displayName', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1)]));
+      cmd = new HangarSlashCommand(client, { memberIdentity: { get: (id) => (id === '1001' ? { addressName: 'Akira' } : null) } });
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toContain('🥇 **Akira**');
+      expect(replyText(i)).not.toContain('Pilot1');
+    });
+
+    test('SpeakerNames is consulted when the registry has nothing', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1)]));
+      const resolve = jest.fn(() => 'Override');
+      cmd = new HangarSlashCommand(client, { memberIdentity: { get: () => null }, speakerNames: { resolve } });
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(resolve).toHaveBeenCalledWith({ id: '1001' }, null);
+      expect(replyText(i)).toContain('**Override**');
+    });
+
+    test('markdown in names is escaped', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1, { displayName: '*_bad_*' })]));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toContain('**\\*\\_bad\\_\\***');
+    });
+
+    test('command definition includes leaderboard', () => {
+      expect(cmd.data.toJSON().options.map((o) => o.name)).toContain('leaderboard');
+    });
+
     test('empty board points at the editor', async () => {
       cmd = new HangarSlashCommand(client, { editorUrl: 'https://hangar.aklabs.io' });
       const i = fakeInteraction({ sub: 'leaderboard' });
