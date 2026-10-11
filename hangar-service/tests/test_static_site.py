@@ -57,7 +57,7 @@ def test_root_serves_index_no_cache_with_csp_and_security_headers(client):
     csp = r.headers["content-security-policy"]
     assert "default-src 'self'" in csp
     assert "script-src 'self';" in csp
-    assert "img-src 'self' https://cdn.discordapp.com data:" in csp
+    assert "img-src 'self' https://cdn.discordapp.com https://cdn.star-citizen.wiki https://media.starcitizen.tools data:" in csp
     assert "frame-ancestors 'none'" in csp
     assert "object-src 'none'" in csp and "base-uri 'none'" in csp
     assert "unsafe-inline" not in csp and "unsafe-eval" not in csp
@@ -155,7 +155,7 @@ def test_rum_origins_extend_script_and_connect_src(dist, caplog):
 def test_build_csp_defaults():
     csp = build_csp(())
     assert csp == ("default-src 'self'; script-src 'self'; style-src 'self'; "
-                   "img-src 'self' https://cdn.discordapp.com data:; connect-src 'self'; font-src 'self'; "
+                   "img-src 'self' https://cdn.discordapp.com https://cdn.star-citizen.wiki https://media.starcitizen.tools data:; connect-src 'self'; font-src 'self'; "
                    "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 

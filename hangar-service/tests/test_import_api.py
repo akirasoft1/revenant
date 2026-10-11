@@ -74,7 +74,7 @@ def test_slot_options_quantum_drive_sorted_by_key_stat(client):
     items = r.json()["items"]
     assert len(items) == 20
     first = items[0]
-    assert set(first) == {"uuid", "name", "type", "size", "grade", "class", "keyStat"}   # no price known
+    assert set(first) == {"uuid", "name", "type", "size", "grade", "class", "keyStat", "manufacturer", "stats"}   # no price known
     assert first["keyStat"]["name"] == "speed" and first["keyStat"]["lowerIsBetter"] is False
     speeds = [i["keyStat"]["value"] for i in items]
     known = [v for v in speeds if v is not None]

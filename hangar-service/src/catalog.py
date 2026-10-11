@@ -17,7 +17,7 @@ on the parent's ``editable_children`` would hide every swappable gun.
 import asyncio
 import copy
 import logging
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
@@ -27,7 +27,7 @@ from rapidfuzz import fuzz
 
 from .cache import RateLimiter, TTLCache
 from .http import UpstreamClient, UpstreamError
-from .keystats import key_stat
+from .keystats import all_stats, key_stat
 from .prices import cheapest_price
 
 log = logging.getLogger(__name__)
@@ -139,10 +139,59 @@ def item_summary(i: dict) -> dict:
 ITEM_SUMMARY_KEYS = ("uuid", "name", "className", "type", "subType", "size", "grade", "class", "manufacturer")
 
 
+def _first_image(v: Any) -> str | None:
+    """First ``images[]`` entry's ``thumbnail_url`` (else ``original_url``)."""
+    imgs = v.get("images") if isinstance(v, dict) else None
+    if not isinstance(imgs, list):
+        return None
+    for img in imgs:
+        if isinstance(img, dict):
+            url = img.get("thumbnail_url") or img.get("original_url")
+            if isinstance(url, str) and url:
+                return url
+        break
+    return None
+
+
+def _description(d: Any) -> str | None:
+    """``en_EN`` text of a localised description dict, or a plain string."""
+    if isinstance(d, dict):
+        d = d.get("en_EN")
+    if isinstance(d, str) and d.strip():
+        return d.strip()
+    return None
+
+
 def item_option(i: dict) -> dict:
-    """``item_summary`` plus the picker extras: ``keyStat`` (or None) and
-    ``cheapestPrice`` (or None) -- see ``keystats`` / ``prices``."""
-    return {**item_summary(i), "keyStat": key_stat(i), "cheapestPrice": cheapest_price(i)}
+    """``item_summary`` plus the picker extras: ``keyStat`` (or None),
+    ``cheapestPrice`` (or None), ``stats`` (list, maybe empty) and, when the
+    Wiki has them, ``image`` / ``description`` -- see ``keystats`` / ``prices``."""
+    out = {**item_summary(i), "keyStat": key_stat(i), "cheapestPrice": cheapest_price(i),
+           "stats": all_stats(i)}
+    image, desc = _first_image(i), _description(i.get("description"))
+    if image:
+        out["image"] = image
+    if desc:
+        out["description"] = desc
+    return out
+
+
+def vehicle_profile_extra(v: dict) -> dict:
+    """Optional vehicle fields for the terminal view; absent ones omitted."""
+    out: dict = {}
+    image = _first_image(v)
+    if image:
+        out["image"] = image
+    dim = v.get("dimension")
+    if isinstance(dim, dict) and all(isinstance(dim.get(k), (int, float)) for k in ("length", "width", "height")):
+        out["dimension"] = {k: dim[k] for k in ("length", "width", "height")}
+    mass = v.get("mass")
+    if isinstance(mass, (int, float)) and not isinstance(mass, bool):
+        out["mass"] = mass
+    crew = v.get("crew")
+    if isinstance(crew, dict) and all(isinstance(crew.get(k), int) for k in ("min", "max")):
+        out["crew"] = {"min": crew["min"], "max": crew["max"]}
+    return out
 
 
 def _search_score(q: str, v: dict) -> float:
@@ -325,7 +374,8 @@ class Catalog:
             data = body.get("data") if isinstance(body, dict) else None
             if not isinstance(data, dict) or not data.get("uuid"):
                 return None
-            return {"summary": vehicle_summary(data), "slots": parse_slots(data)}
+            return {"summary": vehicle_summary(data), "slots": parse_slots(data),
+                    "extra": vehicle_profile_extra(data)}
 
         key = f"vehicle:{ident.casefold()}"
         self._touch_lookup(key)
@@ -337,6 +387,16 @@ class Catalog:
         Wiki is down and nothing is cached."""
         d = await self._detail(uuid_or_slug)
         return dict(d["summary"]) if d else None
+
+    async def vehicle_profile(self, uuid_or_slug: str) -> dict | None:
+        """``vehicle`` plus the optional terminal-view fields (``image``,
+        ``dimension``, ``mass``, ``crew``) and ``portCounts`` (editable slots
+        per type). None if unknown."""
+        d = await self._detail(uuid_or_slug)
+        if not d:
+            return None
+        counts = Counter(s.type for s in d["slots"])
+        return {**d["summary"], **copy.deepcopy(d.get("extra") or {}), "portCounts": dict(counts)}
 
     async def slots(self, vehicle_uuid: str) -> list[Slot] | None:
         """Component slots of a vehicle (uuid or slug), None if unknown.

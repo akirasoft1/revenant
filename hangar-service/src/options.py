@@ -16,6 +16,11 @@ def _sort_key(item: dict):
 def _view(item: dict) -> dict:
     out = {k: item.get(k) for k in ("uuid", "name", "type", "size", "grade", "class")}
     out["keyStat"] = item.get("keyStat")
+    for k in ("image", "manufacturer", "description"):
+        if item.get(k):
+            out[k] = item[k]
+    if "stats" in item:
+        out["stats"] = item["stats"]
     if item.get("cheapestPrice"):
         out["cheapestPrice"] = item["cheapestPrice"]   # omitted when unknown / not sold
     return out

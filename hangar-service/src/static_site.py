@@ -35,6 +35,8 @@ NO_CACHE = "no-cache"
 RESERVED_PREFIXES = ("/api", "/v1", "/health", "/healthz", "/assets")
 # Discord avatars (``/api/me`` avatarUrl) are the only off-origin images.
 AVATAR_ORIGIN = "https://cdn.discordapp.com"
+# Wiki image CDNs (hotlinked item / vehicle images in the terminal view).
+IMAGE_ORIGINS = ("https://cdn.star-citizen.wiki", "https://media.starcitizen.tools")
 
 
 def build_csp(rum_origins: tuple[str, ...]) -> str:
@@ -48,7 +50,7 @@ def build_csp(rum_origins: tuple[str, ...]) -> str:
         "default-src 'self'",
         f"script-src 'self'{extra}",
         "style-src 'self'",
-        f"img-src 'self' {AVATAR_ORIGIN} data:",
+        f"img-src 'self' {AVATAR_ORIGIN} {' '.join(IMAGE_ORIGINS)} data:",
         f"connect-src 'self'{extra}",
         "font-src 'self'",
         "object-src 'none'",
