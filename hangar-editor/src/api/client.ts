@@ -168,6 +168,42 @@ export const getVehicleSlots = (uuid: string) =>
 export const getVehiclePositions = (uuid: string) =>
   request<VehiclePositions>(`${API_PREFIX}/catalog/vehicles/${enc(uuid)}/positions`);
 
+/**
+ * A vehicle's wireframe bundle: the stored gzip bytes, served WITHOUT
+ * `Content-Encoding` (decode with `lib/swf`). `null` when none is stored (404).
+ * `cache: 'no-cache'` revalidates the browser's copy against the server's ETag
+ * on every fetch, so a re-uploaded model never sits beside fresh positions.
+ */
+export async function getWireframe(uuid: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_PREFIX}/models/vehicle/${enc(uuid)}/wireframe`, {
+      headers: { Accept: 'application/octet-stream' },
+      credentials: 'same-origin',
+      cache: 'no-cache',
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new ApiError(0, 'network', `Network error: ${(e as Error).message ?? e}`);
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    let obj: Record<string, unknown> = {};
+    try {
+      const data: unknown = JSON.parse(await res.text());
+      if (data && typeof data === 'object') obj = data as Record<string, unknown>;
+    } catch {
+      /* not JSON (e.g. a gateway error page) */
+    }
+    const code = typeof obj.error === 'string' ? obj.error : `http_${res.status}`;
+    const message =
+      typeof obj.message === 'string' && obj.message ? obj.message : `${res.status} ${res.statusText || 'request failed'}`;
+    throw new ApiError(res.status, code, message, obj);
+  }
+  return res.arrayBuffer();
+}
+
 /** Whole-ship reset. Response is the chat-edit shape (`{ship:{shipId,label}, changes}`), NOT a Ship. */
 export const resetShip = (memberId: string, shipId: string) =>
   request<unknown>(`${member(memberId)}/ships/${enc(shipId)}/reset`, { method: 'POST', json: { slot: 'all' } });

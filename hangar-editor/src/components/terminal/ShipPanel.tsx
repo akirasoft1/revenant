@@ -1,9 +1,29 @@
-import { useState } from 'react';
+import { Suspense, lazy, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getWireframe } from '../../api/client';
 import type { LoadoutSlot, VehiclePositions, VehicleSummary } from '../../api/types';
 import { slotLabel } from '../../lib/labels';
+import { loadVisualPref, saveVisualPref, wireframeSupport, type VisualPref } from '../../lib/wireframe';
+import { buildMarkers } from '../wireframe/markers';
+import { ViewerBoundary } from '../wireframe/ViewerBoundary';
 import { TypeIcon } from './icons';
 import { SafeImage } from './SafeImage';
 import { ShipStatsSidebar } from './ShipStatsSidebar';
+
+// three.js lives only in this lazily loaded chunk; it is fetched the first time a
+// ship with a wireframe is shown in wireframe mode.
+const WireframeViewer = lazy(() => import('../wireframe/WireframeViewer'));
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/** Why the wireframe is not being shown for a vehicle that has one. */
+type WireProblem = 'webgl' | 'decompression' | 'unavailable';
+
+const PROBLEM_NOTES: Record<WireProblem, string> = {
+  webgl: 'Wireframe needs WebGL, which this browser doesn’t offer — showing the render.',
+  decompression: 'This browser can’t unpack the wireframe — showing the render.',
+  unavailable: 'Wireframe unavailable — showing the render.',
+};
 
 interface Marker {
   slot: string;
@@ -38,9 +58,17 @@ export function viewAspectRatio(view: { width: number; height: number }): string
 }
 
 /**
- * The framed ship panel at the top of the right column: the whole vehicle render
- * at full strength (`contain`, never cropped) over a blurred `cover` copy of itself (or, when hardpoint positions exist, the view image with its
- * markers), the ship stats as a top-right overlay and the model name bottom-left.
+ * The framed ship panel at the top of the right column, with the ship stats as a
+ * top-right overlay and the model name bottom-left over one of:
+ * - the rotatable **wireframe** with 3D hardpoint markers, when the vehicle has
+ *   one (`vehicle.hasWireframe`) — the default, with a `Wireframe | Render`
+ *   switch remembered per browser (`hangar.shipVisual`);
+ * - the **render**: the whole vehicle image at full strength (`contain`, never
+ *   cropped) over a blurred `cover` copy of itself, or, when 2D hardpoint view
+ *   positions exist, the view image with its markers.
+ * The wireframe never blocks the panel: an unsupported browser, a bundle that
+ * cannot be fetched or decoded, a lost GL context or a viewer chunk that fails
+ * to load all fall back to the render with a short note.
  */
 export function ShipPanel({
   vehicle,
@@ -57,6 +85,55 @@ export function ShipPanel({
   selected: string | null;
   onSelect(slot: string): void;
 }) {
+  const uuid = vehicle?.uuid;
+  const hasWire = !!uuid && vehicle?.hasWireframe === true;
+  const unsupported = useMemo(() => (hasWire ? wireframeSupport() : null), [hasWire]);
+  const [visual, setVisual] = useState<VisualPref>(() => loadVisualPref());
+  // The vehicle whose viewer failed (decode error, no/lost GL context, chunk load).
+  const [failedFor, setFailedFor] = useState<string | null>(null);
+  const viewerFailed = hasWire && failedFor === uuid;
+  const bundle = useQuery({
+    queryKey: ['wireframe', uuid],
+    queryFn: ({ signal }) => getWireframe(uuid!, signal),
+    enabled: hasWire && !unsupported && !viewerFailed && visual === 'wireframe',
+    staleTime: DAY_MS,
+  });
+  const problem: WireProblem | null = !hasWire
+    ? null
+    : unsupported
+      ? unsupported
+      : viewerFailed || bundle.isError || bundle.data === null
+        ? 'unavailable'
+        : null;
+  const wireOn = hasWire && !problem && visual === 'wireframe';
+  const markers3d = useMemo(() => buildMarkers(positions, loadout), [positions, loadout]);
+  const viewerError = (e: unknown) => {
+    console.warn('Wireframe viewer failed; showing the render', e);
+    setFailedFor(uuid ?? null);
+  };
+  // How much of the panel's right side the stats overlay covers: the viewer
+  // centres the ship in what is left.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [insetRight, setInsetRight] = useState(0);
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const stats = panel?.querySelector<HTMLElement>('.t-shipstats');
+    if (!wireOn || !panel || !stats || typeof ResizeObserver !== 'function') return;
+    const measure = () => {
+      const covered = stats.hidden || stats.offsetWidth === 0 ? 0 : panel.getBoundingClientRect().right - stats.getBoundingClientRect().left;
+      setInsetRight(Math.max(0, Math.round(covered)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(panel);
+    ro.observe(stats);
+    return () => ro.disconnect();
+  }, [wireOn]);
+  const chooseVisual = (v: VisualPref) => {
+    setVisual(v);
+    saveVisualPref(v);
+  };
+
   const byView = markersByView(positions, loadout);
   const viewNames = [...byView.keys()];
   const selectedView = viewNames.find((v) => byView.get(v)!.some((m) => m.slot === selected));
@@ -69,7 +146,7 @@ export function ShipPanel({
     if (chosen && selectedView && selectedView !== chosen) setChosen(null);
   }
   const active = chosen && byView.has(chosen) ? chosen : (selectedView ?? viewNames[0]);
-  const view = active ? positions?.views?.[active] : undefined;
+  const view = !wireOn && active ? positions?.views?.[active] : undefined;
   const manufacturer = vehicle?.manufacturer;
   // The blurred backdrop is a decorative copy of the same render; it is drawn only
   // while the foreground image is good (the foreground alone reports failures).
@@ -78,8 +155,26 @@ export function ShipPanel({
   const backdrop = hero && hero !== failedSrc ? hero : null;
 
   return (
-    <div className={`t-shippanel t-frame${view ? ' has-view' : ''}`} data-testid="ship-panel">
-      {view && active ? (
+    <div ref={panelRef} className={`t-shippanel t-frame${view ? ' has-view' : ''}${wireOn ? ' has-wire' : ''}`} data-testid="ship-panel">
+      {wireOn ? (
+        bundle.data ? (
+          <ViewerBoundary key={uuid} onError={viewerError}>
+            <Suspense fallback={<WireLoading />}>
+              <WireframeViewer
+                bundle={bundle.data}
+                markers={markers3d}
+                selected={selected}
+                onSelect={onSelect}
+                onError={viewerError}
+                insetRight={insetRight}
+                label={`${modelName} wireframe — drag to rotate, scroll to zoom`}
+              />
+            </Suspense>
+          </ViewerBoundary>
+        ) : (
+          <WireLoading />
+        )
+      ) : view && active ? (
         <div className="t-shippanel-scroll">
           <figure className="t-view" data-testid="ship-view" style={{ aspectRatio: viewAspectRatio(view) }}>
             <SafeImage src={view.imageUrl} alt={`${active} view`} type="all" context="positions-view" className="t-view-img" />
@@ -127,7 +222,21 @@ export function ShipPanel({
         {manufacturer && <small>{manufacturer}</small>}
         <span>{modelName}</span>
       </div>
-      {viewNames.length > 1 && (
+      {hasWire && !problem && (
+        <div className="t-visual-switch" role="group" aria-label="Ship visual">
+          {(['wireframe', 'render'] as const).map((v) => (
+            <button key={v} type="button" className={`t-chip${v === visual ? ' is-active' : ''}`} aria-pressed={v === visual} onClick={() => chooseVisual(v)}>
+              {v === 'wireframe' ? 'Wireframe' : 'Render'}
+            </button>
+          ))}
+        </div>
+      )}
+      {problem && (
+        <p className="t-shippanel-note" role="status" data-testid="ship-panel-note">
+          {PROBLEM_NOTES[problem]}
+        </p>
+      )}
+      {!wireOn && viewNames.length > 1 && (
         <div className="t-view-switch" role="group" aria-label="Ship views">
           {viewNames.map((v) => (
             <button key={v} type="button" className={`t-chip${v === active ? ' is-active' : ''}`} aria-pressed={v === active} onClick={() => setChosen(v)}>
@@ -136,6 +245,14 @@ export function ShipPanel({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function WireLoading() {
+  return (
+    <div className="t-wire-loading" role="status" data-testid="wireframe-loading">
+      Loading wireframe…
     </div>
   );
 }
