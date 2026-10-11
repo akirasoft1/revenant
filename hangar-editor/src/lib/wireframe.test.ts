@@ -7,8 +7,10 @@ import {
   markerRadius,
   orbitFitDistance,
   prefersReducedMotion,
+  needsFrame,
+  sameBytes,
   saveVisualPref,
-  viewInset,
+  wireframeStaleTime,
   wireframeSupport,
 } from './wireframe';
 
@@ -181,17 +183,46 @@ describe('orbitFitDistance', () => {
   });
 });
 
-describe('viewInset', () => {
-  it('centres the ship in the part of the panel the stats overlay leaves free', () => {
-    // 500 px panel, 150 px covered on the right: frame for 350 px, shift the view 75 px left.
-    expect(viewInset(500, 150)).toEqual({ freeWidth: 350, shift: 75 });
-    expect(viewInset(500, 0)).toEqual({ freeWidth: 500, shift: 0 });
+describe('needsFrame', () => {
+  const idle = { visible: true, sized: true, dirty: false, autoRotate: false, easing: false, pulsing: false };
+
+  it('draws nothing while nothing changes', () => {
+    expect(needsFrame(idle)).toBe(false);
   });
 
-  it('never gives up more than 40% of the panel, and ignores junk', () => {
-    expect(viewInset(300, 200)).toEqual({ freeWidth: 180, shift: 60 });
-    expect(viewInset(300, -5)).toEqual({ freeWidth: 300, shift: 0 });
-    expect(viewInset(300, NaN)).toEqual({ freeWidth: 300, shift: 0 });
-    expect(viewInset(0, 50)).toEqual({ freeWidth: 0, shift: 0 });
+  it.each(['dirty', 'autoRotate', 'easing', 'pulsing'] as const)('draws while %s', (k) => {
+    expect(needsFrame({ ...idle, [k]: true })).toBe(true);
+  });
+
+  it('never draws off-screen, in a hidden document or with no size, whatever is animating', () => {
+    const busy = { ...idle, dirty: true, autoRotate: true, easing: true, pulsing: true };
+    expect(needsFrame(busy)).toBe(true);
+    expect(needsFrame({ ...busy, visible: false })).toBe(false);
+    expect(needsFrame({ ...busy, sized: false })).toBe(false);
+  });
+});
+
+describe('sameBytes', () => {
+  const buf = (...v: number[]) => new Uint8Array(v).buffer;
+
+  it('compares content, not identity', () => {
+    expect(sameBytes(buf(1, 2, 3), buf(1, 2, 3))).toBe(true);
+    expect(sameBytes(buf(1, 2, 3), buf(1, 2, 4))).toBe(false);
+    expect(sameBytes(buf(1, 2, 3), buf(1, 2))).toBe(false);
+    expect(sameBytes(buf(), buf())).toBe(true);
+  });
+
+  it('is false when either side is missing', () => {
+    expect(sameBytes(null, buf(1))).toBe(false);
+    expect(sameBytes(buf(1), undefined)).toBe(false);
+    expect(sameBytes(null, null)).toBe(false);
+  });
+});
+
+describe('wireframeStaleTime', () => {
+  it('keeps a stored bundle fresh for a day, but a 404 (or nothing yet) only briefly', () => {
+    expect(wireframeStaleTime(new ArrayBuffer(4))).toBe(24 * 60 * 60_000);
+    expect(wireframeStaleTime(null)).toBe(30_000);
+    expect(wireframeStaleTime(undefined)).toBe(30_000);
   });
 });

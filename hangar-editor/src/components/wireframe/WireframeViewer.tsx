@@ -12,8 +12,6 @@ export interface WireframeViewerProps {
   onSelect(id: string): void;
   /** Decode failure, no WebGL context, or a lost context: the parent should show something else. */
   onError?(error: unknown): void;
-  /** CSS pixels on the right covered by an overlay; the ship is centred in the rest. */
-  insetRight?: number;
   /** Accessible name, e.g. "Harbinger wireframe". */
   label?: string;
 }
@@ -23,13 +21,13 @@ export interface WireframeViewerProps {
  * Loaded lazily (default export for `React.lazy`): this module and `stage.ts`
  * are the only importers of three.js.
  */
-export default function WireframeViewer({ bundle, markers, selected, onSelect, onError, insetRight = 0, label }: WireframeViewerProps) {
+export default function WireframeViewer({ bundle, markers, selected, onSelect, onError, label }: WireframeViewerProps) {
   const host = useRef<HTMLDivElement>(null);
   const tip = useRef<HTMLDivElement>(null);
   const stage = useRef<WireframeStage | null>(null);
   // Latest props for the stage, which is built once per bundle.
-  const latest = useRef({ markers, selected, onSelect, onError, insetRight });
-  latest.current = { markers, selected, onSelect, onError, insetRight };
+  const latest = useRef({ markers, selected, onSelect, onError });
+  latest.current = { markers, selected, onSelect, onError };
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +61,6 @@ export default function WireframeViewer({ bundle, markers, selected, onSelect, o
           onContextLost: () => fail(new Error('WebGL context lost')),
         });
         stage.current = built;
-        built.setInsetRight(latest.current.insetRight);
         built.setMarkers(latest.current.markers);
         // The port already selected when the ship opens is highlighted, not zoomed to.
         built.setSelected(latest.current.selected, false);
@@ -84,10 +81,6 @@ export default function WireframeViewer({ bundle, markers, selected, onSelect, o
   useEffect(() => {
     stage.current?.setSelected(selected, true);
   }, [selected]);
-
-  useEffect(() => {
-    stage.current?.setInsetRight(insetRight);
-  }, [insetRight]);
 
   return (
     <div

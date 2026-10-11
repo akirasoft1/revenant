@@ -18,7 +18,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedBundle } from '../../lib/swf';
-import { boundsOf, markerRadius, orbitFitDistance, viewInset, type Bounds } from '../../lib/wireframe';
+import { boundsOf, markerRadius, needsFrame, orbitFitDistance, type Bounds } from '../../lib/wireframe';
 import type { WireMarker } from './markers';
 
 const BACKGROUND = 0x07111f; // --t-bg
@@ -36,13 +36,12 @@ const SELECTED_SCALE = 1.8;
 const HOVER_SCALE = 1.35;
 const HALO_SCALE = 3.4;
 /**
- * How far the orbit target travels from the ship's centre toward a selected port
- * (1 = the port itself, as in the full-window spike). The panel is small: going
- * all the way slides half of a long ship out of view when a nose or tail port is
- * picked, so the view pans part-way — the port moves toward the middle and the
- * ship stays readable.
+ * How far the view pans from the ship's centre toward a selected port (1 = the
+ * port ends up dead centre, as in the full-window spike). Slightly short of 1 so
+ * a nose or tail port on a long ship is brought near the middle while most of
+ * the hull stays in frame.
  */
-const FOCUS_BLEND = 0.5;
+const FOCUS_BLEND = 0.8;
 /** Smallest pointer target for a marker, in CSS pixels (markers on a capital ship are tiny). */
 const MIN_HIT_PX = 10;
 /** A press that moves less than this is a click, not a drag. */
@@ -81,6 +80,7 @@ export class WireframeStage {
   private readonly home = new Vector3();
   private readonly markerSize: number;
   private readonly resizeObserver: ResizeObserver | null;
+  private readonly intersectionObserver: IntersectionObserver | null;
   private markers: MarkerMesh[] = [];
   private selectedId: string | null = null;
   private hovered: MarkerMesh | null = null;
@@ -91,7 +91,11 @@ export class WireframeStage {
   private last = 0;
   private width = 0;
   private height = 0;
-  private insetRight = 0;
+  /** Something changed since the last draw. */
+  private dirty = true;
+  private onscreen = true;
+  /** A frame is already requested. */
+  private pending = false;
   private down: { x: number; y: number } | null = null;
   private readonly scratch = new Vector3();
   private readonly delta = new Vector3();
@@ -155,6 +159,7 @@ export class WireframeStage {
     this.controls.minDistance = r * 0.06;
     this.controls.maxDistance = r * 10;
     this.controls.addEventListener('start', this.onControlStart);
+    this.controls.addEventListener('change', this.invalidate);
 
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
     this.canvas.addEventListener('pointermove', this.onPointerMove);
@@ -167,7 +172,16 @@ export class WireframeStage {
     this.resize();
     this.resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.resize()) : null;
     this.resizeObserver?.observe(host);
-    this.frame = requestAnimationFrame(this.tick);
+    this.intersectionObserver =
+      typeof IntersectionObserver === 'function'
+        ? new IntersectionObserver((entries) => {
+            this.onscreen = entries[entries.length - 1]?.isIntersecting ?? true;
+            if (this.onscreen) this.invalidate();
+          })
+        : null;
+    this.intersectionObserver?.observe(host);
+    document.addEventListener('visibilitychange', this.invalidate);
+    this.schedule();
   }
 
   /** Replace the hardpoint markers (keeps the current selection highlighted). */
@@ -191,6 +205,7 @@ export class WireframeStage {
       return mesh;
     });
     this.applySelection();
+    this.invalidate();
   }
 
   /**
@@ -203,6 +218,7 @@ export class WireframeStage {
     if (this.disposed) return;
     this.selectedId = id;
     const mesh = this.applySelection();
+    this.invalidate();
     if (!focus || !mesh) return;
     this.controls.autoRotate = false;
     this.interacted = true;
@@ -215,23 +231,13 @@ export class WireframeStage {
     }
   }
 
-  /**
-   * CSS pixels on the right of the host covered by an overlay (the ship stats):
-   * the ship is framed for, and centred in, what is left (see `viewInset`).
-   */
-  setInsetRight(px: number): void {
-    if (this.disposed || px === this.insetRight) return;
-    this.insetRight = px;
-    if (this.width === 0 || this.height === 0) return;
-    this.applyView();
-    if (!this.interacted) this.frameHome();
-  }
-
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.frame);
     this.resizeObserver?.disconnect();
+    this.intersectionObserver?.disconnect();
+    document.removeEventListener('visibilitychange', this.invalidate);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
@@ -241,6 +247,7 @@ export class WireframeStage {
     // Removed BEFORE forceContextLoss(), which fires this very event.
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
     this.controls.removeEventListener('start', this.onControlStart);
+    this.controls.removeEventListener('change', this.invalidate);
     this.controls.dispose();
     for (const m of this.markers) m.material.dispose();
     this.markers = [];
@@ -289,8 +296,7 @@ export class WireframeStage {
 
   /** Put the camera on the opening three-quarter view, framed to the panel's shape. */
   private frameHome(): void {
-    const { freeWidth } = viewInset(this.width, this.insetRight);
-    const aspect = freeWidth > 0 && this.height > 0 ? freeWidth / this.height : 1;
+    const aspect = this.width > 0 && this.height > 0 ? this.width / this.height : 1;
     const [cx, cy, cz] = this.bounds.center;
     const dist = orbitFitDistance(this.positions, [cx, cy, cz], HOME_ELEVATION, FOV_DEG, aspect, FIT_MARGIN);
     this.controls.target.copy(this.home);
@@ -310,27 +316,53 @@ export class WireframeStage {
     this.height = h;
     if (w === 0 || h === 0) return;
     this.renderer.setSize(w, h, false);
-    this.applyView();
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
     // Until the user takes the camera, keep the ship framed for the new shape.
     if (!this.interacted) this.frameHome();
+    // Drawn at once (resizing clears the canvas), then on demand as usual.
     this.renderer.render(this.scene, this.camera);
+    this.invalidate();
   }
 
-  /** Projection for the current size, shifted so the scene centre sits in the uncovered part. */
-  private applyView(): void {
-    const { shift } = viewInset(this.width, this.insetRight);
-    this.camera.aspect = this.width / this.height;
-    if (shift > 0) this.camera.setViewOffset(this.width, this.height, shift, 0, this.width, this.height);
-    else this.camera.clearViewOffset();
-    this.camera.updateProjectionMatrix();
+  /** Mark the picture out of date and make sure a frame is coming (if it can be seen). */
+  private readonly invalidate = (): void => {
+    this.dirty = true;
+    this.schedule();
+  };
+
+  private frameNeeded(): boolean {
+    return needsFrame({
+      visible: this.onscreen && !document.hidden,
+      sized: this.width > 0 && this.height > 0,
+      dirty: this.dirty,
+      autoRotate: this.controls.autoRotate,
+      easing: this.goal != null,
+      pulsing: !this.opts.reducedMotion && this.halo.visible,
+    });
+  }
+
+  /** Request one frame unless one is pending or nothing would change (render on demand). */
+  private schedule(): void {
+    if (this.disposed || this.pending) return;
+    if (!this.frameNeeded()) {
+      this.last = 0; // the next frame after a rest starts a new clock
+      return;
+    }
+    this.pending = true;
+    this.frame = requestAnimationFrame(this.tick);
   }
 
   private readonly tick = (now: number): void => {
+    this.pending = false;
     if (this.disposed) return;
-    this.frame = requestAnimationFrame(this.tick);
-    if (this.width === 0 || this.height === 0) return;
+    if (!this.frameNeeded()) {
+      this.last = 0;
+      return;
+    }
     const dt = Math.min((now - (this.last || now)) / 1000, 0.1);
     this.last = now;
+    this.dirty = false;
     if (this.goal) {
       const next = this.scratch.copy(this.controls.target).lerp(this.goal, 1 - Math.exp(-dt * 7));
       if (next.distanceTo(this.goal) < this.bounds.radius * 1e-3) {
@@ -340,8 +372,11 @@ export class WireframeStage {
       this.panTo(next);
     }
     if (!this.opts.reducedMotion) this.scaleMarkers(Math.sin(now / 420));
-    this.controls.update();
+    // While damping or auto-rotating still moves the camera this fires 'change',
+    // which marks the next frame; once it settles, the frames stop.
+    this.controls.update(dt);
     this.renderer.render(this.scene, this.camera);
+    this.schedule();
   };
 
   /** Move the orbit target, carrying the camera along (a pan: angle and zoom are kept). */
@@ -382,7 +417,8 @@ export class WireframeStage {
     if (m !== this.hovered) {
       this.hovered = m;
       this.canvas.style.cursor = m ? 'pointer' : '';
-      if (this.opts.reducedMotion) this.scaleMarkers(0);
+      this.scaleMarkers(0);
+      this.invalidate();
     }
     this.opts.onHover(m ? m.userData.label : null, x, y);
   }
@@ -390,6 +426,7 @@ export class WireframeStage {
   private stopAuto(): void {
     this.interacted = true;
     this.controls.autoRotate = false;
+    this.invalidate();
   }
 
   private readonly onControlStart = (): void => {
@@ -438,6 +475,7 @@ export class WireframeStage {
     if (this.pick(x, y)) return;
     this.goal = null;
     this.frameHome();
+    this.invalidate();
   };
 
   private readonly onContextLost = (e: Event): void => {

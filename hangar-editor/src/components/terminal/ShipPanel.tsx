@@ -1,9 +1,9 @@
-import { Suspense, lazy, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { getWireframe } from '../../api/client';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ApiError, getWireframe } from '../../api/client';
 import type { LoadoutSlot, VehiclePositions, VehicleSummary } from '../../api/types';
 import { slotLabel } from '../../lib/labels';
-import { loadVisualPref, saveVisualPref, wireframeSupport, type VisualPref } from '../../lib/wireframe';
+import { loadVisualPref, sameBytes, saveVisualPref, wireframeStaleTime, wireframeSupport, type VisualPref } from '../../lib/wireframe';
 import { buildMarkers } from '../wireframe/markers';
 import { ViewerBoundary } from '../wireframe/ViewerBoundary';
 import { TypeIcon } from './icons';
@@ -13,8 +13,6 @@ import { ShipStatsSidebar } from './ShipStatsSidebar';
 // three.js lives only in this lazily loaded chunk; it is fetched the first time a
 // ship with a wireframe is shown in wireframe mode.
 const WireframeViewer = lazy(() => import('../wireframe/WireframeViewer'));
-
-const DAY_MS = 24 * 60 * 60_000;
 
 /** Why the wireframe is not being shown for a vehicle that has one. */
 type WireProblem = 'webgl' | 'decompression' | 'unavailable';
@@ -58,8 +56,10 @@ export function viewAspectRatio(view: { width: number; height: number }): string
 }
 
 /**
- * The framed ship panel at the top of the right column, with the ship stats as a
- * top-right overlay and the model name bottom-left over one of:
+ * The framed ship panel at the top of the right column, with the model name
+ * bottom-left over one of the two visuals below. In render mode the ship stats
+ * are a top-right overlay; in wireframe mode the panel is taller and the stats
+ * move to a compact strip under it, so nothing covers the wireframe.
  * - the rotatable **wireframe** with 3D hardpoint markers, when the vehicle has
  *   one (`vehicle.hasWireframe`) — the default, with a `Wireframe | Render`
  *   switch remembered per browser (`hangar.shipVisual`);
@@ -89,15 +89,35 @@ export function ShipPanel({
   const hasWire = !!uuid && vehicle?.hasWireframe === true;
   const unsupported = useMemo(() => (hasWire ? wireframeSupport() : null), [hasWire]);
   const [visual, setVisual] = useState<VisualPref>(() => loadVisualPref());
-  // The vehicle whose viewer failed (decode error, no/lost GL context, chunk load).
-  const [failedFor, setFailedFor] = useState<string | null>(null);
-  const viewerFailed = hasWire && failedFor === uuid;
   const bundle = useQuery({
     queryKey: ['wireframe', uuid],
     queryFn: ({ signal }) => getWireframe(uuid!, signal),
-    enabled: hasWire && !unsupported && !viewerFailed && visual === 'wireframe',
-    staleTime: DAY_MS,
+    enabled: hasWire && !unsupported && visual === 'wireframe',
+    // A stored bundle stays fresh for a day; "none stored" (404) only briefly.
+    staleTime: (q) => wireframeStaleTime(q.state.data),
+    // One retry for network/5xx, none for a client error.
+    retry: (count, err) => count < 1 && !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 429),
+    // A refetch that returns the same bytes keeps the old buffer, so the live viewer is not rebuilt.
+    structuralSharing: (prev, next) => (sameBytes(prev as ArrayBuffer | null | undefined, next as ArrayBuffer | null) ? prev : next),
   });
+  // The bundle whose viewer failed (decode error, no/lost GL context, chunk load);
+  // a different bundle (another ship, a re-upload) gets a fresh try.
+  const [failedBundle, setFailedBundle] = useState<ArrayBuffer | null>(null);
+  const viewerFailed = hasWire && bundle.data != null && failedBundle === bundle.data;
+  // A model uploaded, replaced or deleted while the page is open: new positions
+  // for the vehicle, or `hasWireframe` changing, mean the cached bundle (or cached
+  // 404) may be out of date — refetch it instead of waiting for a page reload.
+  const qc = useQueryClient();
+  const seen = useRef({ uuid, positions, hasWire });
+  useEffect(() => {
+    const prev = seen.current;
+    seen.current = { uuid, positions, hasWire };
+    if (!uuid || prev.uuid !== uuid) return;
+    // The first positions to arrive are the page loading, not a change.
+    const positionsChanged = prev.positions !== undefined && prev.positions !== positions;
+    if (!positionsChanged && prev.hasWire === hasWire) return;
+    void qc.invalidateQueries({ queryKey: ['wireframe', uuid] });
+  }, [uuid, positions, hasWire, qc]);
   const problem: WireProblem | null = !hasWire
     ? null
     : unsupported
@@ -109,26 +129,8 @@ export function ShipPanel({
   const markers3d = useMemo(() => buildMarkers(positions, loadout), [positions, loadout]);
   const viewerError = (e: unknown) => {
     console.warn('Wireframe viewer failed; showing the render', e);
-    setFailedFor(uuid ?? null);
+    setFailedBundle(bundle.data ?? null);
   };
-  // How much of the panel's right side the stats overlay covers: the viewer
-  // centres the ship in what is left.
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [insetRight, setInsetRight] = useState(0);
-  useLayoutEffect(() => {
-    const panel = panelRef.current;
-    const stats = panel?.querySelector<HTMLElement>('.t-shipstats');
-    if (!wireOn || !panel || !stats || typeof ResizeObserver !== 'function') return;
-    const measure = () => {
-      const covered = stats.hidden || stats.offsetWidth === 0 ? 0 : panel.getBoundingClientRect().right - stats.getBoundingClientRect().left;
-      setInsetRight(Math.max(0, Math.round(covered)));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(panel);
-    ro.observe(stats);
-    return () => ro.disconnect();
-  }, [wireOn]);
   const chooseVisual = (v: VisualPref) => {
     setVisual(v);
     saveVisualPref(v);
@@ -155,7 +157,8 @@ export function ShipPanel({
   const backdrop = hero && hero !== failedSrc ? hero : null;
 
   return (
-    <div ref={panelRef} className={`t-shippanel t-frame${view ? ' has-view' : ''}${wireOn ? ' has-wire' : ''}`} data-testid="ship-panel">
+    <>
+    <div className={`t-shippanel t-frame${view ? ' has-view' : ''}${wireOn ? ' has-wire' : ''}`} data-testid="ship-panel">
       {wireOn ? (
         bundle.data ? (
           <ViewerBoundary key={uuid} onError={viewerError}>
@@ -166,7 +169,6 @@ export function ShipPanel({
                 selected={selected}
                 onSelect={onSelect}
                 onError={viewerError}
-                insetRight={insetRight}
                 label={`${modelName} wireframe — drag to rotate, scroll to zoom`}
               />
             </Suspense>
@@ -217,7 +219,7 @@ export function ShipPanel({
       )}
       <span className="t-shippanel-tint" aria-hidden="true" />
       <span className="t-shippanel-scan" aria-hidden="true" />
-      <ShipStatsSidebar vehicle={vehicle} />
+      {!wireOn && <ShipStatsSidebar vehicle={vehicle} />}
       <div className="t-shippanel-name" data-testid="ship-panel-name">
         {manufacturer && <small>{manufacturer}</small>}
         <span>{modelName}</span>
@@ -246,6 +248,8 @@ export function ShipPanel({
         </div>
       )}
     </div>
+    {wireOn && <ShipStatsSidebar vehicle={vehicle} variant="strip" />}
+    </>
   );
 }
 

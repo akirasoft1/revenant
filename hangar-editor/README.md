@@ -92,38 +92,65 @@ our own CSS and inline SVG icons, no game assets). Spec:
   browser in `localStorage` `hangar.shipVisual` (`"wireframe" | "render"`, default
   wireframe, unreadable storage → wireframe). Ships without a wireframe show the
   render panel exactly as before (no switch).
+  - **Layout:** in wireframe mode the panel is taller
+    (`clamp(320px, 42vh, 480px)`; render mode stays 230px) and nothing covers the
+    wireframe except the ship name (bottom-left) and the switch: the ship stats
+    move out of the panel into a compact wrapping strip directly under it
+    (`ShipStatsSidebar variant="strip"` — same fields and omission rules, real
+    selectable text, scrolls inside itself past ~4 lines, focusable). Render mode
+    keeps the top-right stats overlay. The port rail below keeps a minimum height
+    (`6.5rem`) and scrolls.
   - **Data:** `getWireframe(uuid)` → `GET /api/v1/models/vehicle/{uuid}/wireframe`,
     the stored `.swf.gz` bytes (served without `Content-Encoding`; 404 → `null`).
-    The query is keyed `['wireframe', uuid]`, `staleTime` 1 day, and the request
-    uses `cache: 'no-cache'` so the browser revalidates its copy against the
-    server's ETag — a re-uploaded model is never shown beside fresh positions. It
-    is fetched only while the wireframe is the chosen visual.
+    The query is keyed `['wireframe', uuid]` and the request uses
+    `cache: 'no-cache'` so the browser revalidates its copy against the server's
+    ETag. It is fetched only while the wireframe is the chosen visual. A stored
+    bundle is fresh for a day, a 404 (`null`) for 30 s (`wireframeStaleTime`); one
+    retry for network/5xx errors, none for 4xx.
+  - **No reload needed after an upload:** `ShipPanel` invalidates the query when
+    the vehicle's positions object changes identity (an upload rewrites the
+    positions) or `hasWireframe` changes, so a replaced model, or one uploaded
+    after a cached 404, appears as soon as the page's catalog/positions queries
+    refresh. The first positions to arrive on page load are not treated as a
+    change. A refetch that returns byte-identical data keeps the old buffer
+    (`sameBytes` as `structuralSharing`), so the live viewer and its camera are
+    not rebuilt. A viewer failure is remembered per bundle, so a new bundle gets a
+    fresh try.
   - **Decode (`src/lib/swf.ts`, no three.js):** gunzip with `DecompressionStream`
     (8 MB ceiling), then `SWF1` + uint32 LE header length + header JSON + int16 LE
     × `lines * 6`; a coordinate is `center + int16 / 32767 × halfExtent` (glTF
     Y-up, metres — the same space as the positions' `xyz`). Malformed input
     rejects with `SwfError`.
   - **Viewer (`src/components/wireframe/`):** `WireframeViewer` (props `bundle`,
-    `markers`, `selected`, `onSelect`, plus `onError`, `insetRight`, `label`) and
+    `markers`, `selected`, `onSelect`, plus `onError`, `label`) and
     its scene in `stage.ts`. Additive cyan `LineSegments` at 0.32 opacity on the
     terminal background, `OrbitControls` with damping (drag rotate, wheel zoom,
     right-drag pan), a gentle auto-rotate that stops at the first press, wheel or
     port selection, and double-click on empty space to return to the opening
     view. The opening camera is a three-quarter front view whose distance is
     computed so the ship stays in frame at every angle of the auto-rotation for
-    the panel's shape (`orbitFitDistance`), centred in the part of the panel the
-    stats overlay leaves free (`viewInset`, at most 40% of the width is given up).
+    the panel's shape (`orbitFitDistance`), using the full panel.
     Markers (`buildMarkers`: loadout slots with a finite `xyz`, labelled with
     `slotLabel`) are green spheres sized relative to the ship (`markerRadius`);
     the selected one is white, larger and pulsing inside a cyan halo. Hover shows
     the slot label; a click (a press that moves less than 5 px) selects the port.
-    Selecting a port — on a marker or in the rail — pans the view half-way from
-    the ship's centre toward it (`FOCUS_BLEND` in `stage.ts`; 1 would centre the
-    port itself, which slides a long ship out of the small panel). The port
+    Selecting a port — on a marker or in the rail — pans the view (angle and zoom
+    kept) 80% of the way from the ship's centre toward it (`FOCUS_BLEND` in
+    `stage.ts`, the one constant; 1 would put the port dead centre), so a nose or
+    tail port on a long ship comes near the middle with most of the hull still in
+    frame. The port
     already selected when the ship opens is highlighted but not panned to. A port
     with no position has no marker. `prefers-reduced-motion` turns off
     auto-rotate, the pulse and the pan easing. GL resources are disposed on
     unmount.
+  - **Render on demand:** a still wireframe draws nothing. A frame is requested
+    only when `needsFrame` (`lib/wireframe.ts`, unit-tested) says so: something
+    changed (camera via the controls' `change` event, markers, selection, hover,
+    resize), or auto-rotate, the pan easing or the selected marker's pulse is
+    running — and never while the canvas is off-screen (`IntersectionObserver`)
+    or the document is hidden (`visibilitychange`). Damping keeps requesting
+    frames until the camera settles. Note the pulse means frames keep coming
+    while a port with a marker is selected and reduced motion is off.
   - **three.js stays out of the main bundle:** `three` is imported only by
     `WireframeViewer.tsx` and `stage.ts`, which `ShipPanel` loads with
     `React.lazy`. `npm run build` emits it as its own `WireframeViewer-*.js` chunk

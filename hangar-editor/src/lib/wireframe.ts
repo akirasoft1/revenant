@@ -153,17 +153,47 @@ export function orbitFitDistance(
   return best * margin;
 }
 
-/** The most of the panel's width an overlay may take from the ship's framing. */
-const MAX_INSET_FRACTION = 0.4;
+// ----- render on demand -----
+
+export interface FrameState {
+  /** On screen (IntersectionObserver) in a visible document. */
+  visible: boolean;
+  /** The canvas has a non-zero size. */
+  sized: boolean;
+  /** Something changed since the last draw: camera, markers, selection, hover, size. */
+  dirty: boolean;
+  autoRotate: boolean;
+  /** The view is easing toward a selected port. */
+  easing: boolean;
+  /** A selected marker is pulsing (never with reduced motion). */
+  pulsing: boolean;
+}
 
 /**
- * Framing for a panel whose right `insetRight` CSS pixels sit under an overlay
- * (the ship stats): the ship is framed for `freeWidth` and the view is shifted
- * `shift` pixels left so it is centred in the free part. Capped, so on a narrow
- * panel the ship stays a useful size and simply runs under the overlay.
+ * Whether the viewer should draw another frame. A still wireframe costs nothing:
+ * frames are drawn only while something moves or after a change, and never when
+ * the canvas cannot be seen.
  */
-export function viewInset(width: number, insetRight: number): { freeWidth: number; shift: number } {
-  const w = Number.isFinite(width) && width > 0 ? width : 0;
-  const inset = Number.isFinite(insetRight) && insetRight > 0 ? Math.min(insetRight, w * MAX_INSET_FRACTION) : 0;
-  return { freeWidth: w - inset, shift: inset / 2 };
+export function needsFrame(s: FrameState): boolean {
+  if (!s.visible || !s.sized) return false;
+  return s.dirty || s.autoRotate || s.easing || s.pulsing;
+}
+
+// ----- bundle query -----
+
+const DAY_MS = 24 * 60 * 60_000;
+
+/** A stored bundle is fresh for a day (the ETag revalidates it anyway); "none stored" only for 30 s. */
+export function wireframeStaleTime(data: ArrayBuffer | null | undefined): number {
+  return data ? DAY_MS : 30_000;
+}
+
+/** Same bytes? Lets a refetch that returned an unchanged bundle keep the old buffer (and the live viewer). */
+export function sameBytes(a: ArrayBuffer | null | undefined, b: ArrayBuffer | null | undefined): boolean {
+  if (!a || !b || a.byteLength !== b.byteLength) return false;
+  if (a === b) return true;
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
 }

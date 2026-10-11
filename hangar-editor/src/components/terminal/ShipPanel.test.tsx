@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { ComponentProps } from 'react';
 import type { LoadoutSlot, VehiclePositions, VehicleSummary } from '../../api/types';
 import { ApiError } from '../../api/client';
@@ -64,6 +65,7 @@ const VEHICLE: VehicleSummary = {
   manufacturer: 'Aegis Dynamics',
   image: 'https://media.starcitizen.tools/harbinger.png',
   mass: 123456,
+  portCounts: { WeaponGun: 2 },
   hasWireframe: true,
 };
 
@@ -93,10 +95,13 @@ function setup(over: Partial<Props> = {}) {
   );
   const rerender = (next: Partial<Props>) =>
     utils.rerender(
+      // Same tree shape as renderWithProviders, so the panel updates instead of remounting.
       <QueryClientProvider client={utils.client}>
-        <div className="terminal">
-          <ShipPanel {...props} {...next} />
-        </div>
+        <MemoryRouter initialEntries={['/']}>
+          <div className="terminal">
+            <ShipPanel {...props} {...next} />
+          </div>
+        </MemoryRouter>
       </QueryClientProvider>,
     );
   return { props, user, ...utils, rerender };
@@ -128,7 +133,16 @@ describe('ShipPanel wireframe', () => {
     expect(render()).toBeNull();
     expect(within(panel()).queryByTestId('ship-panel-backdrop')).toBeNull();
     expect(within(panel()).getByTestId('ship-panel-name')).toHaveTextContent('Harbinger');
-    expect(within(panel()).getByTestId('ship-stats')).toHaveTextContent('123,456 kg');
+    expect(panel()).toHaveClass('has-wire');
+    // Stats leave the canvas: a strip directly under the panel, real (selectable) text.
+    const stats = screen.getByTestId('ship-stats');
+    expect(panel()).not.toContainElement(stats);
+    expect(stats).toHaveClass('t-shipstats-strip');
+    expect(stats).toHaveTextContent('Mass');
+    expect(stats).toHaveTextContent('123,456 kg');
+    expect(stats).toHaveTextContent('Guns');
+    expect(panel().compareDocumentPosition(stats) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getAllByTestId('ship-stats')).toHaveLength(1);
     expect(note()).toBeNull();
     const sw = visualSwitch()!;
     expect(within(sw).getByRole('button', { name: 'Wireframe' })).toHaveAttribute('aria-pressed', 'true');
@@ -164,6 +178,10 @@ describe('ShipPanel wireframe', () => {
     expect(viewer()).toBeNull();
     expect(render()).toHaveAttribute('src', VEHICLE.image);
     expect(within(panel()).getByTestId('ship-panel-backdrop')).toBeInTheDocument();
+    // Render mode keeps the stats as the overlay inside the panel.
+    expect(panel()).not.toHaveClass('has-wire');
+    expect(within(panel()).getByTestId('ship-stats')).not.toHaveClass('t-shipstats-strip');
+    expect(screen.getAllByTestId('ship-stats')).toHaveLength(1);
     expect(window.localStorage.getItem('hangar.shipVisual')).toBe('render');
     expect(within(visualSwitch()!).getByRole('button', { name: 'Render' })).toHaveAttribute('aria-pressed', 'true');
     expect(note()).toBeNull();
@@ -215,14 +233,89 @@ describe('ShipPanel wireframe', () => {
     expect(visualSwitch()).toBeNull();
   });
 
-  it('bundle fetch error: render panel with a note', async () => {
+  it('bundle fetch error: one retry, then the render panel with a note', async () => {
     getWireframe.mockImplementation(async () => {
       throw new ApiError(503, 'unavailable', 'model store is not configured');
     });
     setup();
-    expect(await screen.findByTestId('ship-panel-note')).toHaveTextContent(/wireframe/i);
+    expect(await screen.findByTestId('ship-panel-note', {}, { timeout: 4000 })).toHaveTextContent(/wireframe/i);
+    expect(getWireframe).toHaveBeenCalledTimes(2);
     expect(render()).toBeInTheDocument();
     expect(viewer()).toBeNull();
+    // The stats are back in the panel as the overlay.
+    expect(within(panel()).getByTestId('ship-stats')).toBeInTheDocument();
+  });
+
+  it('a client error (403) is not retried', async () => {
+    getWireframe.mockImplementation(async () => {
+      throw new ApiError(403, 'forbidden', 'no');
+    });
+    setup();
+    expect(await screen.findByTestId('ship-panel-note')).toBeInTheDocument();
+    expect(getWireframe).toHaveBeenCalledTimes(1);
+  });
+
+  it('new positions for the vehicle (a re-upload) refetch the bundle without a reload', async () => {
+    const { rerender } = setup();
+    expect(await screen.findByTestId('wireframe-viewer')).toHaveAttribute('data-bytes', '5');
+    getWireframe.mockImplementation(async () => new Uint8Array([9, 9, 9, 9, 9, 9, 9]).buffer);
+    // Same payload identity: nothing is refetched.
+    rerender({ selected: QD });
+    expect(getWireframe).toHaveBeenCalledTimes(1);
+    rerender({ positions: { ...POSITIONS, slots: { ...POSITIONS.slots, [RADAR]: { xyz: [1, 1, 1] } } } });
+    await waitFor(() => expect(screen.getByTestId('wireframe-viewer')).toHaveAttribute('data-bytes', '7'));
+    expect(getWireframe).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByTestId('wire-marker')).toHaveLength(3);
+  });
+
+  it('a refetch that returns the same bytes keeps the same bundle (the viewer is not rebuilt)', async () => {
+    const seen: ArrayBuffer[] = [];
+    getWireframe.mockImplementation(async () => {
+      const b = new Uint8Array([1, 2, 3, 4, 5]).buffer;
+      seen.push(b);
+      return b;
+    });
+    const { rerender, client } = setup();
+    await screen.findByTestId('wireframe-viewer');
+    rerender({ positions: { ...POSITIONS } });
+    await waitFor(() => expect(getWireframe).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(client.isFetching({ queryKey: ['wireframe', 'v-harb'] })).toBe(0));
+    expect(client.getQueryData(['wireframe', 'v-harb'])).toBe(seen[0]);
+  });
+
+  it('a model uploaded after a 404 appears when the positions change', async () => {
+    getWireframe.mockImplementation(async () => null);
+    const { rerender } = setup({ positions: {} });
+    expect(await screen.findByTestId('ship-panel-note')).toBeInTheDocument();
+    getWireframe.mockImplementation(async () => new Uint8Array([1, 2, 3]).buffer);
+    rerender({ positions: POSITIONS });
+    expect(await screen.findByTestId('wireframe-viewer')).toHaveAttribute('data-bytes', '3');
+    expect(note()).toBeNull();
+    expect(visualSwitch()).not.toBeNull();
+  });
+
+  it('a model uploaded while the page is open (hasWireframe turns true) is fetched fresh, even over a cached 404', async () => {
+    getWireframe.mockImplementation(async () => null);
+    const { rerender, client } = setup();
+    expect(await screen.findByTestId('ship-panel-note')).toBeInTheDocument();
+    rerender({ vehicle: { ...VEHICLE, hasWireframe: false } });
+    expect(note()).toBeNull();
+    getWireframe.mockImplementation(async () => new Uint8Array([1, 2, 3, 4]).buffer);
+    rerender({ vehicle: VEHICLE });
+    expect(await screen.findByTestId('wireframe-viewer')).toHaveAttribute('data-bytes', '4');
+    expect(client.getQueryState(['wireframe', 'v-harb'])?.data).not.toBeNull();
+  });
+
+  it('a viewer failure is forgotten when a new model arrives', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { user, rerender } = setup();
+    await screen.findByTestId('wireframe-viewer');
+    await user.click(screen.getByRole('button', { name: 'break viewer' }));
+    expect(note()).not.toBeNull();
+    getWireframe.mockImplementation(async () => new Uint8Array([7, 7]).buffer);
+    rerender({ positions: { ...POSITIONS } });
+    expect(await screen.findByTestId('wireframe-viewer')).toHaveAttribute('data-bytes', '2');
+    expect(note()).toBeNull();
   });
 
   it('viewer failure (decode error, lost WebGL context): render panel with a note', async () => {

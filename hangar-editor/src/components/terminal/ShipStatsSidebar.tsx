@@ -4,8 +4,13 @@ import { typeLabel } from '../../lib/labels';
 const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 1 });
 
-/** Vehicle summary from the Wiki record (overlaid on the ship panel); any missing field is omitted. */
-export function ShipStatsSidebar({ vehicle }: { vehicle?: VehicleSummary }) {
+/**
+ * Vehicle summary from the Wiki record; any missing field is omitted. `overlay`
+ * sits on the ship panel (render mode); `strip` is the compact wrapping row under
+ * the panel used in wireframe mode, so the stats never cover the wireframe.
+ */
+export function ShipStatsSidebar({ vehicle, variant = 'overlay' }: { vehicle?: VehicleSummary; variant?: 'overlay' | 'strip' }) {
+  const cls = variant === 'strip' ? 't-shipstats-strip' : 't-shipstats';
   const rows: [string, string][] = [];
   if (vehicle) {
     if (num(vehicle.mass)) rows.push(['Mass', `${fmt(vehicle.mass)} kg`]);
@@ -19,9 +24,9 @@ export function ShipStatsSidebar({ vehicle }: { vehicle?: VehicleSummary }) {
     }
   }
   const counts = Object.entries(vehicle?.portCounts ?? {}).filter(([, n]) => num(n) && n > 0);
-  if (rows.length === 0 && counts.length === 0) return <div className="t-shipstats" data-testid="ship-stats" hidden />;
+  if (rows.length === 0 && counts.length === 0) return <div className={cls} data-testid="ship-stats" hidden />;
   return (
-    <div className="t-shipstats" data-testid="ship-stats">
+    <div className={cls} data-testid="ship-stats" tabIndex={variant === 'strip' ? 0 : undefined} aria-label={variant === 'strip' ? 'Ship stats' : undefined}>
       {rows.length > 0 && (
         <dl className="t-kv">
           {rows.map(([k, v]) => (
