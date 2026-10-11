@@ -61,6 +61,25 @@ def test_build_without_visibility_keeps_interior_edges(tmp_path):
     header, _ = read_bundle(tmp_path / "TEST_Ship.swf.gz")
     assert header["lines"] == 48 + 12
     assert header["build"]["visibility"] is False
+    assert "views" not in header                              # no depth maps, no hidden-line data
+
+
+def test_build_stores_per_view_visibility_for_every_line(tmp_path, capsys):
+    from wireframes.bundle import read_bundle_full
+    src = write_glb(tmp_path, "s.glb", inner=True)
+    assert cli.main(["build", str(src), "-o", str(tmp_path), *FAST]) == 0
+    header, segs, masks = read_bundle_full(tmp_path / "TEST_Ship.swf.gz")
+    views = np.array(header["views"])
+    assert views.shape == (26, 3) and np.allclose(np.linalg.norm(views, axis=1), 1.0, atol=1e-5)
+    assert len(masks) == len(segs) == 48
+    assert (masks != 0).all()                                 # every kept line is seen from somewhere
+    assert (masks < (1 << 26)).all()
+    # a 4 m box: no hull line is visible from all sides at once
+    assert max(bin(int(m)).count("1") for m in masks) < 26
+    capsys.readouterr()
+    assert cli.main(["inspect", str(tmp_path / "TEST_Ship.swf.gz")]) == 0
+    out = capsys.readouterr().out
+    assert "views: 26" in out and '"views"' not in out
 
 
 def test_build_flags_reach_the_pipeline_and_the_header(tmp_path):
@@ -173,6 +192,7 @@ def test_inspect_prints_the_header_and_line_count(tmp_path, capsys):
     header = json.loads(out[:out.rindex("}") + 1])
     assert header["className"] == "TEST_Ship"
     assert "lines: 48" in out[out.rindex("}"):]
+    assert "views: 26" in out
 
 
 def test_inspect_bad_bundle_fails(tmp_path, capsys):

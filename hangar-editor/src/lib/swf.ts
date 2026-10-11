@@ -2,6 +2,9 @@
 // written by `tools/wireframes`): gzip of `SWF1` + uint32 LE header length +
 // header JSON (UTF-8) + int16 LE x `lines * 6`. A value v on axis a is the
 // coordinate `center[a] + v / 32767 * halfExtent` (glTF Y-up, metres).
+// Optional hidden-line data: when the header has `views` (1-32 unit vectors
+// pointing from the ship toward a viewer), uint32 LE x `lines` follows the
+// lines; bit i of a line's value = that line can be seen from views[i].
 // No three.js here: this module is safe to import from the main bundle.
 
 export interface SwfNode {
@@ -21,12 +24,21 @@ export interface SwfHeader {
   lines: number;
   nodes: SwfNode[];
   build: Record<string, unknown>;
+  /** Unit vectors toward the baked viewers; present only with per-line visibility masks. */
+  views?: [number, number, number][];
 }
 
 export interface DecodedBundle {
   header: SwfHeader;
   /** `lines * 6` floats: x,y,z of each segment's two ends, in the bundle's own space. */
   positions: Float32Array;
+  /** Per-view visibility for hidden-line removal; absent in bundles built without it. */
+  visibility?: {
+    /** `n * 3` floats: the header's `views`. */
+    views: Float32Array;
+    /** One per line: bit i set = visible from view i. */
+    masks: Uint32Array;
+  };
 }
 
 /** The bundle is malformed (or cannot be read in this browser); the message names the problem. */
@@ -95,6 +107,11 @@ function parseHeader(json: string): SwfHeader {
   if (!Array.isArray(c) || c.length !== 3 || !c.every(finite)) throw new SwfError('center must be three numbers');
   if (!finite(o.halfExtent) || o.halfExtent <= 0) throw new SwfError('halfExtent must be a positive number');
   if (!Number.isInteger(o.lines) || (o.lines as number) < 0) throw new SwfError('lines must be a non-negative integer');
+  if (o.views !== undefined) {
+    const v = o.views;
+    const ok = Array.isArray(v) && v.length >= 1 && v.length <= 32 && v.every((d) => Array.isArray(d) && d.length === 3 && d.every(finite));
+    if (!ok) throw new SwfError('views must be 1 to 32 [x, y, z] vectors');
+  }
   return h as SwfHeader;
 }
 
@@ -109,8 +126,9 @@ export async function decodeBundle(buf: ArrayBuffer): Promise<DecodedBundle> {
   if (start > raw.length) throw new SwfError('header length runs past the end of the bundle');
   const header = parseHeader(new TextDecoder().decode(raw.subarray(8, start)));
   const count = header.lines * 6;
-  if (raw.length - start !== count * 2) {
-    throw new SwfError(`payload is ${raw.length - start} bytes but lines=${header.lines} needs ${count * 2}`);
+  const need = count * 2 + (header.views ? header.lines * 4 : 0);
+  if (raw.length - start !== need) {
+    throw new SwfError(`payload is ${raw.length - start} bytes but lines=${header.lines} needs ${need}`);
   }
   const positions = new Float32Array(count);
   const scale = header.halfExtent / 32767;
@@ -122,5 +140,9 @@ export async function decodeBundle(buf: ArrayBuffer): Promise<DecodedBundle> {
     positions[i + 1] = cy + view.getInt16(at + 2, true) * scale;
     positions[i + 2] = cz + view.getInt16(at + 4, true) * scale;
   }
-  return { header, positions };
+  if (!header.views) return { header, positions };
+  const masks = new Uint32Array(header.lines);
+  const at = start + count * 2;
+  for (let l = 0; l < header.lines; l++) masks[l] = view.getUint32(at + l * 4, true);
+  return { header, positions, visibility: { views: new Float32Array(header.views.flat()), masks } };
 }

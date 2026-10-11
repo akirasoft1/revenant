@@ -209,14 +209,20 @@ def cmd_build_all(args) -> int:
 
 
 def cmd_inspect(args) -> int:
-    from .bundle import BundleError, read_bundle
+    from .bundle import BundleError, read_bundle_full
     try:
-        header, segs = read_bundle(args.bundle)
+        header, segs, masks = read_bundle_full(args.bundle)
     except BundleError as e:
         print(f"error: {Path(args.bundle).name}: {e}", file=sys.stderr)
         return 1
+    views = header.pop("views", None)
     print(json.dumps(header, indent=2, ensure_ascii=False))
     print(f"lines: {len(segs)}")
+    if masks is None:
+        print("views: none (no hidden-line data; rebuild with the current tool)")
+    else:
+        seen = sum(bin(int(m)).count("1") for m in masks) / max(len(masks), 1)
+        print(f"views: {len(views)} (each line is visible from {seen:.1f} of them on average)")
     return 0
 
 

@@ -59,7 +59,7 @@ python -m wireframes inspect wireframes/out/AEGS_Avenger_Stalker.swf.gz
   recursive), one process per ship, at most `--jobs` at a time. It prints a
   result table and exits non-zero if any ship failed or two files produced the
   same class name; the others still complete.
-- **`inspect <bundle>`** prints the header JSON and the line count.
+- **`inspect <bundle>`** prints the header JSON (without the `views` list), the line count, and whether the bundle carries hidden-line data.
 
 ### Flags (`build` and `build-all`)
 
@@ -110,7 +110,13 @@ of top-level numpy imports for this to hold (a test checks it).
    99.5th-percentile distance from the median centre (exports sometimes carry
    a detached decal tens of metres off the hull).
 7. **Budget**: keep the `--max-lines` longest.
-8. **Quantise** to int16 and gzip.
+8. **Per-view visibility** (for hidden-line removal in the viewer): for every
+   surviving line, which of the 26 views can see it, as a 26-bit mask. The
+   per-view test is a little more forgiving than step 4 (which only needs one
+   view to agree): a point also counts as front when it is within 3 pixels of
+   the front-most sample in its own depth-map pixel, so a surface seen at a
+   steep angle does not hide itself. Skipped with `--no-visibility`.
+9. **Quantise** to int16 and gzip.
 
 Typical times on one core: 1–5 s per ship, about 200–700 MB of memory
 (the 120 MB / 3.9M-triangle Ironclad Assault takes about 5 s).
@@ -124,6 +130,7 @@ gzip of:
 
 ```
 b"SWF1" | uint32 LE headerLen | header JSON (UTF-8) | int16 LE × (lines × 6)
+       [| uint32 LE × lines]          only when the header has "views"
 ```
 
 Each line is `x0 y0 z0 x1 y1 z1`; a coordinate is
@@ -132,6 +139,15 @@ Each line is `x0 y0 z0 x1 y1 z1`; a coordinate is
 Header keys, exactly: `format` (1), `kind`, `className`, `sourceName`,
 `space` (`"gltf-y-up-m"`), `center`, `halfExtent`, `lines`, `nodes`, `build`
 (`creaseDeg`, `minEdgeFrac`, `maxLines`, `visibility`, `depthRes`, `tool`).
+
+**Hidden-line data (optional, written by every build since tool 1.1.0 unless
+`--no-visibility`):** header `views` = 26 unit vectors pointing from the ship
+toward a viewer, and one uint32 per line after the line data — bit `i` set
+means the line can be seen from `views[i]`. The editor's viewer fades out the
+lines the current camera cannot see; without this a wireframe is see-through
+and a dense ship reads as a glowing blob. Bundles built before 1.1.0 still
+load and draw the old way — **rebuild and re-upload them** to get the clean
+look. It adds about 15–20% to a bundle (Ironclad Assault 510 → 596 KB).
 
 `nodes` is `[{name, parent, pos}]`: every named node that is a hardpoint (name
 starts with `hardpoint`, any case) or has a hardpoint ancestor or descendant.

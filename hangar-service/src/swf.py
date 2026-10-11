@@ -1,7 +1,10 @@
 """Wireframe bundle (.swf.gz) validation.
 
 Format: gzip of ``b"SWF1"`` + uint32 LE header length + header JSON (UTF-8) +
-int16 LE x ``lines * 6``. The server never renders the lines; it validates the
+int16 LE x ``lines * 6``, then, only when the header has ``views`` (1-32 unit
+vectors toward a viewer), uint32 LE x ``lines`` (bit i = the line is visible
+from views[i]; the editor uses it to hide lines the camera cannot see). The
+server never renders the lines; it validates the
 envelope, reads the node list for slot matching and stores the bytes verbatim.
 """
 import json
@@ -16,6 +19,7 @@ MAX_UPLOAD = 2 * 1024 * 1024
 MAX_DECOMPRESSED = 8 * 1024 * 1024
 MAX_LINES = 80_000
 MAX_NODES = 5_000
+MAX_VIEWS = 32
 CLASS_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 _REQUIRED = ("format", "kind", "className", "sourceName", "space", "center", "halfExtent",
              "lines", "nodes", "build")
@@ -119,7 +123,15 @@ def parse(data: bytes) -> Bundle:
             raise SwfError("nodes contain a parent cycle")
         for j in path:
             state[j] = 2
-    if len(raw) - 8 - hlen != lines * 12:
-        raise SwfError(f"payload is {len(raw) - 8 - hlen} bytes but lines={lines} needs {lines * 12}")
+    per_line = 12
+    if "views" in header:
+        views = header["views"]
+        ok = (isinstance(views, list) and 1 <= len(views) <= MAX_VIEWS
+              and all(isinstance(v, list) and len(v) == 3 and all(_num(x) for x in v) for v in views))
+        if not ok:
+            raise SwfError(f"views must be 1 to {MAX_VIEWS} [x, y, z] vectors")
+        per_line = 16
+    if len(raw) - 8 - hlen != lines * per_line:
+        raise SwfError(f"payload is {len(raw) - 8 - hlen} bytes but lines={lines} needs {lines * per_line}")
     build = header["build"] if isinstance(header["build"], dict) else {}
     return Bundle(header=header, lines=lines, nodes=nodes, build=build)

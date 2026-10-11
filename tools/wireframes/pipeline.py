@@ -92,6 +92,7 @@ def build_bundle(src, out_dir, options: Options = Options()) -> dict:
                         "edges are dropped")
 
     samples = 0
+    maps = None
     if options.visibility:
         maps = DepthMaps.for_segments(segs, options.depth_res, bounds=bounds)
         rng = np.random.default_rng(SAMPLE_SEED)
@@ -110,17 +111,25 @@ def build_bundle(src, out_dir, options: Options = Options()) -> dict:
         raise BuildError("no edges left after filtering "
                          "(try a smaller --min-edge-frac or --no-visibility)")
 
+    # Which of the 26 views each surviving line can be seen from: the viewer hides
+    # the rest for the current camera (hidden-line removal).
+    views = masks = None
+    if maps is not None:
+        views, masks = maps.view_directions(), maps.segments_mask(segs)
+
     nodes = named_nodes(glb)
     path = Path(out_dir) / f"{name}.swf.gz"
     header = write_bundle(
         path, kind=options.kind, class_name=name, source_name=src.name, segs=segs, nodes=nodes,
         build={"creaseDeg": float(options.crease_deg), "minEdgeFrac": float(options.min_edge_frac),
                "maxLines": int(options.max_lines), "visibility": bool(options.visibility),
-               "depthRes": int(options.depth_res)})
+               "depthRes": int(options.depth_res)},
+        views=views, masks=masks)
     done = time.perf_counter()
     return {
         "file": src.name, "className": name, "path": str(path), "lines": header["lines"],
         "bytes": path.stat().st_size, "nodes": len(nodes),
+        "views": 0 if views is None else len(views),
         "hardpoints": sum(n["name"].lower().startswith(HARDPOINT_PREFIX) for n in nodes),
         "featureEdges": feature_count, "visibleEdges": visible_count, "samples": samples,
         "size": size, "rawSize": raw_size, "warnings": warnings,

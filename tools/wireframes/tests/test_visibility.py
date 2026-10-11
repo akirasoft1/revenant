@@ -126,3 +126,46 @@ def test_cull_with_a_far_stray_matches_the_hull_alone():
     assert len(out1) == 768                                   # inner box culled
     # the stray itself is out of view (kept here, dropped later by the stray filter)
     assert synth.segs_set(out2) == synth.segs_set(out1) | synth.segs_set(s2[-3:])
+
+
+# ---- per-view masks (hidden-line removal in the viewer) ------------------------
+
+def box_maps(size=10.0, res=RES):
+    g, segs = scene([synth.subdivided_box(size=size, n=2)])
+    maps = DepthMaps.for_segments(segs, res)
+    maps.add(sample_surface(g, maps.px * 0.5, np.random.default_rng(1)))
+    return maps, segs
+
+
+def test_view_directions_are_26_unit_vectors_in_opposite_pairs():
+    maps, _ = box_maps()
+    v = maps.view_directions()
+    assert v.shape == (26, 3)
+    assert np.allclose(np.linalg.norm(v, axis=1), 1.0, atol=1e-6)
+    assert np.allclose(v[:13], -v[13:])
+    assert len({tuple(np.round(d, 5)) for d in v}) == 26
+
+
+def test_mask_bit_means_visible_from_that_view():
+    maps, _ = box_maps(size=10.0)
+    views = maps.view_directions()
+    # a short edge lying on the +x face and one on the -x face, away from the rims
+    plus = np.array([[5.0, -1.0, 0.0, 5.0, 1.0, 0.0]])
+    minus = np.array([[-5.0, -1.0, 0.0, -5.0, 1.0, 0.0]])
+    mp, mm = int(maps.segments_mask(plus)[0]), int(maps.segments_mask(minus)[0])
+    for i, d in enumerate(views):
+        if d[0] > 0.5:                      # viewer on the +x side
+            assert mp >> i & 1 and not mm >> i & 1, d
+        if d[0] < -0.5:
+            assert mm >> i & 1 and not mp >> i & 1, d
+
+
+def test_mask_is_nonzero_for_kept_segments_and_zero_for_buried_ones():
+    g, segs = scene([synth.subdivided_box(size=10.0, n=2), synth.box(size=2.0)])
+    maps = DepthMaps.for_segments(segs, RES)
+    maps.add(sample_surface(g, maps.px * 0.5, np.random.default_rng(1)))
+    masks = maps.segments_mask(segs)
+    assert masks.dtype == np.uint32
+    # every line the cull keeps is seen from at least one view; the buried box from none
+    assert (masks[maps.segments_visible(segs)] != 0).all()
+    assert (masks[24:] == 0).all() and (masks[:24] != 0).all()

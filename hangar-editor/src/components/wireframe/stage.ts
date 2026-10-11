@@ -18,12 +18,30 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedBundle } from '../../lib/swf';
-import { boundsOf, lodLineCount, markerRadius, needsFrame, orbitFitDistance, sortedLineLengths, type Bounds } from '../../lib/wireframe';
+import {
+  blendViews,
+  boundsOf,
+  lodLineCount,
+  markerRadius,
+  needsFrame,
+  orbitFitDistance,
+  sortedLineLengths,
+  writeLineAlpha,
+  type Bounds,
+} from '../../lib/wireframe';
 import type { WireMarker } from './markers';
 
 const BACKGROUND = 0x07111f; // --t-bg
 const LINE_COLOR = 0x3fd0ff; // --t-accent
 const LINE_OPACITY = 0.32;
+/** With hidden lines removed far fewer lines overlap, so each can be brighter. */
+const LINE_OPACITY_HIDDEN_REMOVED = 0.45;
+/**
+ * The canvas is drawn at this multiple of the display's pixel ratio (capped) and
+ * scaled down by the browser: a 1-pixel GL line becomes a finer, smoother stroke.
+ */
+const SUPERSAMPLE = 2;
+const MAX_PIXEL_RATIO = 3;
 /** Added to the line opacity as short lines are thinned out (drawn small), so the outline stays as bright. */
 const LINE_OPACITY_LOD_BOOST = 0.2;
 const MARKER_COLOR = 0x3be38b; // --t-good
@@ -80,6 +98,12 @@ export class WireframeStage {
   /** Per-line lengths, longest first; null when the bundle is not ordered that way (no thinning). */
   private readonly lengths: Float32Array | null;
   private drawn = -1;
+  /** Per-view visibility baked into the bundle (hidden-line removal), if it has it. */
+  private readonly vis: NonNullable<DecodedBundle['visibility']> | null;
+  /** RGBA per vertex; only alpha changes (a line's visibility for the current view). */
+  private readonly rgba: Uint8Array | null;
+  /** Camera direction the alphas were last computed for (starts as "none"). */
+  private readonly visDir = new Vector3(2, 0, 0);
   private readonly bounds: Bounds;
   /** Orbit target of the opening view (scene space). */
   private readonly home = new Vector3();
@@ -111,11 +135,13 @@ export class WireframeStage {
     this.opts = opts;
     this.positions = decoded.positions;
     this.lengths = sortedLineLengths(decoded.positions);
+    this.vis = decoded.visibility ?? null;
+    this.rgba = this.vis ? new Uint8Array((decoded.positions.length / 3) * 4).fill(255) : null;
     this.bounds = boundsOf(decoded.positions);
     this.markerSize = markerRadius(this.bounds.radius);
 
     this.renderer = new WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(Math.min(Math.max(window.devicePixelRatio || 1, 1) * SUPERSAMPLE, MAX_PIXEL_RATIO));
     this.renderer.setClearColor(BACKGROUND, 1);
     this.canvas = this.renderer.domElement;
     this.canvas.className = 't-wire-canvas';
@@ -131,10 +157,12 @@ export class WireframeStage {
     this.lineMaterial = new LineBasicMaterial({
       color: LINE_COLOR,
       transparent: true,
-      opacity: LINE_OPACITY,
+      opacity: this.vis ? LINE_OPACITY_HIDDEN_REMOVED : LINE_OPACITY,
+      vertexColors: this.vis != null,
       blending: AdditiveBlending,
       depthWrite: false,
     });
+    if (this.rgba) this.lineGeometry.setAttribute('color', new BufferAttribute(this.rgba, 4, true));
     const lines = new LineSegments(this.lineGeometry, this.lineMaterial);
     lines.frustumCulled = false;
     this.ship.add(lines);
@@ -304,15 +332,34 @@ export class WireframeStage {
    * Draw only the lines the panel can resolve at this zoom (the bundle is ordered
    * longest first): zooming in, or a bigger panel, brings the fine detail back.
    */
+  /**
+   * Hidden-line removal: fade each line by whether the baked views nearest the
+   * camera can see it. Recomputed only when the camera direction has moved.
+   */
+  private applyVisibility(): void {
+    if (!this.vis || !this.rgba) return;
+    const d = this.scratch.subVectors(this.camera.position, this.controls.target).normalize();
+    if (d.distanceToSquared(this.visDir) < 1e-7) return;
+    this.visDir.copy(d);
+    writeLineAlpha(this.rgba, this.vis.masks, blendViews(this.vis.views, [d.x, d.y, d.z]));
+    this.lineGeometry.getAttribute('color').needsUpdate = true;
+  }
+
+  /**
+   * Draw only the lines the panel can resolve at this zoom (the bundle is ordered
+   * longest first): zooming in, or a bigger panel, brings the fine detail back.
+   */
   private applyDetail(): void {
+    this.applyVisibility();
     if (!this.lengths || this.height === 0) return;
     const total = this.lengths.length;
     const dist = this.camera.position.distanceTo(this.controls.target);
-    const count = lodLineCount(this.lengths, dist, FOV_DEG, this.height, this.bounds.radius);
+    const count = lodLineCount(this.lengths, dist, FOV_DEG, this.height, this.bounds.radius, this.vis == null);
     if (count === this.drawn) return;
     this.drawn = count;
     this.lineGeometry.setDrawRange(0, count * 2);
-    this.lineMaterial.opacity = LINE_OPACITY + LINE_OPACITY_LOD_BOOST * (total > 0 ? 1 - count / total : 0);
+    // Bundles without hidden-line data: a little brighter as the short lines are thinned out.
+    if (!this.vis) this.lineMaterial.opacity = LINE_OPACITY + LINE_OPACITY_LOD_BOOST * (total > 0 ? 1 - count / total : 0);
   }
 
   /** Put the camera on the opening three-quarter view, framed to the panel's shape. */

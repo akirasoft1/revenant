@@ -346,7 +346,7 @@ unconfigured, errors or takes over 2 s). Each upload may trigger a Wiki vehicle 
 
 * **Validation** (400 `invalid_request` naming the problem): gzip, magic `SWF1`, header JSON with
   the required keys, `kind == "vehicle"`, `lines <= 80,000`, `nodes <= 5,000`, decompressed
-  <= 8 MB, payload length == `lines * 12`, `lines >= 1`, no bytes after the gzip member (browsers' `DecompressionStream` rejects them), numbers finite (huge integers are a 400, not a 500).
+  <= 8 MB, payload length == `lines * 12`, or `lines * 16` when the header has `views` (1–32 `[x, y, z]` vectors: optional per-line visibility masks for the editor's hidden-line removal; the server only checks the shape), `lines >= 1`, no bytes after the gzip member (browsers' `DecompressionStream` rejects them), numbers finite (huge integers are a 400, not a 500).
 * **Slot matching** (`src/slot_match.py`): for each catalog slot id `a/b/c`, nodes named `a`
   (case-insensitive), then for each further segment the nearest descendants of that name
   (BFS, not descending past a match). One -> `{xyz}`; none -> `missing`; several -> the first if

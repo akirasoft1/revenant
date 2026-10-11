@@ -93,4 +93,40 @@ describe('decodeBundle', () => {
     vi.stubGlobal('DecompressionStream', undefined);
     await expect(decodeBundle(gz(rawBundle(HEADER, VALUES)))).rejects.toThrow(/DecompressionStream/);
   });
+
+  /** A bundle with per-view visibility: lines, then one uint32 per line. */
+  function viewsBundle(views: unknown, masks: number[], values = VALUES): Uint8Array {
+    const base = rawBundle({ ...HEADER, views }, values);
+    const out = new Uint8Array(base.length + masks.length * 4);
+    out.set(base, 0);
+    const dv = new DataView(out.buffer);
+    masks.forEach((m, i) => dv.setUint32(base.length + i * 4, m, true));
+    return out;
+  }
+
+  it('reads per-view visibility: the views and one uint32 mask per line', async () => {
+    const views = [[1, 0, 0], [0, -1, 0], [0, 0, 1]];
+    const d = await decodeBundle(gz(viewsBundle(views, [0b101, 0x80000001])));
+    expect(d.positions).toHaveLength(12);
+    expect(Array.from(d.visibility!.views)).toEqual(views.flat());
+    expect(d.visibility!.masks).toBeInstanceOf(Uint32Array);
+    expect(Array.from(d.visibility!.masks)).toEqual([0b101, 0x80000001]);
+  });
+
+  it('a bundle without views has no visibility', async () => {
+    expect((await decodeBundle(gz(rawBundle(HEADER, VALUES)))).visibility).toBeUndefined();
+  });
+
+  it('rejects a views bundle without its masks, and masks without views', async () => {
+    await expect(decodeBundle(gz(viewsBundle([[1, 0, 0]], [])))).rejects.toThrow(/payload is 24 bytes but lines=2 needs 32/);
+    const extra = new Uint8Array(rawBundle(HEADER, VALUES).length + 8);
+    extra.set(rawBundle(HEADER, VALUES), 0);
+    await expect(decodeBundle(gz(extra))).rejects.toThrow(/needs 24/);
+  });
+
+  it('rejects malformed views', async () => {
+    for (const bad of [[], 'x', [[1, 0]], [[1, 0, 'a']], Array.from({ length: 33 }, () => [1, 0, 0]), { a: 1 }]) {
+      await expect(decodeBundle(gz(viewsBundle(bad, [1, 1])))).rejects.toThrow(/views must be/);
+    }
+  });
 });

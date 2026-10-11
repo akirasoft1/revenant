@@ -105,7 +105,19 @@ our own CSS and inline SVG icons, no game assets). Spec:
     selectable text, scrolls inside itself past ~4 lines, focusable). Render mode
     keeps the top-right stats overlay. The port rail below keeps a minimum height
     (`6.5rem`) and scrolls.
-  - **Level of detail (why a small wireframe is not fuzzy):** bundles are
+  - **Hidden-line removal (what makes it read as a drawing):** a bundle built by
+    tool ≥ 1.1.0 carries, per line, which of 26 baked views can see it. Before
+    each draw `stage.ts` blends the baked views near the camera direction
+    (`blendViews`: full weight within `VIEW_FULL_DEG` 18°, none past
+    `VIEW_NONE_DEG` 38°, best view always 1) and writes each line's alpha
+    (`writeLineAlpha`; unseen lines keep `HIDDEN_LINE_ALPHA` 10/255 as a faint
+    ghost) into a per-vertex RGBA attribute, only when the camera direction
+    moved. So the far side and the underside fade out as the ship turns. Without
+    it (older bundles) every line shows through every other and a dense ship is
+    a glowing blob — that is what the first deployed version looked like. The
+    canvas is also **supersampled** (2× the device pixel ratio, capped at 3) so
+    1-pixel GL lines come out finer and smoother.
+  - **Level of detail (older bundles; with hidden-line data only the length rule applies):** bundles are
     ordered longest line first, so the viewer draws a prefix
     (`lodLineCount` in `lib/wireframe.ts`, applied by `stage.ts` before every
     draw): only lines at least `MIN_LINE_PX` (2) CSS pixels long on screen, at
@@ -134,7 +146,9 @@ our own CSS and inline SVG icons, no game assets). Spec:
   - **Decode (`src/lib/swf.ts`, no three.js):** gunzip with `DecompressionStream`
     (8 MB ceiling), then `SWF1` + uint32 LE header length + header JSON + int16 LE
     × `lines * 6`; a coordinate is `center + int16 / 32767 × halfExtent` (glTF
-    Y-up, metres — the same space as the positions' `xyz`). Malformed input
+    Y-up, metres — the same space as the positions' `xyz`). When the header has
+    `views`, one uint32 per line follows and decodes to
+    `visibility: {views, masks}`. Malformed input
     rejects with `SwfError`.
   - **Viewer (`src/components/wireframe/`):** `WireframeViewer` (props `bundle`,
     `markers`, `selected`, `onSelect`, plus `onError`, `label`) and

@@ -150,3 +150,54 @@ def test_read_rejects_bad_bundles(data):
 def test_read_missing_file_raises_bundle_error(tmp_path):
     with pytest.raises(BundleError):
         read_bundle(tmp_path / "nope.swf.gz")
+
+
+# ---- optional per-view visibility ---------------------------------------------
+
+VIEWS = np.array([[1.0, 0, 0], [0, 1.0, 0], [0, 0, -1.0]])
+
+
+def test_views_and_masks_round_trip(tmp_path):
+    from wireframes.bundle import read_bundle_full
+    segs = random_segs(9)
+    masks = np.arange(9, dtype=np.uint32) % 8
+    header = write(tmp_path / "v.swf.gz", segs, views=VIEWS, masks=masks)
+    assert header["views"] == VIEWS.tolist()
+    got_header, pos, got = read_bundle_full(tmp_path / "v.swf.gz")
+    assert got_header == header
+    assert got.dtype == np.uint32 and got.tolist() == masks.tolist()
+    assert np.abs(pos - segs).max() <= header["halfExtent"] / 32767 * 0.51 + 1e-6
+    # the plain reader still works and the layout is lines * 12 then lines * 4
+    assert read_bundle(tmp_path / "v.swf.gz")[0] == header
+    raw = gzip.decompress((tmp_path / "v.swf.gz").read_bytes())
+    (hlen,) = struct.unpack_from("<I", raw, 4)
+    assert len(raw) - 8 - hlen == 9 * 16
+    assert np.frombuffer(raw[-36:], dtype="<u4").tolist() == masks.tolist()
+
+
+def test_bundle_without_views_has_no_masks(tmp_path):
+    from wireframes.bundle import read_bundle_full
+    write(tmp_path / "p.swf.gz", random_segs(4))
+    header, _pos, masks = read_bundle_full(tmp_path / "p.swf.gz")
+    assert "views" not in header and masks is None
+
+
+@pytest.mark.parametrize("kw", [
+    dict(views=VIEWS),                                              # masks missing
+    dict(masks=np.zeros(5, dtype=np.uint32)),                       # views missing
+    dict(views=VIEWS, masks=np.zeros(4, dtype=np.uint32)),          # wrong mask count
+    dict(views=np.zeros((33, 3)), masks=np.zeros(5, dtype=np.uint32)),
+    dict(views=np.zeros((0, 3)), masks=np.zeros(5, dtype=np.uint32)),
+    dict(views=np.array([[np.nan, 0, 0]]), masks=np.zeros(5, dtype=np.uint32)),
+])
+def test_bad_views_or_masks_are_refused(tmp_path, kw):
+    with pytest.raises(ValueError):
+        write(tmp_path / "bad.swf.gz", random_segs(5), **kw)
+    assert not list(tmp_path.iterdir())
+
+
+def test_read_rejects_a_views_bundle_with_a_short_payload(tmp_path):
+    write(tmp_path / "v.swf.gz", random_segs(3), views=VIEWS, masks=np.zeros(3, dtype=np.uint32))
+    raw = gzip.decompress((tmp_path / "v.swf.gz").read_bytes())
+    with pytest.raises(BundleError, match="payload"):
+        read_bundle(gzip.compress(raw[:-4]))

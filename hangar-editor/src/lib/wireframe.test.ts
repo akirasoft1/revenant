@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   VISUAL_PREF_KEY,
   boundsOf,
+  HIDDEN_LINE_ALPHA,
   MAX_LINES_PER_PX,
+  blendViews,
+  writeLineAlpha,
   MIN_LOD_LINES,
   fitDistance,
   lineCountAtLeast,
@@ -300,5 +303,73 @@ describe('level of detail', () => {
     expect(lodLineCount(lengths, 50, 90, 100, 750)).toBe(60_000); // 1500 px across: everything
     expect(lodLineCount(lengths, 50, 90, 100, 1)).toBe(MIN_LOD_LINES); // a speck: the floor
     expect(lodLineCount(lengths, 50, 90, 100, 0)).toBe(60_000); // unknown size: no cap
+    // With hidden-line data the per-pixel cap is off: most lines are hidden for any one view anyway.
+    expect(lodLineCount(lengths, 50, 90, 100, 125, false)).toBe(60_000);
+    expect(lodLineCount(lengths, 50, 90, 100, 1, false)).toBe(60_000);
+  });
+});
+
+describe('hidden-line removal', () => {
+  const norm = (v: number[]) => {
+    const l = Math.hypot(...v);
+    return v.map((x) => x / l);
+  };
+  // +x, +y, -x and the diagonal between +x and +y
+  const VIEWS = [1, 0, 0, 0, 1, 0, -1, 0, 0, ...norm([1, 1, 0])];
+
+  it('blendViews: looking straight down a baked view uses it at full weight; far views drop out', () => {
+    const b = blendViews(VIEWS, [1, 0, 0]);
+    expect(b.bits[0]).toBe(1);
+    expect(b.weights[0]).toBe(1);
+    expect(b.bits).not.toContain(2); // +y is 90 degrees away
+    expect(b.bits).not.toContain(4); // -x is behind
+    expect(b.bits).not.toContain(8); // the diagonal is 45 degrees away: past the cut-off
+  });
+
+  it('blendViews: between two views both contribute, the nearer one more, and the best is always 1', () => {
+    const a = (30 * Math.PI) / 180; // 30 degrees from +x toward +y: 15 from the diagonal
+    const b = blendViews(VIEWS, [Math.cos(a), Math.sin(a), 0]);
+    const w = Object.fromEntries(b.bits.map((bit, i) => [bit, b.weights[i]]));
+    expect(w[8]).toBe(1);
+    expect(w[1]).toBeGreaterThan(0);
+    expect(w[1]).toBeLessThan(1);
+    expect(w[2]).toBeUndefined();
+  });
+
+  it('blendViews: when no view is close enough the nearest one is used alone', () => {
+    expect(blendViews([1, 0, 0, -1, 0, 0], [0, 1, 0.001])).toEqual({ bits: [1], weights: [1] });
+    expect(blendViews([], [1, 0, 0])).toEqual({ bits: [], weights: [] });
+  });
+
+  it('blendViews: bit 31 is usable (unsigned)', () => {
+    const views = new Float32Array(32 * 3);
+    views[31 * 3] = 1; // only view 31 points along +x; the rest are zero vectors
+    const b = blendViews(views, [1, 0, 0]);
+    expect(b.bits).toEqual([2 ** 31]);
+    const rgba = new Uint8Array(16).fill(255);
+    writeLineAlpha(rgba, new Uint32Array([0x80000000, 0x7fffffff]), b);
+    expect([rgba[3], rgba[7], rgba[11], rgba[15]]).toEqual([255, 255, HIDDEN_LINE_ALPHA, HIDDEN_LINE_ALPHA]);
+  });
+
+  it('writeLineAlpha: a line gets the largest weight among the views that see it; unseen lines keep a faint ghost', () => {
+    const rgba = new Uint8Array(4 * 8).fill(200);
+    const masks = new Uint32Array([0b01, 0b10, 0b11, 0b100]);
+    writeLineAlpha(rgba, masks, { bits: [1, 2], weights: [0.5, 1] });
+    const alpha = [0, 1, 2, 3].map((l) => [rgba[l * 8 + 3], rgba[l * 8 + 7]]);
+    expect(alpha).toEqual([
+      [128, 128],
+      [255, 255],
+      [255, 255],
+      [HIDDEN_LINE_ALPHA, HIDDEN_LINE_ALPHA],
+    ]);
+    // colour bytes are left alone
+    expect(rgba[0]).toBe(200);
+    expect(rgba[4]).toBe(200);
+  });
+
+  it('writeLineAlpha: no active view leaves every line a ghost, and short buffers are not overrun', () => {
+    const rgba = new Uint8Array(8).fill(255);
+    writeLineAlpha(rgba, new Uint32Array([1, 1, 1]), { bits: [], weights: [] });
+    expect([rgba[3], rgba[7]]).toEqual([HIDDEN_LINE_ALPHA, HIDDEN_LINE_ALPHA]);
   });
 });

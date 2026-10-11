@@ -19,6 +19,8 @@ DIRECTIONS = np.array([d for d in itertools.product((-1, 0, 1), repeat=3) if any
                       dtype=np.float64)
 TEST_FRACTIONS = (0.25, 0.5, 0.75)      # 3 test points per edge
 SAMPLES_PER_PIXEL_SIDE = 2              # surface sample spacing = pixel / 2
+MASK_EPS_PX = 3.0                       # per-view front tolerance (see DepthMaps.point_mask)
+MASK_STEEP_PX = 6.0                     # how far a pixel's own front may sit behind the closed front
 _BLOCK = 1 << 15                        # points projected at a time (stays in cache)
 _YIELD = 1 << 18                        # surface samples handed over at a time
 
@@ -136,6 +138,52 @@ class DepthMaps:
             index, depth = self._project(points[s:s + _BLOCK])
             front = (depth <= near[index] + self.eps) | (depth >= far[index] - self.eps)
             out[s:s + _BLOCK] = front.any(axis=0)
+        return out
+
+    def view_directions(self) -> np.ndarray:
+        """(26, 3) unit vectors pointing from the ship toward the viewer, one per
+        bit of :meth:`segments_mask`: bit ``p`` (< 13) is the view that sees the
+        near side of pair ``p`` (viewer at ``-w``), bit ``13 + p`` the far side."""
+        w = self._proj[2 * self.pairs:].astype(np.float64)
+        return np.concatenate([-w, w])
+
+    def point_mask(self, points) -> np.ndarray:
+        """uint32 per point: bit ``i`` set when the point is at the front of view ``i``.
+
+        Per view this is more forgiving than :meth:`visible` (which only needs ONE
+        of 26 views to agree, so it can afford the closed 3x3 map). A surface seen
+        at a steep angle changes depth by more than a pixel between neighbouring
+        pixels, and the closed map would make it hide itself. So a point also
+        counts as front when it is within ``MASK_EPS_PX`` pixels of the front-most
+        sample in its OWN pixel, provided that sample is itself within
+        ``MASK_STEEP_PX`` pixels of the closed front (otherwise the pixel is a
+        pinhole between samples and its own front-most sample is something
+        buried deeper).
+        """
+        points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+        near_c, far_c = self._close()
+        eps = np.float32(MASK_EPS_PX * self.px)
+        steep = np.float32(MASK_STEEP_PX * self.px)
+        out = np.zeros(len(points), dtype=np.uint32)
+        bits = (np.uint32(1) << np.arange(2 * self.pairs, dtype=np.uint32))[:, None]
+        for s in range(0, len(points), _BLOCK):
+            index, depth = self._project(points[s:s + _BLOCK])
+            nc, fc = near_c[index], far_c[index]
+            near = np.minimum(self._near[index], nc + steep)    # own pixel, unless it is a pinhole
+            far = np.maximum(self._far[index], fc - steep)
+            front = np.concatenate([(depth <= nc + self.eps) | (depth <= near + eps),
+                                    (depth >= fc - self.eps) | (depth >= far - eps)])  # (26, n)
+            out[s:s + _BLOCK] = np.bitwise_or.reduce(np.where(front, bits, np.uint32(0)), axis=0)
+        return out
+
+    def segments_mask(self, segs) -> np.ndarray:
+        """uint32 per segment: the views (see :meth:`view_directions`) in which
+        any of its test points is at the front. Zero = hidden from all 26."""
+        segs = np.asarray(segs).reshape(-1, 6)
+        a, b = segs[:, :3], segs[:, 3:]
+        out = np.zeros(len(segs), dtype=np.uint32)
+        for f in TEST_FRACTIONS:
+            out |= self.point_mask(a * (1.0 - f) + b * f)
         return out
 
     def segments_visible(self, segs) -> np.ndarray:

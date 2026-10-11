@@ -214,15 +214,100 @@ export const MAX_LINES_PER_PX = 40;
 /**
  * Lines to draw at this zoom for a ship of `radius`: those at least MIN_LINE_PX
  * long on screen, capped at MAX_LINES_PER_PX of on-screen size (longest first),
- * and never fewer than MIN_LOD_LINES.
+ * and never fewer than MIN_LOD_LINES. `capDensity: false` skips the per-pixel cap:
+ * a bundle with per-view visibility already hides most lines for any one view.
  */
-export function lodLineCount(lengths: ArrayLike<number>, distance: number, vfovDeg: number, heightPx: number, radius: number): number {
+export function lodLineCount(
+  lengths: ArrayLike<number>,
+  distance: number,
+  vfovDeg: number,
+  heightPx: number,
+  radius: number,
+  capDensity = true,
+): number {
   const total = lengths.length;
   const wpp = worldPerPixel(distance, vfovDeg, heightPx);
   if (wpp <= 0) return total;
   const byLength = lineCountAtLeast(lengths, MIN_LINE_PX * wpp);
-  const byDensity = radius > 0 ? Math.floor(((2 * radius) / wpp) * MAX_LINES_PER_PX) : total;
+  const byDensity = capDensity && radius > 0 ? Math.floor(((2 * radius) / wpp) * MAX_LINES_PER_PX) : total;
   return Math.min(total, Math.max(Math.min(byLength, byDensity), MIN_LOD_LINES));
+}
+
+// ----- hidden-line removal (per-view visibility baked into the bundle) -----
+
+/** A baked view counts fully when the camera is within this angle of it... */
+export const VIEW_FULL_DEG = 18;
+/** ...and not at all beyond this one. The 26 baked views are at most ~28 degrees from any camera direction. */
+export const VIEW_NONE_DEG = 38;
+/** Opacity factor (0-255) of a line the current view cannot see: a faint ghost, so the ship keeps its volume. */
+export const HIDDEN_LINE_ALPHA = 10;
+
+export interface ViewBlend {
+  /** Bit of each baked view that contributes to the current camera direction. */
+  bits: number[];
+  /** Its weight in (0, 1], scaled so the best view is 1. */
+  weights: number[];
+}
+
+/**
+ * Which baked views (unit vectors toward the viewer, `views` = n*3 floats) stand
+ * in for the camera direction `dir` (unit, ship toward camera), and how much.
+ * Weights fall off smoothly between VIEW_FULL_DEG and VIEW_NONE_DEG, so lines
+ * fade in and out as the ship turns instead of popping. If no view is close
+ * enough (a bundle with few views), the nearest one is used alone.
+ */
+export function blendViews(views: ArrayLike<number>, dir: ArrayLike<number>): ViewBlend {
+  const n = Math.min(Math.floor(views.length / 3), 32);
+  const full = Math.cos((VIEW_FULL_DEG * Math.PI) / 180);
+  const none = Math.cos((VIEW_NONE_DEG * Math.PI) / 180);
+  const bits: number[] = [];
+  const weights: number[] = [];
+  let top = 0;
+  let nearest = -1;
+  let nearestDot = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const dot = dir[0] * views[i * 3] + dir[1] * views[i * 3 + 1] + dir[2] * views[i * 3 + 2];
+    if (!Number.isFinite(dot)) continue;
+    if (dot > nearestDot) {
+      nearestDot = dot;
+      nearest = i;
+    }
+    let t = (dot - none) / (full - none);
+    if (t <= 0) continue;
+    t = Math.min(t, 1);
+    t = t * t * (3 - 2 * t);
+    bits.push(2 ** i);
+    weights.push(t);
+    if (t > top) top = t;
+  }
+  if (bits.length === 0) return nearest < 0 ? { bits: [], weights: [] } : { bits: [2 ** nearest], weights: [1] };
+  return { bits, weights: weights.map((w) => w / top) };
+}
+
+/**
+ * Write each line's alpha (0-255) for the blend into `rgba` (4 bytes per vertex,
+ * two vertices per line; only the alpha bytes are touched): the largest weight
+ * among the views that can see the line, never below HIDDEN_LINE_ALPHA.
+ */
+export function writeLineAlpha(rgba: Uint8Array, masks: Uint32Array, blend: ViewBlend): void {
+  const { bits, weights } = blend;
+  // Unsigned 32-bit masks of the active views, strongest first, so the scan can stop early.
+  const order = bits.map((_, i) => i).sort((x, y) => weights[y] - weights[x]);
+  const b = order.map((i) => bits[i] >>> 0);
+  const a = order.map((i) => Math.max(HIDDEN_LINE_ALPHA, Math.round(weights[i] * 255)));
+  const lines = Math.min(masks.length, Math.floor(rgba.length / 8));
+  for (let l = 0; l < lines; l++) {
+    const m = masks[l];
+    let v = HIDDEN_LINE_ALPHA;
+    for (let k = 0; k < b.length; k++) {
+      if ((m & b[k]) !== 0) {
+        v = a[k];
+        break;
+      }
+    }
+    rgba[l * 8 + 3] = v;
+    rgba[l * 8 + 7] = v;
+  }
 }
 
 // ----- render on demand -----

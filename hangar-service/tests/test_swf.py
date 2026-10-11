@@ -97,3 +97,37 @@ def test_children_before_parents_allowed():
 def test_non_finite_and_header_fields(over, frag):
     with pytest.raises(swf.SwfError, match=frag):
         swf.parse(make_bundle(header_overrides=over))
+
+
+# ---- optional per-view visibility (views + uint32 per line) ---------------------
+
+def _views_bundle(lines=2, views=None, extra=4, **kw):
+    import struct
+    payload = struct.pack(f"<{lines * 6}h", *([100] * (lines * 6))) + b"\x01\x00\x00\x00" * (lines * extra // 4)
+    return make_bundle(lines=lines, payload=payload,
+                       header_extra={"views": [[1, 0, 0], [0, -1, 0]] if views is None else views}, **kw)
+
+
+def test_views_bundle_is_accepted():
+    b = swf.parse(_views_bundle(lines=3))
+    assert b.lines == 3 and b.header["views"] == [[1, 0, 0], [0, -1, 0]]
+
+
+def test_views_bundle_needs_the_mask_payload():
+    with pytest.raises(swf.SwfError, match="needs 32"):
+        swf.parse(_views_bundle(lines=2, extra=0))
+
+
+def test_mask_payload_without_views_is_rejected():
+    import struct
+    payload = struct.pack("<12h", *([100] * 12)) + b"\x00" * 8
+    with pytest.raises(swf.SwfError, match="needs 24"):
+        swf.parse(make_bundle(lines=2, payload=payload))
+
+
+@pytest.mark.parametrize("views", [
+    [], "x", [[1, 0]], [[1, 0, "a"]], [[1, 0, float("nan")]], [[1, 0, 0]] * 33, {"a": 1}, [[True, 0, 0]],
+])
+def test_bad_views_rejected(views):
+    with pytest.raises(swf.SwfError, match="views"):
+        swf.parse(_views_bundle(views=views))

@@ -441,15 +441,14 @@ function ModelsTable() {
                   {rows.map((m) => (
                     <tr key={`${m.kind}:${m.className}`} data-testid="model-row">
                       <td>{m.vehicleUuid ? m.vehicleName : <span className="muted">no matching ship</span>}</td>
-                      <td className="mono">{m.className}</td>
+                      <td className="mono models-class">{m.className}</td>
                       <td>{m.lines.toLocaleString()}</td>
-                      <td>{fmtBytes(m.bytes)}</td>
+                      <td className="nowrap">{fmtBytes(m.bytes)}</td>
                       <td>{m.slots.matched}</td>
                       <td title={m.slots.missing.join(', ')}>{m.slots.missing.length}</td>
                       <td title={m.slots.ambiguous.join(', ')}>{m.slots.ambiguous.length}</td>
-                      <td>
+                      <td className="nowrap" title={m.uploadedBy ? `Uploaded by ${m.uploadedBy}` : undefined}>
                         {fmtDate(m.uploadedAt)}
-                        {m.uploadedBy ? <span className="muted small"> · {m.uploadedBy}</span> : null}
                       </td>
                       <td className="nowrap">
                         {m.vehicleUuid && (

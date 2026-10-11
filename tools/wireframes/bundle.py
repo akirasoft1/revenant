@@ -3,9 +3,15 @@
 gzip of::
 
     b"SWF1" | uint32 LE headerLen | header JSON (UTF-8) | int16 LE x (lines * 6)
+           [| uint32 LE x lines]                    (only when the header has "views")
 
 Each line is two points (x, y, z, x, y, z); a coordinate decodes as
 ``center[axis] + value / 32767 * halfExtent``.
+
+Optional per-view visibility: header ``views`` is a list of up to 32 unit
+vectors pointing from the ship toward a viewer, and the trailing uint32 per line
+has bit ``i`` set when the line can be seen from ``views[i]``. A viewer uses it
+to hide the lines the current camera cannot see (hidden-line removal).
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ MAGIC = b"SWF1"
 FORMAT = 1
 SPACE = "gltf-y-up-m"
 MAX_NODES = 5000
+MAX_VIEWS = 32
 BUILD_KEYS = ("creaseDeg", "minEdgeFrac", "maxLines", "visibility", "depthRes")
 HEADER_KEYS = ("format", "kind", "className", "sourceName", "space", "center", "halfExtent",
                "lines", "nodes", "build")
@@ -52,12 +59,15 @@ def _check_nodes(nodes) -> list[dict]:
 
 
 def write_bundle(path, *, kind: str, class_name: str, source_name: str, segs, nodes,
-                 build: dict) -> dict:
+                 build: dict, views=None, masks=None) -> dict:
     """Quantise ``segs`` (Kx6, metres) and write the bundle. Returns the header.
 
     ``build`` must hold exactly ``creaseDeg, minEdgeFrac, maxLines, visibility,
     depthRes``; ``tool`` is added here. The file is written to a temporary name
     and renamed, so a failed build never leaves a half-written bundle.
+
+    ``views`` (Vx3 unit vectors, V <= 32) with ``masks`` (one uint32 per segment)
+    adds the optional per-view visibility; give both or neither.
     """
     segs = np.asarray(segs, dtype=np.float64)
     if segs.ndim != 2 or segs.shape[1] != 6:
@@ -69,6 +79,18 @@ def write_bundle(path, *, kind: str, class_name: str, source_name: str, segs, no
     if set(build) != set(BUILD_KEYS):
         raise ValueError(f"build must have exactly the keys {', '.join(BUILD_KEYS)}")
     nodes = _check_nodes(nodes)
+    if (views is None) != (masks is None):
+        raise ValueError("views and masks go together")
+    if views is not None:
+        views = np.asarray(views, dtype=np.float64)
+        masks = np.asarray(masks)
+        if views.ndim != 2 or views.shape[1] != 3 or not 1 <= len(views) <= MAX_VIEWS:
+            raise ValueError(f"views must be 1 to {MAX_VIEWS} [x, y, z] vectors")
+        if not np.isfinite(views).all():
+            raise ValueError("views contain NaN or infinite values")
+        if masks.shape != (len(segs),):
+            raise ValueError("masks must have one value per segment")
+        masks = masks.astype("<u4")
 
     pts = segs.reshape(-1, 3)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
@@ -90,9 +112,13 @@ def write_bundle(path, *, kind: str, class_name: str, source_name: str, segs, no
         "nodes": nodes,
         "build": {**{k: build[k] for k in BUILD_KEYS}, "tool": f"wireframes/{__version__}"},
     }
+    if views is not None:
+        header["views"] = [[round(float(v), 6) + 0.0 for v in row] for row in views]
     head = json.dumps(header, separators=(",", ":"), ensure_ascii=False,
                       allow_nan=False).encode("utf-8")
     raw = MAGIC + struct.pack("<I", len(head)) + head + quant.tobytes()
+    if masks is not None:
+        raw += masks.tobytes()
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9, mtime=0, filename="") as gz:
         gz.write(raw)
@@ -111,6 +137,12 @@ def write_bundle(path, *, kind: str, class_name: str, source_name: str, segs, no
 
 def read_bundle(src) -> tuple[dict, np.ndarray]:
     """(header, Kx6 float32 positions in metres) from a path or bytes."""
+    header, pos, _masks = read_bundle_full(src)
+    return header, pos
+
+
+def read_bundle_full(src) -> tuple[dict, np.ndarray, np.ndarray | None]:
+    """(header, Kx6 float32 positions, per-line uint32 view masks or None)."""
     if isinstance(src, (bytes, bytearray, memoryview)):
         data = bytes(src)
     else:
@@ -142,8 +174,11 @@ def read_bundle(src) -> tuple[dict, np.ndarray]:
     except (KeyError, TypeError, ValueError) as e:
         raise BundleError(f"header lacks a usable lines / center / halfExtent ({e})") from e
     payload = raw[8 + hlen:]
-    if lines < 0 or len(payload) != lines * 12:
-        raise BundleError(f"payload is {len(payload)} bytes; {lines} lines need {lines * 12}")
-    quant = np.frombuffer(payload, dtype="<i2").reshape(lines, 6).astype(np.float64)
+    has_views = "views" in header
+    need = lines * (16 if has_views else 12)
+    if lines < 0 or len(payload) != need:
+        raise BundleError(f"payload is {len(payload)} bytes; {lines} lines need {need}")
+    quant = np.frombuffer(payload, dtype="<i2", count=lines * 6).reshape(lines, 6).astype(np.float64)
     pos = np.tile(center, 2) + quant / 32767.0 * half
-    return header, pos.astype(np.float32)
+    masks = np.frombuffer(payload, dtype="<u4", offset=lines * 12).copy() if has_views else None
+    return header, pos.astype(np.float32), masks

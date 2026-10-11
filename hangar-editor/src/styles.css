@@ -842,8 +842,21 @@ h1 .member-id {
 .nowrap {
   white-space: nowrap;
 }
+/* The model list never spills out of its panel: compact cells, and a scroll bar as the last resort. */
+.table-wrap {
+  overflow-x: auto;
+}
+.models-table {
+  font-size: 0.85rem;
+}
 .models-table th,
 .models-table td {
-  padding: 0.3rem 0.5rem;
+  padding: 0.3rem 0.4rem;
   text-align: left;
+}
+.models-table th .btn {
+  padding-inline: 0.4rem;
+}
+.models-class {
+  overflow-wrap: anywhere;
 }
