@@ -54,7 +54,7 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | POST | `/v1/import/spviewer/apply[?member=]` | `{rows: [{rowIndex, mode: "new"\|"existing", shipId?, nickname?}], file}` | `{ships: [Ship], errors: [{rowIndex, error, message}]}` — see "spviewer import" |
 | POST | `/v1/import/htf/preview[?member=]` | `{file: <HTF / HangarXPLOR array>}` | `{rows: [{index, kind: new\|existing\|link\|skipped, rsiKey, vehicle, nickname, pledge, existing, linkCandidates, reason, ...}], missing: [{shipId, label, rsiKey, hasFittings, defaultRemove}], partial, summary}` — nothing stored; see "HTF import" |
 | POST | `/v1/import/htf/apply[?member=]` | `{file, choices?: {links: {"<row index>": shipId\|"new"}, remove: [shipId]}}` | `{rows: [{index, result: created\|linked\|updated\|unchanged\|skipped\|error, shipId?, error?}], removed: [shipId], ledgerSynced}` |
-| GET | `/v1/pledges/leaderboard` | – | `{entries: [{member, displayName\|null, totals: {USD: n, ...}, pledges, ships, lti, topPledge: {name, amount, currency}\|null, lastImport}], caveat}` |
+| GET | `/v1/pledges/leaderboard` | – | `{entries: [{member, displayName\|null, totals: {USD: n, ...}, pledges, ships, lti, topPledge: {name (end-state ships, e.g. "Ironclad Assault" for a CCU'd Aquila pledge), pledgeName (RSI title), amount, currency}\|null, lastImport}], caveat}` |
 
 **Every `/v1/...` route is also served at `/api/v1/...`** (same handler, same
 auth). Service callers use `/v1` on the `run.app` URL; the browser editor uses

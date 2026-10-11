@@ -315,7 +315,8 @@ export interface LeaderboardEntry {
   pledges: number;
   ships: number;
   lti: number;
-  topPledge: { name: string | null; amount: number; currency: string } | null;
+  /** `name` = the pledge's END-STATE ships (a CCU'd pledge keeps its original pledge name); `pledgeName` = RSI's pledge title. */
+  topPledge: { name: string | null; pledgeName?: string | null; amount: number; currency: string } | null;
   lastImport: string | null;
 }
 

@@ -1,4 +1,5 @@
 """HTF (HangarXPLOR) import routes, pledge ledger, leaderboard, hangar pledgeSummary."""
+from src import htf
 import copy
 import json
 import logging
@@ -292,7 +293,11 @@ def test_ledger_counts_unmatched_pledges_and_distinct_pledge_once(client, repo):
     lb = client.get("/v1/pledges/leaderboard", headers=H(None)).json()["entries"][0]
     # 350 + 1234.50 (once, three ships) + 350 (Kraken) + 0 (garbage) ; EUR 45
     assert lb["totals"] == {"USD": 1934.5, "EUR": 45.0} and lb["pledges"] == 5 and lb["ships"] == 7
-    assert lb["lti"] == 5 and lb["topPledge"] == {"name": "Pisces Fleet Package", "amount": 1234.5, "currency": "USD"}
+    # labelled by the package's end-state ships, the RSI pledge name kept alongside
+    assert lb["lti"] == 5 and lb["topPledge"] == {"name": htf.pledge_label(led["2002"]),
+                                                   "pledgeName": "Pisces Fleet Package",
+                                                   "amount": 1234.5, "currency": "USD"}
+    assert "Pisces" in lb["topPledge"]["name"] and lb["topPledge"]["name"] != "Pisces Fleet Package"
 
 
 def test_partial_import_does_not_delete_ledger(client, repo):

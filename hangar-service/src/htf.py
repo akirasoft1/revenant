@@ -268,6 +268,23 @@ def ledger_sync(existing: list[dict], incoming: list[dict], partial: bool,
                             if r["pledgeId"] not in inc_ids and r["pledgeId"] not in keep_ids]
 
 
+def pledge_label(pledge: dict) -> str | None:
+    """What the member owns from this pledge, by its END-STATE ships: a CCU'd
+    pledge keeps its original ``pledge_name`` ("Standalone Ships - Constellation
+    Aquila") while the ship in it is now an Ironclad Assault. Duplicates are
+    counted ("2× Pisces C8"), at most three names are listed; the pledge name
+    is the fallback when no ship names were recorded."""
+    counts: dict[str, int] = {}
+    for sh in pledge.get("ships") or []:
+        n = (sh.get("name") or "").strip()
+        if n:
+            counts[n] = counts.get(n, 0) + 1
+    if not counts:
+        return pledge.get("name")
+    parts = [f"{c}× {n}" if c > 1 else n for n, c in counts.items()]
+    return " + ".join(parts[:3]) + (f" + {len(parts) - 3} more" if len(parts) > 3 else "")
+
+
 def pledge_summary(pledges: list[dict]) -> dict | None:
     if not pledges:
         return None
@@ -279,7 +296,7 @@ def pledge_summary(pledges: list[dict]) -> dict | None:
         if amt is None or not cur:
             continue
         totals[cur] = round(totals.get(cur, 0.0) + amt, 2)
-        cand = {"name": p.get("name"), "amount": amt, "currency": cur}
+        cand = {"name": pledge_label(p), "pledgeName": p.get("name"), "amount": amt, "currency": cur}
         if top is None or (cur == "USD", amt) > (top["currency"] == "USD", top["amount"]):
             top = cand
     imports = [p["importedAt"] for p in pledges if p.get("importedAt")]

@@ -365,7 +365,8 @@ def test_pledge_summary_totals_per_currency():
                             prec("P3", 20.5, "USD", lti=True, name="Small")])
     assert s["totals"] == {"USD": 120.5, "EUR": 45.0}
     assert s["pledges"] == 3 and s["ships"] == 5 and s["lti"] == 4
-    assert s["topPledge"] == {"name": "Big", "amount": 100.0, "currency": "USD"}
+    # ships carry no names here, so the label falls back to the pledge name
+    assert s["topPledge"] == {"name": "Big", "pledgeName": "Big", "amount": 100.0, "currency": "USD"}
     assert s["lastImport"] == "2026-03-01T00:00:00+00:00"
 
 
@@ -441,3 +442,27 @@ def test_ledger_sync_keep_ids_not_deleted():
 def test_pledge_summary_counts_lti_ships():
     out = htf.pledge_summary([prec("A", 1, "USD", lti=True, nships=3), prec("B", 1, "USD", nships=2)])
     assert out["ships"] == 5 and out["lti"] == 3
+
+
+def _named(pid, amount, pledge_name, ship_names):
+    return {"pledgeId": pid, "name": pledge_name, "cost": {"amount": amount, "currency": "USD", "raw": ""},
+            "lti": False, "importedAt": "2026-10-11T00:00:00+00:00",
+            "ships": [{"shipCode": n.replace(" ", "_"), "name": n, "matched": True} for n in ship_names]}
+
+
+def test_top_pledge_is_labelled_by_end_state_ship_not_pledge_name():
+    # A CCU'd pledge keeps its original pledge_name ("...Constellation Aquila") while the
+    # ship in it is now an Ironclad Assault -- the label must show what the member owns.
+    s = htf.pledge_summary([_named("110411072", 650.0, "Standalone Ships - Constellation Aquila", ["Ironclad Assault"]),
+                            _named("531965", 185.0, "Arbiter - LTI", ["F7C Hornet Mk II"])])
+    assert s["topPledge"] == {"name": "Ironclad Assault", "pledgeName": "Standalone Ships - Constellation Aquila",
+                              "amount": 650.0, "currency": "USD"}
+
+
+def test_top_pledge_label_for_packages():
+    two = htf.pledge_summary([_named("1", 600.0, "Pkg", ["Starfarer", "Cutlass Black"])])
+    assert two["topPledge"]["name"] == "Starfarer + Cutlass Black"
+    dup = htf.pledge_summary([_named("1", 600.0, "Pkg", ["Pisces C8", "Pisces C8"])])
+    assert dup["topPledge"]["name"] == "2× Pisces C8"
+    many = htf.pledge_summary([_named("1", 900.0, "Pkg", ["A", "B", "C", "D", "E"])])
+    assert many["topPledge"]["name"] == "A + B + C + 2 more"
