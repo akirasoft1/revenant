@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, fitSlot, getSlotOptions, importApply, importPreview, loginUrl, resetSlot } from './client';
+import { ApiError, fitSlot, getSlotOptions, importApply, getVehiclePositions, importPreview, loginUrl, resetShip, resetSlot } from './client';
 import { mockFetch } from '../test/utils';
 
 describe('api client', () => {
@@ -26,6 +26,23 @@ describe('api client', () => {
       credentials: 'same-origin',
     });
     expect(calls[1]).toMatchObject({ url: '/api/v1/members/1/ships/s/slots/turret%2Fhardpoint_class_2', method: 'DELETE' });
+  });
+
+  it('resetShip POSTs slot "all" to the ship reset route', async () => {
+    const { calls } = mockFetch({ 'POST /api/v1/members': { body: { ship: { shipId: 's' }, changes: [] } } });
+    await resetShip('1', 's');
+    expect(calls[0]).toMatchObject({
+      url: '/api/v1/members/1/ships/s/reset',
+      method: 'POST',
+      body: { slot: 'all' },
+      credentials: 'same-origin',
+    });
+  });
+
+  it('getVehiclePositions GETs the catalog positions route', async () => {
+    const { calls } = mockFetch({ 'GET /api/v1/catalog': { body: {} } });
+    await getVehiclePositions('abc-123');
+    expect(calls[0]).toMatchObject({ url: '/api/v1/catalog/vehicles/abc-123/positions', method: 'GET' });
   });
 
   it('accepts an enveloped or bare slot-options response', async () => {

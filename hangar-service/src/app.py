@@ -177,6 +177,10 @@ def _not_found(message: str) -> ApiError:
     return ApiError(404, "not_found", message)
 
 
+IMAGE_ERROR_MAX_BODY = 4096
+_IMAGE_CONTEXT_RE = re.compile(r"[a-z][a-z-]{0,39}")
+
+
 def _bad(message: str) -> ApiError:
     return ApiError(400, "invalid_request", message)
 
@@ -925,9 +929,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     @router.get("/catalog/vehicles/{uuid}/positions")
     async def vehicle_positions(uuid: str, principal: Principal = Depends(get_principal)):
-        if await app.state.catalog.vehicle(uuid) is None:
+        vehicle = await app.state.catalog.vehicle(uuid)
+        if vehicle is None:
             raise _not_found(f"no vehicle {uuid!r}")
-        return await app.state.positions.get(uuid) or {}
+        return await app.state.positions.get(vehicle["uuid"]) or {}
 
     @router.get("/catalog/items")
     async def list_items(type: str | None = None, size: str | None = None, q: str | None = None,
@@ -1137,20 +1142,33 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if principal.kind != "session":
             raise Forbidden("image-error reports come from browser sessions only")
         check_same_origin(request, config.public_origin)
+        limiter_key = principal.acting_member or principal.subject
+        if not app.state.image_error_limiter.allow(limiter_key):
+            return _err(429, "rate_limited", "too many image-error reports; try again in a minute")
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                too_big = int(declared) > IMAGE_ERROR_MAX_BODY
+            except ValueError:
+                raise _bad("invalid Content-Length") from None
+            if too_big:
+                raise _bad(f"body must be at most {IMAGE_ERROR_MAX_BODY} bytes")
         try:
             body = await request.json()
         except ValueError:
             raise _bad("body must be JSON") from None
         url = body.get("url") if isinstance(body, dict) else None
         context = body.get("context", "") if isinstance(body, dict) else None
+        try:
+            scheme = urlsplit(url).scheme if isinstance(url, str) else None
+        except ValueError:
+            scheme = None
         if (not isinstance(url, str) or not 1 <= len(url) <= 2048
-                or urlsplit(url).scheme not in ("http", "https")
+                or scheme not in ("http", "https")
                 or any(ch.isspace() or ord(ch) < 32 for ch in url)):
             raise _bad("'url' must be an http(s) URL of at most 2048 characters")
-        if not isinstance(context, str) or len(context) > 200 or any(ord(ch) < 32 for ch in context):
-            raise _bad("'context' must be a string of at most 200 characters")
-        if not app.state.image_error_limiter.allow(principal.acting_member or principal.subject):
-            return _err(429, "rate_limited", "too many image-error reports; try again in a minute")
+        if not isinstance(context, str) or (context and not _IMAGE_CONTEXT_RE.fullmatch(context)):
+            raise _bad("'context' must match ^[a-z][a-z-]{0,39}$ (or be empty)")
         log_image_error(log, url=url, context=context, member=principal.acting_member)
         return Response(status_code=204)
 

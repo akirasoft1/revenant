@@ -14,6 +14,7 @@ from src.keystats import all_stats
 from src.positions import InMemoryPositionsStore
 from src.repository import InMemoryShipRepository
 from tests.conftest import HARBINGER_UUID, TAURUS_UUID, wiki_handler
+from tests.test_catalog import TAURUS_SLUG
 from tests.test_app import SELF, H, _nosleep, cfg, fake_verifier
 from tests.test_browser_auth import BROWSER_ENV, ORIGIN, Clock, as_user
 
@@ -214,12 +215,47 @@ def test_image_error_rate_limited():
 
 @pytest.mark.parametrize("body", [
     {"url": "https://h/" + "a" * 2048}, {}, {"url": ""}, {"url": 5}, {"url": "ftp://h/x"},
-    {"url": IMG, "context": "c" * 201}, {"url": IMG, "context": 3}])
+    {"url": IMG, "context": "c" * 201}, {"url": IMG, "context": 3}, {"url": "http://["},
+    {"url": IMG, "context": "card member=999"}, {"url": IMG, "context": "Card"},
+    {"url": IMG, "context": "c" * 41}])
 def test_image_error_bad_body(body):
     with TestClient(_browser_app(), base_url=ORIGIN) as c:
         as_user(c)
         r = _post(c, body)
     assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+
+
+def test_image_error_oversize_content_length_rejected():
+    with TestClient(_browser_app(), base_url=ORIGIN) as c:
+        as_user(c)
+        r = c.post("/api/v1/client-events/image-error", content=b'{"url": "' + b"a" * 5000 + b'"}',
+                   headers={"Origin": ORIGIN, "Content-Type": "application/json"})
+        assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+        r = c.post("/api/v1/client-events/image-error", content=b"{}",
+                   headers={"Origin": ORIGIN, "Content-Type": "application/json", "Content-Length": "abc"})
+    assert r.status_code == 400
+
+
+def test_image_error_invalid_bodies_are_rate_limited():
+    with TestClient(_browser_app(), base_url=ORIGIN) as c:
+        as_user(c)
+        for _ in range(20):
+            assert _post(c, {}).status_code == 400
+        assert _post(c, {}).status_code == 429
+
+
+@pytest.mark.parametrize("ctx", ["card", "compare", "hero", "positions-view"])
+def test_image_error_editor_contexts_accepted(ctx):
+    with TestClient(_browser_app(), base_url=ORIGIN) as c:
+        as_user(c)
+        assert _post(c, {"url": IMG, "context": ctx}).status_code == 204
+
+
+def test_positions_by_slug_uses_resolved_uuid():
+    store = InMemoryPositionsStore({TAURUS_UUID: DOC})
+    with TestClient(_app(positions=store)) as c:
+        r = c.get(f"/v1/catalog/vehicles/{TAURUS_SLUG}/positions", headers=H())
+    assert r.status_code == 200 and r.json() == DOC
 
 
 def test_limiter_window_and_key_cap():
