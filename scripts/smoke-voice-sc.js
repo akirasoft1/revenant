@@ -32,8 +32,13 @@
 //   SMOKE_TRANSCRIPT_WAIT_MS  how long to keep collecting output_transcript
 //                             text after the audio ends (default 45000)
 //
-// Exit code: non-zero if ANY of the six questions FAILs its check, or on a
-// harness-level failure (can't connect, ffmpeg missing, fixture generation
+// CITATION SILENT (critical, since 2026-10-10): across every question, no
+// output transcript may contain a spoken bracketed numeric citation like
+// "[1]" or "[1, 3]" (gemini-live-2.5-flash read ~150 of these aloud in the
+// model spike). Offending transcripts are printed in full.
+//
+// Exit code: non-zero if ANY of the six questions FAILs its check, if
+// CITATION SILENT fails, or on a harness-level failure (can't connect, ffmpeg missing, fixture generation
 // failed, etc).
 //
 // IMPORTANT: this script does NOT truncate any transcript it prints.
@@ -42,6 +47,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const VoiceClient = require('../services/VoiceClient');
+const { findCitationLeaks } = require('./lib/voiceSmokeChecks');
 
 const SAMPLE_RATE = 16000;
 const FRAME_MS = 20;
@@ -267,7 +273,13 @@ async function askQuestion(client, q, filePath) {
   if (sawError) log('  NOTE: session reported at least one error event -- treat this result with that in mind.');
   log(`  VERDICT (${q.id}): ${pass ? 'PASS' : 'FAIL'}`);
 
-  return { id: q.id, text: q.text, pass, transcript: fullText, sawError };
+  const citationLeaks = findCitationLeaks(outputTranscripts);
+  if (citationLeaks.length) {
+    log(`  CITATION LEAK (${q.id}): ${citationLeaks.length} transcript(s) spoke a bracketed citation:`);
+    for (const t of citationLeaks) log(`    - "${t}"`);
+  }
+
+  return { id: q.id, text: q.text, pass, transcript: fullText, sawError, citationLeaks };
 }
 
 async function main() {
@@ -321,6 +333,12 @@ async function main() {
     log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.id.padEnd(16)} "${r.text}"`);
   }
   const failed = results.filter((r) => !r.pass);
+  const citationOffenders = results.filter((r) => r.citationLeaks.length > 0);
+  const citationSilentPass = citationOffenders.length === 0;
+  log(`  ${citationSilentPass ? 'PASS' : 'FAIL'}  CITATION SILENT (critical) -- no spoken "[1]" / "[1, 3]" in any answer`);
+  for (const r of citationOffenders) {
+    for (const t of r.citationLeaks) log(`        ${r.id}: "${t}"`);
+  }
   log(hr('='));
   log(`\n${results.length - failed.length}/${results.length} passed.`);
   if (failed.length > 0) {
@@ -329,7 +347,10 @@ async function main() {
   log('\nReminder: also confirm sidecar logs show a "voice: tool_call" line per question --');
   log('a PASS here only proves the answer was right, not that an sc_* tool produced it.');
 
-  process.exit(failed.length > 0 ? 1 : 0);
+  if (!citationSilentPass) {
+    log(`CITATION SILENT FAILED: ${citationOffenders.map((r) => r.id).join(', ')}`);
+  }
+  process.exit(failed.length > 0 || !citationSilentPass ? 1 : 0);
 }
 
 main().catch((e) => {

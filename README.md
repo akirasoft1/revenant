@@ -92,7 +92,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 - **Wake Word**: Say the wake phrase (default `"hey jarvis"`) to get the bot's attention, then speak your question — it replies out loud via a Gemini Live session. Detection is keyless and fully offline (openWakeWord ONNX models run in-process)
 - **Hot Follow-up Window**: After a reply, a brief window lets you keep talking without repeating the wake word
 - **Voice Control Commands**: Start what you say with "that's all" / "end the conversation" (after at most a wake phrase, "please", "thanks", or "can you") to end the session once the bot's short confirmation has played, or "go quiet for ten minutes" to also ignore the wake word from everyone for that long (1–120 min, default 15); `/voice resume` ends quiet mode early
-- **Dedicated Sidecar**: Runs on its own `discord-article-bot-voice` gRPC sidecar (separate from the agent sandbox sidecar), so voice sessions scale independently
+- **Dedicated Sidecar**: Runs on its own `discord-article-bot-voice` gRPC sidecar (separate from the agent sandbox sidecar), so voice sessions scale independently; it uses the `gemini-3.8-live` model in `us-central1`
 - **Channel Voice Personality**: Spoken replies reuse the same learned communication-style prompt as text chat
 - **Transcripts**: Every voice exchange is stored like a regular message, so it shows up in `/tldr` and memory recall
 

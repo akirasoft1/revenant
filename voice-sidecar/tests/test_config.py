@@ -10,12 +10,13 @@ def test_load_defaults(monkeypatch):
     assert c.default_voice_name  # non-empty default
     assert c.otlp_endpoint is None
 
-def test_live_model_default_stays_on_2_5_flash(monkeypatch):
-    # Deliberately NOT upgraded (2026-09-26): gemini-3.8-live 404s on our GEAP
-    # project in `global`, and 3.8-live lacks session resumption + context-window
-    # compression, which this sidecar depends on. See the note in src/config.py.
+def test_live_model_default_is_3_8_live(monkeypatch):
+    # Switched 2026-10-10 after a three-model spike: gemini-3.8-live serves only
+    # in us-central1 on our GEAP project (the voice sidecar must set
+    # GOOGLE_CLOUD_LOCATION=us-central1) and supports session resumption +
+    # context-window compression. See the note in src/config.py.
     monkeypatch.delenv("VOICE_LIVE_MODEL", raising=False)
-    assert cfg.load().voice_live_model == "gemini-live-2.5-flash"
+    assert cfg.load().voice_live_model == "gemini-3.8-live"
 
 def test_load_reads_env(monkeypatch):
     monkeypatch.setenv("VOICE_LIVE_MODEL", "gemini-live-x")

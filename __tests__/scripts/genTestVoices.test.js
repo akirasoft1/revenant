@@ -3,7 +3,7 @@
 // 16-bit) where gemini-2.5-flash-preview-tts returned raw audio/L16 PCM.
 // The fixture writer must handle both without double-wrapping.
 
-const { MODEL, audioToWav, pcmToWav } = require('../../scripts/gen-test-voices');
+const { MODEL, CLIPS, audioToWav, pcmToWav, clipsToGenerate } = require('../../scripts/gen-test-voices');
 
 describe('gen-test-voices', () => {
   test('uses the current GA TTS model', () => {
@@ -32,5 +32,23 @@ describe('gen-test-voices', () => {
   test('rejects a WAV at a sample rate the voice fixtures do not expect', () => {
     const wav = pcmToWav(Buffer.alloc(100, 3), { sampleRate: 48000 });
     expect(() => audioToWav(wav, 'audio/wav')).toThrow(/24000/);
+  });
+
+  // smoke-voice-identity.js's SPEAKER KNOWN check: speaker B (Sarah) asks
+  // "what's my name?" -- it must be the SAME TTS voice as B's first clip, or
+  // it would sound like a third person.
+  test('has a what\'s-my-name clip in speaker B\'s voice', () => {
+    const b = CLIPS.find((c) => c.file === 'kore-joke.wav');
+    const ask = CLIPS.find((c) => c.file === 'whats-my-name.wav');
+    expect(ask).toBeDefined();
+    expect(ask.voice).toBe(b.voice);
+    expect(ask.text).toMatch(/what's my name/i);
+  });
+
+  test('clipsToGenerate: all clips by default, only missing ones with onlyMissing', () => {
+    const clips = [{ file: 'a.wav' }, { file: 'b.wav' }];
+    const exists = (f) => f === 'a.wav';
+    expect(clipsToGenerate(clips, exists, false)).toEqual(clips);
+    expect(clipsToGenerate(clips, exists, true)).toEqual([{ file: 'b.wav' }]);
   });
 });

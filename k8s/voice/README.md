@@ -28,7 +28,7 @@ enabled so OneAgent and this pod's own OTLP spans both reach Dynatrace.
 
 | File | Purpose |
 |---|---|
-| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-live-2.5-flash` (GEAP-probe-validated on `global`); override via env only if the model changes. `SC_KNOWLEDGE_ENABLED` (default `"false"`) + `SC_KNOWLEDGE_URL` attach the sc-knowledge Star Citizen tools to Live as function declarations; flip to true only after sc-knowledge is deployed. `VOICE_CONTROL_TOOLS_ENABLED` (default `"true"` when unset) declares the local `end_conversation`/`go_quiet` voice-control tools to Live (independent of the SC tools); set `"false"` to stop declaring them — the bot's phrase backstop (`VOICE_CONTROL_COMMANDS_ENABLED`, bot env) still works without them. |
+| `voice-deployment.yaml` | Sidecar Deployment (`RollingUpdate`, scalable). Bump `.image` to a git short-SHA at deploy time. `VOICE_LIVE_MODEL` is set to `gemini-3.8-live` with `GOOGLE_CLOUD_LOCATION=us-central1` (the model serves only in `us-central1` on this project; the agent sidecar stays on `global`); override via env only if the model changes. `SC_KNOWLEDGE_ENABLED` (default `"false"`) + `SC_KNOWLEDGE_URL` attach the sc-knowledge Star Citizen tools to Live as function declarations; flip to true only after sc-knowledge is deployed. `VOICE_CONTROL_TOOLS_ENABLED` (default `"true"` when unset) declares the local `end_conversation`/`go_quiet` voice-control tools to Live (independent of the SC tools); set `"false"` to stop declaring them — the bot's phrase backstop (`VOICE_CONTROL_COMMANDS_ENABLED`, bot env) still works without them. |
 | `voice-service.yaml` | ClusterIP Service exposing the sidecar's gRPC port (50051). |
 | `voice-networkpolicy.yaml` | Egress: kube-dns, GEAP/Vertex AI (`aiplatform.googleapis.com`, public 443 minus RFC1918), Dynatrace OTLP (4317/4318), sc-knowledge pods (`app: sc-knowledge`, TCP 8080 -- in-cluster RFC1918, so the public-443 rule would not cover it). Ingress only from the bot pod on 50051. |
 
@@ -67,11 +67,15 @@ Substitute the real git short-SHA in the working copy under
 `k8s/overlays/deployed/` (gitignored, contains real secrets) before applying —
 never commit the resolved SHA here.
 
-`VOICE_LIVE_MODEL` is already set to `gemini-live-2.5-flash`, confirmed by the
-Task 1 GEAP pre-flight probe (`voice-sidecar/scripts/probe_live_model.py`) on
-project `revenant-discord-bot-2` / `location=global`. It's a non-secret model
-ID, so it's baked in here; re-run the probe and override via env only if the
-model is deprecated or a newer live-audio model is preferred.
+`VOICE_LIVE_MODEL` is set to `gemini-3.8-live` (since 2026-10-10; it was
+`gemini-live-2.5-flash` before). On project `revenant-discord-bot-2` that model
+serves **only in `us-central1`** (404 in `global`, `us-east4`, `europe-west4`),
+so this Deployment sets `GOOGLE_CLOUD_LOCATION=us-central1` -- unlike the agent
+sidecar, which stays on `global`. Changing the model means changing the
+location with it. A 2026-10-10 smoke spike chose it over 2.5-flash: no
+`[SPEAKER: ...]` marker leaks, no spoken citation brackets, reliable
+`end_conversation`, one `sc_*` call per question. Both are non-secret, so
+they're baked in here.
 
 ## No new secrets
 

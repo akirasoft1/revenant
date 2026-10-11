@@ -7,7 +7,8 @@
 // per-speaker audio stream per user.
 //
 // Usage:
-//   GEMINI_API_KEY=... node scripts/gen-test-voices.js
+//   GEMINI_API_KEY=... node scripts/gen-test-voices.js            # (re)generate every clip
+//   GEMINI_API_KEY=... node scripts/gen-test-voices.js --missing  # only clips not on disk
 //
 // Requires GEMINI_API_KEY in env (loaded from .env via dotenv if present).
 // Writes 24kHz mono 16-bit WAVs to voice-fixtures/ (gitignored -- never
@@ -29,6 +30,9 @@ const CLIPS = [
   { voice: 'Charon', file: 'charon-weather.wav', text: "Hey Jarvis, what's the weather like today?" },
   { voice: 'Kore', file: 'kore-joke.wav', text: 'Hey Jarvis, tell me a joke about robots.' },
   { voice: 'Aoede', file: 'aoede-pizza.wav', text: 'I think we should order pizza tonight.' },
+  // smoke-voice-identity.js SPEAKER KNOWN check: speaker B (Sarah, who speaks
+  // kore-joke.wav) asks her own name. MUST stay the same voice as kore-joke.
+  { voice: 'Kore', file: 'whats-my-name.wav', text: "Hey Jarvis, what's my name?" },
   // Star Citizen knowledge voice smoke test (scripts/smoke-voice-sc.js) --
   // single speaker, wording matches the "canonical questions" in
   // agent-sidecar/eval/sc_eval_set.py plus the Scorpius ship-purchase check.
@@ -50,6 +54,11 @@ const CLIPS = [
   { voice: 'Puck', file: 'ctl-end.wav', text: "Thanks Jarvis, that's all." },
   { voice: 'Puck', file: 'ctl-negative.wav', text: "Hey Jarvis, that's all I know about shields, what do you think?" },
 ];
+
+/** The clips to (re)generate: all of them, or only those whose file is missing. */
+function clipsToGenerate(clips, exists, onlyMissing) {
+  return onlyMissing ? clips.filter((c) => !exists(c.file)) : clips;
+}
 
 /** Wrap raw 16-bit PCM into a WAV (RIFF) container. */
 function pcmToWav(pcmBuf, { sampleRate = SAMPLE_RATE, channels = 1, bitsPerSample = 16 } = {}) {
@@ -128,8 +137,10 @@ async function main() {
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  console.log(`Generating ${CLIPS.length} TTS fixture(s) with model ${MODEL}...`);
-  for (const clip of CLIPS) {
+  const onlyMissing = process.argv.includes('--missing');
+  const clips = clipsToGenerate(CLIPS, (f) => fs.existsSync(path.join(OUT_DIR, f)), onlyMissing);
+  console.log(`Generating ${clips.length} TTS fixture(s) with model ${MODEL}${onlyMissing ? ' (missing only)' : ''}...`);
+  for (const clip of clips) {
     process.stdout.write(`  [${clip.voice}] "${clip.text}" -> voice-fixtures/${clip.file} ... `);
     try {
       const wav = await generateClip(apiKey, clip);
@@ -149,4 +160,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { MODEL, SAMPLE_RATE, pcmToWav, audioToWav };
+module.exports = { MODEL, SAMPLE_RATE, CLIPS, pcmToWav, audioToWav, clipsToGenerate };
