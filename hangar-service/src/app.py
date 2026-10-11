@@ -604,7 +604,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in ships))
         out = {"member": member, "ships": list(views)}
         if any(s.get("rsi") for s in ships):
-            summary = htf.pledge_summary(await app.state.repository.list_pledges(member))
+            try:
+                summary = htf.pledge_summary(await app.state.repository.list_pledges(member))
+            except RepositoryError as e:
+                log.warning("hangar: pledge ledger unavailable for member %s, omitting pledgeSummary: %s",
+                            member, e)
+                summary = None
             if summary is not None:
                 out["pledgeSummary"] = {k: summary[k] for k in ("totals", "pledges", "ships", "lti")}
         return out
@@ -1130,6 +1135,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         except ValueError as e:
             raise _bad(str(e)) from None
         vehicles = await app.state.catalog.vehicle_index()      # UpstreamError -> 503, nothing written
+        if not vehicles:        # an empty 200 would make every row "unmatched" and every RSI ship "missing"
+            raise UpstreamError("wiki", 200, "empty vehicle index")
         ships = await app.state.repository.list_ships(target)
         return entries, skipped, vehicles, ships, htf.classify(entries, skipped, vehicles, ships)
 
@@ -1162,6 +1169,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                                             {c["shipId"] for c in row["linkCandidates"]}):
                 raise _bad(f"choices.links[{key!r}]: {val!r} is not a link candidate for row {key}")
             link_to[int(key)] = val
+        by_target: dict[str, int] = {}
+        for idx, val in sorted(link_to.items()):
+            if val != "new":
+                if val in by_target:
+                    raise _bad(f"choices.links: rows {by_target[val]} and {idx} both target ship {val!r}")
+                by_target[val] = idx
         missing = {m["shipId"] for m in result["missing"]}
         for sid in remove:
             if sid not in missing:
@@ -1193,10 +1206,16 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         owned = {s["shipId"]: s for s in ships}
         now_iso = datetime.now(timezone.utc).isoformat()
         plans = []
+        claimed = {v for v in link_to.values() if v != "new"}      # explicit targets win over defaults
         for row in result["rows"]:
             kind = row["kind"]
             if kind == "link":
-                choice = link_to.get(row["index"]) or row["linkCandidates"][0]["shipId"]
+                choice = link_to.get(row["index"])
+                if choice is None:
+                    choice = next((c["shipId"] for c in row["linkCandidates"]
+                                   if c["shipId"] not in claimed), "new")
+                    if choice != "new":
+                        claimed.add(choice)
                 kind = "new" if choice == "new" else "link"
             else:
                 choice = None

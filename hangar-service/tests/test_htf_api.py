@@ -373,3 +373,65 @@ def test_hangar_pledge_summary(client):
     apply(client, htf_file() + [KRAKEN])
     s = ships(client).json()["pledgeSummary"]
     assert s == {"totals": {"USD": 1934.5, "EUR": 45.0}, "pledges": 5, "ships": 7, "lti": 3}
+
+
+# ---------- fix round 1 ----------
+
+def two_carracks():
+    f = [htf_file()[0], {**htf_file()[0], "pledge_id": "1002"}]
+    return f
+
+
+def test_explicit_link_collision_is_400_nothing_written(client, repo):
+    as_user(client)
+    a = add_ship(client, vehicle="carrack", nickname="A")
+    b = add_ship(client, vehicle="carrack", nickname="B")
+    p = preview(client, two_carracks()).json()
+    assert [len(r["linkCandidates"]) for r in p["rows"]] == [2, 1]
+    r = apply(client, two_carracks(), choices={"links": {"0": b["shipId"], "1": b["shipId"]}})
+    assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+    assert "0" in r.json()["message"] and "1" in r.json()["message"]
+    assert all("rsi" not in s for s in ships(client).json()["ships"])
+    assert repo._pledges == {}
+
+
+def test_default_skips_explicitly_chosen_target(client):
+    as_user(client)
+    a = add_ship(client, vehicle="carrack", nickname="A")
+    b = add_ship(client, vehicle="carrack", nickname="B")
+    r = apply(client, two_carracks(), choices={"links": {"0": b["shipId"]}})
+    assert r.status_code == 200, r.text
+    rows = {x["index"]: x for x in r.json()["rows"]}
+    assert rows[0]["shipId"] == b["shipId"] and rows[1]["result"] == "created"
+    got = {s["shipId"]: s for s in ships(client).json()["ships"]}
+    assert got[b["shipId"]]["rsi"]["pledgeId"] == "1001" and "rsi" not in got[a["shipId"]]
+
+
+def test_empty_catalog_index_is_503_nothing_written(repo):
+    app = _make(repo)
+    with TestClient(app, base_url=ORIGIN) as c:
+        as_user(c)
+        apply(c)
+        before = ships(c).json()["ships"]
+
+        async def empty():
+            return []
+        app.state.catalog.vehicle_index = empty
+        for fn in (preview, apply):
+            r = fn(c)
+            assert r.status_code == 503 and r.json()["error"] == "unavailable"
+        assert len(ships(c).json()["ships"]) == len(before) == 6
+
+
+def test_hangar_survives_ledger_read_failure(client, repo, caplog):
+    from src.repository import RepositoryError
+    as_user(client)
+    apply(client)
+
+    async def boom(member_id):
+        raise RepositoryError("ledger down")
+    repo.list_pledges = boom
+    with caplog.at_level(logging.WARNING):
+        r = ships(client)
+    assert r.status_code == 200 and len(r.json()["ships"]) == 6 and "pledgeSummary" not in r.json()
+    assert "ledger" in caplog.text.lower()
