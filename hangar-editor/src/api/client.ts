@@ -13,6 +13,7 @@ import type {
   ImportPreviewRow,
   Me,
   MemberSummary,
+  ModelInfo,
   Ship,
   SlotOption,
   VehiclePositions,
@@ -55,6 +56,8 @@ export function loginUrl(nextPath: string): string {
 interface RequestOptions {
   method?: string;
   json?: unknown;
+  /** Raw body sent as `application/octet-stream` (wireframe upload). */
+  raw?: BodyInit;
   signal?: AbortSignal;
 }
 
@@ -64,6 +67,9 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   if (opts.json !== undefined) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(opts.json);
+  } else if (opts.raw !== undefined) {
+    headers['Content-Type'] = 'application/octet-stream';
+    body = opts.raw;
   }
   let res: Response;
   try {
@@ -302,3 +308,19 @@ export async function htfApply(file: unknown, choices: HtfChoices, memberId?: st
 }
 
 export const getPledgeLeaderboard = () => request<PledgeLeaderboard>(`${API_PREFIX}/pledges/leaderboard`);
+
+// ----- admin: wireframe models -----
+
+/** Server-side cap for one wireframe bundle (checked client-side too). */
+export const MAX_MODEL_BYTES = 2 * 1024 * 1024;
+
+export const uploadModel = (file: Blob) =>
+  request<ModelInfo>(`${API_PREFIX}/models`, { method: 'POST', raw: file });
+
+export async function listModels(): Promise<ModelInfo[]> {
+  const r = await request<{ models: ModelInfo[] }>(`${API_PREFIX}/models`);
+  return r.models ?? [];
+}
+
+export const deleteModel = (kind: string, className: string) =>
+  request<void>(`${API_PREFIX}/models/${enc(kind)}/${enc(className)}`, { method: 'DELETE' });

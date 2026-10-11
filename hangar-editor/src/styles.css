@@ -798,3 +798,52 @@ h1 .member-id {
   gap: 0.25rem;
   margin: 0 0 1rem;
 }
+
+/* ----- admin ship models ----- */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+.dropzone.is-dragging {
+  border-color: var(--accent, #5b8def);
+  background: rgb(91 141 239 / 0.08);
+}
+.upload-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.upload-list li {
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.summary-box {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+}
+.models-preview {
+  position: relative;
+  height: min(60vh, 520px);
+  margin-top: 0.75rem;
+  background: #05080c;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mono {
+  font-family: ui-monospace, monospace;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.models-table th,
+.models-table td {
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}

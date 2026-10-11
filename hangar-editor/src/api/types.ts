@@ -329,3 +329,18 @@ export interface PledgeLeaderboard {
   entries: LeaderboardEntry[];
   caveat: string;
 }
+
+/** A stored wireframe bundle (`/api/v1/models`). `vehicleUuid` is null when the class name is not in the catalog. */
+export interface ModelInfo {
+  kind: string;
+  className: string;
+  vehicleUuid: string | null;
+  vehicleName: string | null;
+  lines: number;
+  bytes: number;
+  sha256?: string;
+  build?: unknown;
+  slots: { matched: number; missing: string[]; ambiguous: string[] };
+  uploadedBy?: string;
+  uploadedAt?: string;
+}
