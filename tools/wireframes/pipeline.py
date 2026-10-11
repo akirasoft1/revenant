@@ -10,11 +10,12 @@ from pathlib import Path
 import numpy as np
 
 from .bundle import write_bundle
-from .edges import feature_edges, filter_and_budget
+from .edges import feature_edges, filter_and_budget, robust_bounds
 from .glb import HARDPOINT_PREFIX, Glb, class_name, iter_mesh_nodes, load_glb, named_nodes
 from .visibility import SAMPLES_PER_PIXEL_SIDE, DepthMaps, iter_surface_samples
 
 SAMPLE_SEED = 1
+STRAY_WARN_SHRINK = 0.10       # warn when the robust box is this much smaller than the raw one
 _CLASS_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")   # same rule as the server
 
 
@@ -75,9 +76,24 @@ def build_bundle(src, out_dir, options: Options = Options()) -> dict:
     if not feature_count:
         raise BuildError("no edges found (the file has no triangle meshes)")
 
+    # The ship's size, measured once: a stray fragment far from the hull must
+    # not set the minimum edge length or the depth-map resolution.
+    warnings = []
+    bounds = robust_bounds(segs)
+    if bounds is None:
+        raise BuildError("no edges found (every edge has non-finite coordinates)")
+    size = float((bounds[1] - bounds[0]).max())
+    points = segs.reshape(-1, 3)
+    raw_size = float((points.max(axis=0) - points.min(axis=0)).max())
+    if size < (1.0 - STRAY_WARN_SHRINK) * raw_size:
+        warnings.append(f"stray geometry far from the hull: the raw bounding box is "
+                        f"{raw_size:.1f} m long but the ship itself is {size:.1f} m; "
+                        f"sizes are measured on the {size:.1f} m box and the stray "
+                        "edges are dropped")
+
     samples = 0
     if options.visibility:
-        maps = DepthMaps.for_segments(segs, options.depth_res)
+        maps = DepthMaps.for_segments(segs, options.depth_res, bounds=bounds)
         rng = np.random.default_rng(SAMPLE_SEED)
         spacing = maps.px / SAMPLES_PER_PIXEL_SIDE
         # a triangle never needs more samples than a few screens' worth
@@ -89,7 +105,7 @@ def build_bundle(src, out_dir, options: Options = Options()) -> dict:
     visible_count = len(segs)
     t_vis = time.perf_counter()
 
-    segs = filter_and_budget(segs, options.min_edge_frac, options.max_lines)
+    segs = filter_and_budget(segs, options.min_edge_frac, options.max_lines, reference=size)
     if not len(segs):
         raise BuildError("no edges left after filtering "
                          "(try a smaller --min-edge-frac or --no-visibility)")
@@ -107,5 +123,6 @@ def build_bundle(src, out_dir, options: Options = Options()) -> dict:
         "bytes": path.stat().st_size, "nodes": len(nodes),
         "hardpoints": sum(n["name"].lower().startswith(HARDPOINT_PREFIX) for n in nodes),
         "featureEdges": feature_count, "visibleEdges": visible_count, "samples": samples,
+        "size": size, "rawSize": raw_size, "warnings": warnings,
         "seconds": done - t0, "edgeSeconds": t_edges - t0, "visibilitySeconds": t_vis - t_edges,
     }

@@ -8,6 +8,7 @@ external buffers, sparse accessors, strips and fans, skinning and morph targets.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import struct
@@ -28,6 +29,19 @@ class GlbError(Exception):
     """The file is not a GLB this tool can read."""
 
 
+def _structural(fn):
+    """Turn the exceptions a malformed document provokes (a list where an object
+    should be, a missing key, ...) into :class:`GlbError`."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (KeyError, AttributeError, IndexError, TypeError, ValueError,
+                OverflowError) as e:
+            raise GlbError(f"malformed glTF structure ({type(e).__name__}: {e})") from e
+    return wrapper
+
+
 class Glb:
     """A parsed GLB. ``json`` is the document, ``bin`` the binary chunk,
     ``nodes`` the document's node list."""
@@ -43,6 +57,7 @@ class Glb:
         self._meshes: dict[int, tuple[np.ndarray, np.ndarray] | None] = {}
 
     # ---- node tree ---------------------------------------------------------
+    @_structural
     def walk(self):
         """(order, parent, depth, world): scene nodes in pre-order, each node's
         parent index (-1 for roots), depth, and 4x4 world matrix."""
@@ -51,6 +66,7 @@ class Glb:
         return self._walked
 
     # ---- geometry ----------------------------------------------------------
+    @_structural
     def mesh_geometry(self, mesh_index: int):
         """(positions Nx3 float32, faces Mx3 int64) for a mesh, all triangle
         primitives merged; ``None`` when it has no usable triangles. Cached."""
@@ -59,6 +75,7 @@ class Glb:
         return self._meshes[mesh_index]
 
 
+@_structural
 def load_glb(src) -> Glb:
     """Parse a ``.glb`` from a path or from bytes. Raises :class:`GlbError`."""
     if isinstance(src, (bytes, bytearray, memoryview)):
@@ -165,6 +182,7 @@ def _walk(glb: Glb):
 
 # ---- accessors ----------------------------------------------------------------
 
+@_structural
 def read_accessor(glb: Glb, index) -> np.ndarray:
     """An accessor as a ``(count, components)`` array (a view where possible)."""
     accessors = glb.json.get("accessors") or []
@@ -281,6 +299,7 @@ def iter_mesh_instances(glb: Glb) -> Iterator[tuple[np.ndarray, np.ndarray, np.n
 
 # ---- names ----------------------------------------------------------------------
 
+@_structural
 def class_name(glb: Glb) -> str | None:
     """The ship's class name from ``extras.entity_name``
     (``EntityClassDefinition.<ClassName>``) of the shallowest node carrying one."""
@@ -306,6 +325,7 @@ def _is_hardpoint(node: dict) -> bool:
     return isinstance(name, str) and name.lower().startswith(HARDPOINT_PREFIX)
 
 
+@_structural
 def named_nodes(glb: Glb, max_nodes: int = MAX_NODES) -> list[dict]:
     """``[{name, parent, pos}]``: every named node that is a hardpoint (name
     starts with ``hardpoint``, any case) or has a hardpoint ancestor or

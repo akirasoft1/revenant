@@ -103,13 +103,40 @@ def feature_edges(P, F, crease_rad: float, weld: float = 0.001) -> np.ndarray:
     return np.concatenate([V[edge // n_verts], V[edge % n_verts]], axis=1)
 
 
-def filter_and_budget(segs, min_frac: float, max_lines: int, *,
+def _stray_mask(a: np.ndarray, b: np.ndarray, percentile: float, factor: float) -> np.ndarray:
+    """True for edges whose midpoint is within ``factor`` x the robust radius
+    (``percentile`` of the distances from the median midpoint)."""
+    mid = (a + b) * 0.5
+    dist = np.linalg.norm(mid - np.median(mid, axis=0), axis=1)
+    radius = float(np.percentile(dist, percentile))
+    if not radius > 0:
+        return np.ones(len(a), dtype=bool)
+    return dist <= factor * radius
+
+
+def robust_bounds(segs, *, stray_percentile: float = STRAY_PERCENTILE,
+                  stray_factor: float = STRAY_FACTOR):
+    """(lo, hi) of the ship itself: the bounding box of the edges that pass the
+    stray-fragment rule. A detached fragment far from the hull must not set the
+    ship's size. ``None`` when there are no finite edges."""
+    segs = np.asarray(segs, dtype=np.float64).reshape(-1, 6)
+    segs = segs[np.isfinite(segs).all(axis=1)]
+    if not len(segs):
+        return None
+    a, b = segs[:, :3], segs[:, 3:]
+    keep = _stray_mask(a, b, stray_percentile, stray_factor)
+    a, b = a[keep], b[keep]
+    return np.minimum(a.min(axis=0), b.min(axis=0)), np.maximum(a.max(axis=0), b.max(axis=0))
+
+
+def filter_and_budget(segs, min_frac: float, max_lines: int, *, reference: float | None = None,
                       stray_percentile: float = STRAY_PERCENTILE,
                       stray_factor: float = STRAY_FACTOR) -> np.ndarray:
     """Size-relative minimum length, stray-fragment filter, longest-first cap.
 
-    1. drop edges shorter than ``min_frac`` x the longest bounding-box dimension
-       (and zero-length / non-finite ones);
+    1. drop edges shorter than ``min_frac`` x ``reference`` (and zero-length /
+       non-finite ones). ``reference`` is the ship's longest dimension; when not
+       given it is the longest side of :func:`robust_bounds` of ``segs``;
     2. drop edges whose midpoint is farther than ``stray_factor`` x the robust
        radius (``stray_percentile`` of the distances from the median centre);
     3. keep the ``max_lines`` longest. The result is sorted longest first.
@@ -120,19 +147,17 @@ def filter_and_budget(segs, min_frac: float, max_lines: int, *,
         return segs
     a, b = segs[:, :3].astype(np.float64), segs[:, 3:].astype(np.float64)
     length = np.linalg.norm(b - a, axis=1)
-    lo = np.minimum(a.min(axis=0), b.min(axis=0))
-    hi = np.maximum(a.max(axis=0), b.max(axis=0))
-    keep = (length > 0) & (length >= min_frac * float((hi - lo).max()))
+    if reference is None:
+        lo, hi = robust_bounds(segs, stray_percentile=stray_percentile,
+                               stray_factor=stray_factor)
+        reference = float((hi - lo).max())
+    keep = (length > 0) & (length >= min_frac * float(reference))
     segs, length, a, b = segs[keep], length[keep], a[keep], b[keep]
     if not len(segs):
         return segs
 
-    mid = (a + b) * 0.5
-    dist = np.linalg.norm(mid - np.median(mid, axis=0), axis=1)
-    radius = float(np.percentile(dist, stray_percentile))
-    if radius > 0:
-        keep = dist <= stray_factor * radius
-        segs, length = segs[keep], length[keep]
+    keep = _stray_mask(a, b, stray_percentile, stray_factor)
+    segs, length = segs[keep], length[keep]
 
     order = np.argsort(-length, kind="stable")[: max(int(max_lines), 0)]
     return segs[order]

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from wireframes.edges import feature_edges, filter_and_budget
+from wireframes.edges import feature_edges, filter_and_budget, robust_bounds
 from wireframes.tests import synth
 
 CREASE = np.radians(60.0)
@@ -198,3 +198,42 @@ def test_filter_handles_empty_and_non_finite_input():
                      _seg((0, 0, 0), (np.inf, 0, 0)), _seg((1, 1, 1), (1, 1, 1))])
     out = filter_and_budget(segs, 0.0025, 10)
     assert len(out) == 1 and np.isfinite(out).all()
+
+
+# ---- robust extent -----------------------------------------------------------
+
+def _hull_and_decal():
+    hull = feature_edges(*synth.subdivided_box(size=20.0, n=64), CREASE)       # 768 edges
+    decal = np.array([_seg((200, 0, 0), (200.2, 0, 0)), _seg((200, 0, 0), (200, 0.2, 0)),
+                      _seg((200.2, 0, 0), (200, 0.2, 0))])
+    return hull, decal
+
+
+def test_robust_bounds_ignore_a_far_stray_fragment():
+    hull, decal = _hull_and_decal()
+    lo, hi = robust_bounds(np.concatenate([hull, decal]))
+    assert np.allclose(lo, -10) and np.allclose(hi, 10)
+    lo2, hi2 = robust_bounds(hull)                       # no strays: the plain bounding box
+    assert np.allclose(lo2, -10) and np.allclose(hi2, 10)
+
+
+def test_robust_bounds_of_tiny_or_empty_input():
+    assert robust_bounds(np.zeros((0, 6))) is None
+    lo, hi = robust_bounds(np.array([_seg((1, 2, 3), (4, 5, 6))]))
+    assert np.allclose(lo, [1, 2, 3]) and np.allclose(hi, [4, 5, 6])
+    lo, hi = robust_bounds(np.array([_seg((0, 0, 0), (1, 0, 0)), _seg((0, 0, 0), (np.nan, 0, 0))]))
+    assert np.allclose(lo, 0) and np.allclose(hi, [1, 0, 0])
+
+
+def test_min_length_uses_the_robust_extent_not_the_stray_inflated_box():
+    hull, decal = _hull_and_decal()
+    alone = filter_and_budget(hull, 0.0025, 60_000)
+    both = filter_and_budget(np.concatenate([hull, decal]), 0.0025, 60_000)
+    assert len(alone) == 768
+    assert synth.segs_set(both) == synth.segs_set(alone)
+
+
+def test_min_length_reference_can_be_given_explicitly():
+    hull, _ = _hull_and_decal()                          # edges are 0.3125 m
+    assert len(filter_and_budget(hull, 0.0025, 60_000, reference=200.0)) == 0
+    assert len(filter_and_budget(hull, 0.0025, 60_000, reference=20.0)) == 768

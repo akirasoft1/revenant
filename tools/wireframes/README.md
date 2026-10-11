@@ -81,7 +81,7 @@ Each worker is a fresh process that sets `OMP_NUM_THREADS`,
 `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` to `1` before numpy is imported,
 so `--jobs 8` uses 8 cores, not 8 × (BLAS threads). Set it to your
 performance-core count; the default is 8, never "all cores". `build` pins the
-same variables. `wireframes/cli.py` and `wireframes/__init__.py` must stay free
+same variables while it runs and restores them afterwards. `wireframes/cli.py` and `wireframes/__init__.py` must stay free
 of top-level numpy imports for this to hold (a test checks it).
 
 ## What the pipeline does
@@ -95,11 +95,17 @@ of top-level numpy imports for this to hold (a test checks it).
    An edge shared by three or more triangles is kept unless they are all
    parallel (so a double-sided panel gives only its outline).
 3. **Place** the edges with each node's world transform.
+   The **ship's size** is measured here, once: the bounding box of the edges
+   that pass the stray-fragment rule of step 6 (the "robust extent"). The
+   minimum length and the depth-map pixel both use it, so a detached fragment
+   far from the hull cannot thin the wireframe. When that box is more than 10%
+   smaller than the raw one, the build prints a `warning:` line with both sizes.
 4. **Visibility cull**: surfaces are point-sampled (4 samples per depth pixel)
-   into depth maps along 26 directions; an edge survives when any of 3 points
-   along it is at the front of some view (within 2 pixels).
-5. **Minimum length**: drop edges shorter than `--min-edge-frac` × the longest
-   dimension.
+   into depth maps along 26 directions, framed on the robust extent; an edge
+   survives when any of 3 points along it is at the front of some view (within
+   2 pixels). Edges outside the frame pass (step 6 removes the strays).
+5. **Minimum length**: drop edges shorter than `--min-edge-frac` × the ship's
+   longest dimension (robust extent).
 6. **Stray fragments**: drop edges whose midpoint is farther than 1.25 × the
    99.5th-percentile distance from the median centre (exports sometimes carry
    a detached decal tens of metres off the hull).
@@ -140,9 +146,10 @@ first, then the shallowest of the rest.
   buffers (rejected), sparse accessors, triangle strips and fans (skipped).
 - Welding and the crease test run in each mesh's own space, so a node with a
   non-uniform scale is welded at 1 mm × its scale.
-- The minimum length and the depth-map resolution are measured on the
-  bounding box before the stray-fragment filter runs, so a far-off stray
-  fragment makes both slightly coarser for that ship.
+- The stray-fragment rule needs the fragment to be a small share of the
+  edges (under 0.5%); a large detached part is treated as part of the ship.
+- A malformed or unreadable file gives an `error: <file>: …` line and exit
+  code 1, not a traceback.
 
 ## Tests
 

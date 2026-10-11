@@ -301,13 +301,126 @@ def test_a_failing_or_dying_worker_does_not_stop_the_others():
     assert results[2][0] is False and "7" in results[2][1]
 
 
-def test_build_command_pins_threads_too(tmp_path):
+def test_build_pins_threads_while_running_and_restores_them(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "12")
+    monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
+    monkeypatch.setenv("MKL_NUM_THREADS", "3")
+    seen = {}
+    real = cli._build_one
+
+    def spy(task):
+        seen.update({v: os.environ.get(v) for v in workers.THREAD_VARS})
+        return real(task)
+
+    monkeypatch.setattr(cli, "_build_one", spy)
     src = write_glb(tmp_path, "s.glb")
-    code = ("import os, sys; from wireframes import cli; "
-            f"rc = cli.main(['build', {str(src)!r}, '-o', {str(tmp_path)!r}, '--depth-res', '64']); "
-            "print(rc, os.environ['OMP_NUM_THREADS'], os.environ['OPENBLAS_NUM_THREADS'], "
-            "os.environ['MKL_NUM_THREADS'])")
-    env = {**os.environ, "OMP_NUM_THREADS": "12"}
-    r = subprocess.run([sys.executable, "-c", code], cwd=TOOLS_DIR, capture_output=True,
-                       text=True, env=env)
-    assert r.stdout.strip().splitlines()[-1] == "0 1 1 1", r.stderr
+    assert cli.main(["build", str(src), "-o", str(tmp_path), *FAST]) == 0
+    assert seen == dict.fromkeys(workers.THREAD_VARS, "1")
+    assert os.environ["OMP_NUM_THREADS"] == "12" and os.environ["MKL_NUM_THREADS"] == "3"
+    assert "OPENBLAS_NUM_THREADS" not in os.environ
+    # ...also when the build fails
+    bad = write_glb(tmp_path, "bad.glb", data=b"junk")
+    assert cli.main(["build", str(bad), "-o", str(tmp_path)]) == 1
+    assert os.environ["OMP_NUM_THREADS"] == "12" and "OPENBLAS_NUM_THREADS" not in os.environ
+
+
+# ---- robust extent (stray fragments must not resize the ship) ----------------
+
+def _hull_glb(with_decal: bool) -> bytes:
+    b = synth.GlbBuilder()
+    kids = [b.node("hull", mesh=b.mesh(*synth.subdivided_box(size=20.0, n=64))),
+            b.node("hardpoint_gun", translation=(0.0, 1.0, 0.0))]
+    if with_decal:                      # a 0.2 m fragment 200 m away
+        tri = np.array([[0, 0, 0], [0.2, 0, 0], [0, 0.2, 0]], dtype=np.float32)
+        kids.append(b.node("decal", mesh=b.mesh(tri, np.array([[0, 1, 2]])),
+                           translation=(200.0, 0.0, 0.0)))
+    root = b.node("root", children=kids, extras={"entity_name": "EntityClassDefinition.Hull"})
+    return b.build([root])
+
+
+def test_far_stray_fragment_does_not_change_the_result(tmp_path, capsys):
+    clean = write_glb(tmp_path, "clean.glb", data=_hull_glb(False))
+    stray = write_glb(tmp_path, "stray.glb", data=_hull_glb(True))
+    assert cli.main(["build", str(clean), "-o", str(tmp_path / "a"), *FAST]) == 0
+    quiet = capsys.readouterr()
+    assert "warning" not in (quiet.out + quiet.err).lower()      # no strays: no warning
+    assert cli.main(["build", str(stray), "-o", str(tmp_path / "b"), *FAST]) == 0
+    noisy = capsys.readouterr()
+    ha, sa = read_bundle(tmp_path / "a" / "Hull.swf.gz")
+    hb, sb = read_bundle(tmp_path / "b" / "Hull.swf.gz")
+    assert ha["lines"] == hb["lines"] == 768
+    assert synth.segs_set(sa) == synth.segs_set(sb)
+    assert ha["center"] == hb["center"] and ha["halfExtent"] == hb["halfExtent"]
+    warning = [l for l in noisy.err.splitlines() if l.lower().startswith("warning")]
+    assert len(warning) == 1
+    assert "stray.glb" in warning[0] and "20.0" in warning[0] and "210.2" in warning[0]
+    assert len(noisy.out.strip().splitlines()) == 1              # still a one-line summary
+
+
+def test_build_all_shows_the_stray_warning(tmp_path, capsys):
+    src = tmp_path / "exports"
+    src.mkdir()
+    write_glb(src, "stray.glb", data=_hull_glb(True))
+    assert cli.main(["build-all", str(src), "-o", str(tmp_path / "o"), "--jobs", "1", *FAST]) == 0
+    out = capsys.readouterr().out
+    assert any(l.lower().startswith("warning") and "stray.glb" in l for l in out.splitlines())
+    assert read_bundle(tmp_path / "o" / "Hull.swf.gz")[0]["lines"] == 768
+
+
+# ---- malformed structure / OS errors: an error line, never a traceback -------
+
+def _malformed(kind: str) -> bytes:
+    b = synth.GlbBuilder()
+    m = b.mesh(*synth.box())
+    root = b.node("root", mesh=m, extras={"entity_name": "EntityClassDefinition.Odd"})
+    if kind == "mesh_not_object":
+        b.meshes[0] = 5
+    elif kind == "primitives_not_list":
+        b.meshes[0] = {"primitives": 7}
+    elif kind == "attributes_is_list":
+        b.meshes[0]["primitives"][0]["attributes"] = ["POSITION"]
+    elif kind == "buffer_view_not_object":
+        b.views[0] = "nope"
+    elif kind == "accessor_not_object":
+        b.accessors[0] = None
+    elif kind == "accessors_is_dict":
+        b.extra_json["accessors"] = {"0": 1}
+    elif kind == "children_garbage":
+        b.nodes[root]["children"] = [{"x": 1}, "y", 99]
+    elif kind == "scenes_garbage":
+        b.extra_json["scenes"] = [[1, 2]]
+    elif kind == "buffers_garbage":
+        b.extra_json["buffers"] = "zzz"
+    elif kind == "extras_list_name_int":
+        b.nodes[root]["name"] = 12
+    return b.build([root])
+
+
+@pytest.mark.parametrize("kind", ["mesh_not_object", "primitives_not_list", "attributes_is_list",
+                                  "buffer_view_not_object", "accessor_not_object",
+                                  "accessors_is_dict", "children_garbage", "scenes_garbage",
+                                  "buffers_garbage", "extras_list_name_int"])
+def test_malformed_gltf_structure_never_tracebacks(tmp_path, capsys, kind):
+    src = write_glb(tmp_path, "odd.glb", data=_malformed(kind))
+    code = cli.main(["build", str(src), "-o", str(tmp_path / "o"), *FAST])   # must not raise
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    if code != 0:
+        assert code == 1 and err.startswith("error: odd.glb:")
+        assert not list(tmp_path.rglob("*.swf.gz"))
+
+
+def test_malformed_mesh_entries_are_a_glb_error():
+    from wireframes.glb import GlbError, iter_mesh_instances, load_glb
+    for kind in ("mesh_not_object", "buffer_view_not_object", "accessor_not_object"):
+        with pytest.raises(GlbError):
+            list(iter_mesh_instances(load_glb(_malformed(kind))))
+
+
+def test_unwritable_output_is_an_error_line(tmp_path, capsys):
+    src = write_glb(tmp_path, "s.glb")
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x")
+    assert cli.main(["build", str(src), "-o", str(blocker / "out"), *FAST]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: s.glb:") and "Traceback" not in err

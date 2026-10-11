@@ -3,7 +3,7 @@ import numpy as np
 from wireframes.edges import feature_edges
 from wireframes.glb import load_glb
 from wireframes.tests import synth
-from wireframes.visibility import DIRECTIONS, cull_hidden, pixel_size, sample_surface
+from wireframes.visibility import DIRECTIONS, DepthMaps, cull_hidden, pixel_size, sample_surface
 
 CREASE = np.radians(60.0)
 RES = 256
@@ -101,3 +101,28 @@ def test_occluders_outside_the_edge_bounds_still_occlude_nothing_behind_them():
     segs = np.array([[0, 0, 0, 1, 0, 0], [0, 1, 0, 1, 1, 0]], dtype=np.float64)
     far = np.random.default_rng(0).uniform(500, 600, (1000, 3)).astype(np.float32)
     assert len(cull_hidden(segs, far, depth_res=64)) == 2
+
+
+def test_depth_maps_are_sized_by_the_robust_extent():
+    hull = feature_edges(*synth.subdivided_box(size=20.0, n=64), CREASE)
+    decal = np.array([[200, 0, 0, 200.2, 0, 0], [200, 0, 0, 200, 0.2, 0],
+                      [200.2, 0, 0, 200, 0.2, 0]], dtype=np.float64)
+    both = np.concatenate([hull, decal])
+    assert np.isclose(pixel_size(both, 640), pixel_size(hull, 640))
+    a, b = DepthMaps.for_segments(hull, 128), DepthMaps.for_segments(both, 128)
+    assert np.isclose(a.px, b.px) and np.allclose(a.center, b.center)
+    lo, hi = np.full(3, -50.0), np.full(3, 50.0)
+    assert DepthMaps.for_segments(hull, 128, bounds=(lo, hi)).px > 2 * a.px
+
+
+def test_cull_with_a_far_stray_matches_the_hull_alone():
+    hull_mesh = synth.subdivided_box(size=20.0, n=64)
+    inner = synth.box(size=4.0)
+    decal = (np.array([[200, 0, 0], [200.2, 0, 0], [200, 0.2, 0]], np.float32),
+             np.array([[0, 1, 2]]))
+    g1, s1 = scene([hull_mesh, inner])
+    g2, s2 = scene([hull_mesh, inner, decal])
+    out1, out2 = cull(g1, s1), cull(g2, s2)
+    assert len(out1) == 768                                   # inner box culled
+    # the stray itself is out of view (kept here, dropped later by the stray filter)
+    assert synth.segs_set(out2) == synth.segs_set(out1) | synth.segs_set(s2[-3:])

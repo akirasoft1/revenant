@@ -12,6 +12,7 @@ from typing import Iterator
 
 import numpy as np
 
+from .edges import robust_bounds
 from .glb import Glb, iter_mesh_nodes
 
 DIRECTIONS = np.array([d for d in itertools.product((-1, 0, 1), repeat=3) if any(d)],
@@ -22,17 +23,20 @@ _BLOCK = 1 << 15                        # points projected at a time (stays in c
 _YIELD = 1 << 18                        # surface samples handed over at a time
 
 
-def _bounds(segs: np.ndarray):
-    pts = np.asarray(segs, dtype=np.float64).reshape(-1, 3)
-    lo, hi = pts.min(axis=0), pts.max(axis=0)
+def _bounds(segs, bounds=None):
+    """(centre, diagonal) of the view volume: ``bounds`` = (lo, hi) if given,
+    else the robust bounds of ``segs`` (stray fragments do not count)."""
+    if bounds is None:
+        bounds = robust_bounds(segs)
+    if bounds is None:
+        return np.zeros(3), 0.0
+    lo, hi = (np.asarray(v, dtype=np.float64) for v in bounds)
     return (lo + hi) * 0.5, float(np.linalg.norm(hi - lo))
 
 
-def pixel_size(segs, depth_res: int) -> float:
-    """Depth-map pixel size in metres: bounding-box diagonal / resolution."""
-    if not len(segs):
-        return 0.0
-    return _bounds(segs)[1] / float(depth_res)
+def pixel_size(segs, depth_res: int, bounds=None) -> float:
+    """Depth-map pixel size in metres: (robust) bounding-box diagonal / resolution."""
+    return _bounds(segs, bounds)[1] / float(depth_res)
 
 
 def _basis(d: np.ndarray):
@@ -74,8 +78,12 @@ class DepthMaps:
         self.samples = 0
 
     @classmethod
-    def for_segments(cls, segs, depth_res: int = 640, eps_px: float = 2.0) -> "DepthMaps":
-        center, extent = _bounds(segs)
+    def for_segments(cls, segs, depth_res: int = 640, eps_px: float = 2.0, *,
+                     bounds=None) -> "DepthMaps":
+        """Maps framed on ``bounds`` (lo, hi), by default the robust bounds of
+        ``segs``. Anything outside the frame counts as visible and occludes
+        nothing in it."""
+        center, extent = _bounds(segs, bounds)
         return cls(center, extent, depth_res, eps_px)
 
     def _project(self, pts: np.ndarray):
@@ -139,14 +147,17 @@ class DepthMaps:
         return out
 
 
-def cull_hidden(segs, surface_points, depth_res: int = 640, eps_px: float = 2.0) -> np.ndarray:
+def cull_hidden(segs, surface_points, depth_res: int = 640, eps_px: float = 2.0, *,
+                bounds=None) -> np.ndarray:
     """The rows of ``segs`` (Kx6) visible from outside, given points sampled on
     every surface (see :func:`sample_surface`; use spacing ``pixel_size / 2``).
-    ``surface_points`` may also be an iterable of point arrays."""
+    ``surface_points`` may also be an iterable of point arrays. The views are
+    framed on ``bounds`` (lo, hi), by default the robust bounds of ``segs``;
+    edges outside the frame (stray fragments) are returned as visible."""
     segs = np.asarray(segs).reshape(-1, 6)
     if not len(segs):
         return segs
-    maps = DepthMaps.for_segments(segs, depth_res, eps_px)
+    maps = DepthMaps.for_segments(segs, depth_res, eps_px, bounds=bounds)
     if isinstance(surface_points, np.ndarray):
         surface_points = (surface_points,)
     for chunk in surface_points:

@@ -33,8 +33,9 @@ def pin_threads() -> None:
 
 @contextlib.contextmanager
 def _pinned_environment():
-    """Thread variables = 1 while workers are being started (a spawned process
-    inherits the environment as it is at that moment), restored afterwards."""
+    """Thread variables = 1 while a build runs or workers are being started (a
+    spawned process inherits the environment as it is at that moment), restored
+    afterwards."""
     saved = {var: os.environ.get(var) for var in THREAD_VARS}
     pin_threads()
     try:
@@ -120,7 +121,7 @@ def _build_one(task) -> dict:
     from .pipeline import BuildError, Options, build_bundle
     try:
         return build_bundle(src, out_dir, Options(**option_values))
-    except (GlbError, BuildError, BundleError, ValueError, MemoryError) as e:
+    except (GlbError, BuildError, BundleError, ValueError, MemoryError, OSError) as e:
         raise _UserError(str(e) or type(e).__name__) from e
 
 
@@ -136,14 +137,16 @@ def _summary(r: dict) -> str:
 
 
 def cmd_build(args) -> int:
-    pin_threads()
     src = Path(args.file)
     from dataclasses import asdict
     try:
-        result = _build_one((str(src), str(args.out), asdict(_options(args))))
+        with _pinned_environment():     # restored afterwards: main() may be called in-process
+            result = _build_one((str(src), str(args.out), asdict(_options(args))))
     except _UserError as e:
         print(f"error: {src.name}: {e}", file=sys.stderr)
         return 1
+    for warning in result["warnings"]:
+        print(f"warning: {src.name}: {warning}", file=sys.stderr)
     print(_summary(result))
     return 0
 
@@ -178,11 +181,12 @@ def cmd_build_all(args) -> int:
     results = run_jobs([(str(p), str(args.out), options) for p in files], args.jobs, _build_one)
 
     rows = [["file", "status", "class", "lines", "bytes", "hardpoints", "seconds", "detail"]]
-    built, by_class = 0, {}
+    built, by_class, warnings = 0, {}, []
     for path, (ok, value) in zip(files, results):
         if ok:
             built += 1
             by_class.setdefault(value["className"], []).append(path.name)
+            warnings += [f"warning: {path.name}: {w}" for w in value["warnings"]]
             rows.append([path.name, "ok", value["className"], str(value["lines"]),
                          str(value["bytes"]), str(value["hardpoints"]),
                          f"{value['seconds']:.1f}",
@@ -192,6 +196,8 @@ def cmd_build_all(args) -> int:
             rows.append([path.name, "FAILED", "-", "-", "-", "-", "-",
                          " ".join(str(value).split())])
     print(_table(rows))
+    for line in warnings:
+        print(line)
     failed = len(files) - built
     print(f"\n{built} built, {failed} failed in {time.perf_counter() - started:.1f}s "
           f"(jobs={args.jobs}) -> {args.out}")
