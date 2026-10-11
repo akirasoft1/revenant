@@ -65,3 +65,7 @@ OrgGuides/
 *.swf.gz
 *.glb
 tools/wireframes/out/
+# Local tooling for the wireframe pipeline (virtualenv, Python caches)
+tools/.venv/
+tools/.pytest_cache/
+tools/**/__pycache__/
