@@ -153,6 +153,78 @@ export function orbitFitDistance(
   return best * margin;
 }
 
+// ----- level of detail -----
+
+/**
+ * Lines that would be drawn shorter than this many CSS pixels are skipped: a
+ * small panel cannot resolve them, and thousands of sub-pixel additive strokes
+ * on top of each other read as a fuzzy glow instead of a drawing.
+ */
+export const MIN_LINE_PX = 2;
+/** Never thin a wireframe below this many lines (its longest ones), however small it is drawn. */
+export const MIN_LOD_LINES = 1500;
+
+/**
+ * Length of every line, as a non-increasing sequence, when the bundle's lines
+ * are ordered longest first (how the pipeline writes them; int16 quantisation
+ * may swap near-equal neighbours, which the running minimum absorbs). Null when
+ * the order is something else: the viewer then always draws everything.
+ */
+export function sortedLineLengths(positions: ArrayLike<number>): Float32Array | null {
+  const lines = Math.floor(positions.length / 6);
+  const out = new Float32Array(lines);
+  let floor = Infinity;
+  let inversions = 0;
+  for (let i = 0; i < lines; i++) {
+    const o = i * 6;
+    const len = Math.hypot(positions[o + 3] - positions[o], positions[o + 4] - positions[o + 1], positions[o + 5] - positions[o + 2]);
+    const v = Number.isFinite(len) ? len : 0;
+    if (v > floor * 1.05 + 1e-6) inversions++;
+    if (v < floor) floor = v;
+    out[i] = floor;
+  }
+  return inversions > lines * 0.01 ? null : out;
+}
+
+/** How many leading lines are at least `minLength` long (`lengths` non-increasing). */
+export function lineCountAtLeast(lengths: ArrayLike<number>, minLength: number): number {
+  let lo = 0;
+  let hi = lengths.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (lengths[mid] >= minLength) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** World units covered by one CSS pixel at `distance` from the camera, for a view `heightPx` tall. */
+export function worldPerPixel(distance: number, vfovDeg: number, heightPx: number): number {
+  if (!(heightPx > 0) || !(distance > 0)) return 0;
+  return (2 * Math.tan((vfovDeg * Math.PI) / 360) * distance) / heightPx;
+}
+
+/**
+ * At most this many lines per CSS pixel of the ship's on-screen size. The
+ * wireframes that read as clean drawings (a full-window Harbinger or Ironclad)
+ * sit at 30-45; a 60,000-line capital ship squeezed into 250 px was at 240.
+ */
+export const MAX_LINES_PER_PX = 40;
+
+/**
+ * Lines to draw at this zoom for a ship of `radius`: those at least MIN_LINE_PX
+ * long on screen, capped at MAX_LINES_PER_PX of on-screen size (longest first),
+ * and never fewer than MIN_LOD_LINES.
+ */
+export function lodLineCount(lengths: ArrayLike<number>, distance: number, vfovDeg: number, heightPx: number, radius: number): number {
+  const total = lengths.length;
+  const wpp = worldPerPixel(distance, vfovDeg, heightPx);
+  if (wpp <= 0) return total;
+  const byLength = lineCountAtLeast(lengths, MIN_LINE_PX * wpp);
+  const byDensity = radius > 0 ? Math.floor(((2 * radius) / wpp) * MAX_LINES_PER_PX) : total;
+  return Math.min(total, Math.max(Math.min(byLength, byDensity), MIN_LOD_LINES));
+}
+
 // ----- render on demand -----
 
 export interface FrameState {

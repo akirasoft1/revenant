@@ -191,6 +191,40 @@ describe('ShipPanel wireframe', () => {
     expect(window.localStorage.getItem('hangar.shipVisual')).toBe('wireframe');
   });
 
+  it('Expand lets the wireframe cover the terminal; Collapse or Esc puts it back, and Esc is then consumed', async () => {
+    const { user } = setup();
+    await screen.findByTestId('wireframe-viewer');
+    const outer = vi.fn((e: KeyboardEvent) => e.defaultPrevented);
+    window.addEventListener('keydown', outer);
+    try {
+      expect(panel()).not.toHaveClass('is-expanded');
+      await user.click(within(visualSwitch()!).getByRole('button', { name: 'Expand' }));
+      expect(panel()).toHaveClass('is-expanded');
+      expect(viewer()).toBeInTheDocument();
+      await user.click(within(visualSwitch()!).getByRole('button', { name: 'Collapse' }));
+      expect(panel()).not.toHaveClass('is-expanded');
+      await user.click(within(visualSwitch()!).getByRole('button', { name: 'Expand' }));
+      await user.keyboard('{Escape}');
+      expect(panel()).not.toHaveClass('is-expanded');
+      // The terminal's own Esc (leave to Classic) ignores a prevented event.
+      expect(outer).toHaveLastReturnedWith(true);
+      // Collapsed: Esc is no longer touched here.
+      await user.keyboard('{Escape}');
+      expect(outer).toHaveLastReturnedWith(false);
+    } finally {
+      window.removeEventListener('keydown', outer);
+    }
+  });
+
+  it('switching to the render drops the expanded state and the Expand button', async () => {
+    const { user } = setup();
+    await screen.findByTestId('wireframe-viewer');
+    await user.click(within(visualSwitch()!).getByRole('button', { name: 'Expand' }));
+    await user.click(within(visualSwitch()!).getByRole('button', { name: 'Render' }));
+    expect(panel()).not.toHaveClass('is-expanded');
+    expect(within(visualSwitch()!).queryByRole('button', { name: /Expand|Collapse/ })).toBeNull();
+  });
+
   it('a remembered "render" choice shows the render without downloading the bundle', () => {
     window.localStorage.setItem('hangar.shipVisual', 'render');
     setup();

@@ -62,7 +62,8 @@ export function viewAspectRatio(view: { width: number; height: number }): string
  * move to a compact strip under it, so nothing covers the wireframe.
  * - the rotatable **wireframe** with 3D hardpoint markers, when the vehicle has
  *   one (`vehicle.hasWireframe`) — the default, with a `Wireframe | Render`
- *   switch remembered per browser (`hangar.shipVisual`);
+ *   switch remembered per browser (`hangar.shipVisual`) and an `Expand` button
+ *   that lets it cover the whole terminal body (Esc or `Collapse` puts it back);
  * - the **render**: the whole vehicle image at full strength (`contain`, never
  *   cropped) over a blurred `cover` copy of itself, or, when 2D hardpoint view
  *   positions exist, the view image with its markers.
@@ -131,6 +132,20 @@ export function ShipPanel({
     console.warn('Wireframe viewer failed; showing the render', e);
     setFailedBundle(bundle.data ?? null);
   };
+  // Expanded: the wireframe covers the whole terminal body until collapsed (button or Esc).
+  const [wantExpanded, setExpanded] = useState(false);
+  const expanded = wantExpanded && wireOn;
+  useEffect(() => {
+    if (!expanded) return;
+    // Capture phase + preventDefault: Esc collapses the wireframe instead of leaving the Terminal view.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [expanded]);
   const chooseVisual = (v: VisualPref) => {
     setVisual(v);
     saveVisualPref(v);
@@ -158,7 +173,7 @@ export function ShipPanel({
 
   return (
     <>
-    <div className={`t-shippanel t-frame${view ? ' has-view' : ''}${wireOn ? ' has-wire' : ''}`} data-testid="ship-panel">
+    <div className={`t-shippanel t-frame${view ? ' has-view' : ''}${wireOn ? ' has-wire' : ''}${expanded ? ' is-expanded' : ''}`} data-testid="ship-panel">
       {wireOn ? (
         bundle.data ? (
           <ViewerBoundary key={uuid} onError={viewerError}>
@@ -231,6 +246,18 @@ export function ShipPanel({
               {v === 'wireframe' ? 'Wireframe' : 'Render'}
             </button>
           ))}
+          {wireOn && (
+            <button
+              type="button"
+              className="t-chip t-chip-expand"
+              aria-pressed={expanded}
+              aria-keyshortcuts={expanded ? 'Escape' : undefined}
+              title={expanded ? 'Back to the panel (Esc)' : 'Fill the terminal with the wireframe'}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Collapse' : 'Expand'}
+            </button>
+          )}
         </div>
       )}
       {problem && (

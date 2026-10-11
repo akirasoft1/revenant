@@ -93,13 +93,28 @@ our own CSS and inline SVG icons, no game assets). Spec:
   wireframe, unreadable storage → wireframe). Ships without a wireframe show the
   render panel exactly as before (no switch).
   - **Layout:** in wireframe mode the panel is taller
-    (`clamp(320px, 42vh, 480px)`; render mode stays 230px) and nothing covers the
+    (`clamp(340px, 46vh, 560px)`; render mode stays 230px), the ship column
+    becomes the widest of the three (`.t-body:has(.t-shippanel.has-wire)`), and
+    an **Expand** button beside the switch lets the wireframe cover the whole
+    terminal body (`is-expanded`; `Collapse` or Esc puts it back — while
+    expanded, Esc is consumed in the capture phase so it does not also leave the
+    Terminal view). Nothing covers the
     wireframe except the ship name (bottom-left) and the switch: the ship stats
     move out of the panel into a compact wrapping strip directly under it
     (`ShipStatsSidebar variant="strip"` — same fields and omission rules, real
     selectable text, scrolls inside itself past ~4 lines, focusable). Render mode
     keeps the top-right stats overlay. The port rail below keeps a minimum height
     (`6.5rem`) and scrolls.
+  - **Level of detail (why a small wireframe is not fuzzy):** bundles are
+    ordered longest line first, so the viewer draws a prefix
+    (`lodLineCount` in `lib/wireframe.ts`, applied by `stage.ts` before every
+    draw): only lines at least `MIN_LINE_PX` (2) CSS pixels long on screen, at
+    most `MAX_LINES_PER_PX` (40) lines per pixel of the ship's on-screen size,
+    never fewer than `MIN_LOD_LINES` (1,500). Line opacity rises a little as
+    lines are thinned. A 60,000-line capital ship in a 250 px panel was drawing
+    ~240 additive lines per pixel — a glow, not a drawing. Zooming in or
+    expanding brings the detail back. A bundle that is not ordered longest
+    first is never thinned.
   - **Data:** `getWireframe(uuid)` → `GET /api/v1/models/vehicle/{uuid}/wireframe`,
     the stored `.swf.gz` bytes (served without `Content-Encoding`; 404 → `null`).
     The query is keyed `['wireframe', uuid]` and the request uses

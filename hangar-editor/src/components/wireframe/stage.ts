@@ -18,12 +18,14 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { DecodedBundle } from '../../lib/swf';
-import { boundsOf, markerRadius, needsFrame, orbitFitDistance, type Bounds } from '../../lib/wireframe';
+import { boundsOf, lodLineCount, markerRadius, needsFrame, orbitFitDistance, sortedLineLengths, type Bounds } from '../../lib/wireframe';
 import type { WireMarker } from './markers';
 
 const BACKGROUND = 0x07111f; // --t-bg
 const LINE_COLOR = 0x3fd0ff; // --t-accent
 const LINE_OPACITY = 0.32;
+/** Added to the line opacity as short lines are thinned out (drawn small), so the outline stays as bright. */
+const LINE_OPACITY_LOD_BOOST = 0.2;
 const MARKER_COLOR = 0x3be38b; // --t-good
 const SELECTED_COLOR = 0xffffff;
 const FOV_DEG = 35;
@@ -75,6 +77,9 @@ export class WireframeStage {
   private readonly sphere = new SphereGeometry(1, 20, 14);
   private readonly halo: Mesh<SphereGeometry, MeshBasicMaterial>;
   private readonly positions: Float32Array;
+  /** Per-line lengths, longest first; null when the bundle is not ordered that way (no thinning). */
+  private readonly lengths: Float32Array | null;
+  private drawn = -1;
   private readonly bounds: Bounds;
   /** Orbit target of the opening view (scene space). */
   private readonly home = new Vector3();
@@ -105,6 +110,7 @@ export class WireframeStage {
     this.host = host;
     this.opts = opts;
     this.positions = decoded.positions;
+    this.lengths = sortedLineLengths(decoded.positions);
     this.bounds = boundsOf(decoded.positions);
     this.markerSize = markerRadius(this.bounds.radius);
 
@@ -294,6 +300,21 @@ export class WireframeStage {
     }
   }
 
+  /**
+   * Draw only the lines the panel can resolve at this zoom (the bundle is ordered
+   * longest first): zooming in, or a bigger panel, brings the fine detail back.
+   */
+  private applyDetail(): void {
+    if (!this.lengths || this.height === 0) return;
+    const total = this.lengths.length;
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const count = lodLineCount(this.lengths, dist, FOV_DEG, this.height, this.bounds.radius);
+    if (count === this.drawn) return;
+    this.drawn = count;
+    this.lineGeometry.setDrawRange(0, count * 2);
+    this.lineMaterial.opacity = LINE_OPACITY + LINE_OPACITY_LOD_BOOST * (total > 0 ? 1 - count / total : 0);
+  }
+
   /** Put the camera on the opening three-quarter view, framed to the panel's shape. */
   private frameHome(): void {
     const aspect = this.width > 0 && this.height > 0 ? this.width / this.height : 1;
@@ -321,6 +342,7 @@ export class WireframeStage {
     // Until the user takes the camera, keep the ship framed for the new shape.
     if (!this.interacted) this.frameHome();
     // Drawn at once (resizing clears the canvas), then on demand as usual.
+    this.applyDetail();
     this.renderer.render(this.scene, this.camera);
     this.invalidate();
   }
@@ -375,6 +397,7 @@ export class WireframeStage {
     // While damping or auto-rotating still moves the camera this fires 'change',
     // which marks the next frame; once it settles, the frames stop.
     this.controls.update(dt);
+    this.applyDetail();
     this.renderer.render(this.scene, this.camera);
     this.schedule();
   };

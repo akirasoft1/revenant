@@ -267,6 +267,12 @@
   gap: 0.75rem;
   margin-top: 0.75rem;
   height: clamp(560px, calc(100vh - 240px), 880px);
+  /* Containing block for the expanded wireframe. */
+  position: relative;
+}
+/* A wireframe needs room to read as a drawing: the ship column takes the widest share. */
+.terminal .t-body:has(.t-shippanel.has-wire) {
+  grid-template-columns: minmax(300px, 1.05fr) minmax(260px, 0.85fr) minmax(340px, 1.35fr);
 }
 .terminal .t-left,
 .terminal .t-centre,
@@ -888,8 +894,20 @@
 }
 /* Wireframe mode: a taller panel (the wireframe is the point), stats in a strip below. */
 .terminal .t-shippanel.has-wire {
-  flex: 0 0 clamp(320px, 42vh, 480px);
-  height: clamp(320px, 42vh, 480px);
+  flex: 0 0 clamp(340px, 46vh, 560px);
+  height: clamp(340px, 46vh, 560px);
+}
+/* Expanded: over the whole terminal body (.t-body is the containing block). */
+.terminal .t-shippanel.has-wire.is-expanded {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  flex: none;
+  height: auto;
+  box-shadow: 0 0 0 1px var(--t-line-strong), 0 0 40px rgb(3 9 18 / 0.9);
+}
+.terminal .t-chip-expand {
+  margin-left: 0.4rem;
 }
 .terminal .t-shipstats-strip {
   flex: 0 0 auto;

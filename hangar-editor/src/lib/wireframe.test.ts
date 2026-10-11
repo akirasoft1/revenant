@@ -2,13 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   VISUAL_PREF_KEY,
   boundsOf,
+  MAX_LINES_PER_PX,
+  MIN_LOD_LINES,
   fitDistance,
+  lineCountAtLeast,
+  lodLineCount,
   loadVisualPref,
   markerRadius,
   orbitFitDistance,
   prefersReducedMotion,
   needsFrame,
   sameBytes,
+  sortedLineLengths,
+  worldPerPixel,
   saveVisualPref,
   wireframeStaleTime,
   wireframeSupport,
@@ -224,5 +230,75 @@ describe('wireframeStaleTime', () => {
     expect(wireframeStaleTime(new ArrayBuffer(4))).toBe(24 * 60 * 60_000);
     expect(wireframeStaleTime(null)).toBe(30_000);
     expect(wireframeStaleTime(undefined)).toBe(30_000);
+  });
+});
+
+describe('level of detail', () => {
+  /** Lines along X with the given lengths, in the given order. */
+  const linesOf = (lengths: number[]) => {
+    const p = new Float32Array(lengths.length * 6);
+    lengths.forEach((l, i) => {
+      p[i * 6 + 1] = i;
+      p[i * 6 + 3] = l;
+      p[i * 6 + 4] = i;
+    });
+    return p;
+  };
+
+  it('sortedLineLengths: a longest-first bundle gives its lengths', () => {
+    expect(Array.from(sortedLineLengths(linesOf([8, 4, 2, 1]))!)).toEqual([8, 4, 2, 1]);
+  });
+
+  it('sortedLineLengths: quantisation jitter between near-equal neighbours is absorbed (stays non-increasing)', () => {
+    const got = Array.from(sortedLineLengths(linesOf([8, 4, 4.1, 2]))!);
+    expect(got[0]).toBe(8);
+    expect(got[1]).toBe(4);
+    expect(got[2]).toBe(4);
+    expect(got[3]).toBe(2);
+  });
+
+  it('sortedLineLengths: a bundle in some other order is not thinned (null)', () => {
+    expect(sortedLineLengths(linesOf([1, 8, 2, 9, 3, 7]))).toBeNull();
+  });
+
+  it('sortedLineLengths: no lines -> empty', () => {
+    expect(sortedLineLengths(new Float32Array(0))).toHaveLength(0);
+  });
+
+  it('lineCountAtLeast counts the leading lines at or above the threshold', () => {
+    const l = [8, 4, 4, 2, 1];
+    expect(lineCountAtLeast(l, 100)).toBe(0);
+    expect(lineCountAtLeast(l, 4)).toBe(3);
+    expect(lineCountAtLeast(l, 3)).toBe(3);
+    expect(lineCountAtLeast(l, 1)).toBe(5);
+    expect(lineCountAtLeast(l, 0)).toBe(5);
+    expect(lineCountAtLeast([], 1)).toBe(0);
+  });
+
+  it('worldPerPixel: view height at the distance divided by the pixel height; 0 when unsized', () => {
+    expect(worldPerPixel(10, 90, 100)).toBeCloseTo(0.2, 6);
+    expect(worldPerPixel(10, 90, 0)).toBe(0);
+    expect(worldPerPixel(0, 90, 100)).toBe(0);
+  });
+
+  it('lodLineCount: far away drops the short lines, close up draws them all, and a floor is kept', () => {
+    const lengths = new Float32Array(MIN_LOD_LINES * 4);
+    for (let i = 0; i < lengths.length; i++) lengths[i] = i < MIN_LOD_LINES * 2 ? 10 : 0.01;
+    // fov 90, 100 px tall: 1 px = dist / 50 world units; lines under 2 px are skipped.
+    const big = 1e9; // a radius so large the density cap never bites
+    expect(lodLineCount(lengths, 1, 90, 100, big)).toBe(MIN_LOD_LINES * 2); // 2 px = 0.04 > 0.01
+    expect(lodLineCount(lengths, 0.1, 90, 100, big)).toBe(lengths.length); // 2 px = 0.004
+    expect(lodLineCount(lengths, 10_000, 90, 100, big)).toBe(MIN_LOD_LINES); // nothing is 2 px long: the floor
+    expect(lodLineCount(lengths, 1, 90, 0, big)).toBe(lengths.length); // unsized: no thinning
+    expect(lodLineCount([5, 4], 10_000, 90, 100, big)).toBe(2); // fewer lines than the floor
+  });
+
+  it('lodLineCount: a dense ship drawn small is capped per pixel of its on-screen size', () => {
+    const lengths = new Float32Array(60_000).fill(10); // every line long enough
+    // fov 90, 100 px tall, distance 50: 1 px = 1 world unit.
+    expect(lodLineCount(lengths, 50, 90, 100, 125)).toBe(250 * MAX_LINES_PER_PX); // 250 px across
+    expect(lodLineCount(lengths, 50, 90, 100, 750)).toBe(60_000); // 1500 px across: everything
+    expect(lodLineCount(lengths, 50, 90, 100, 1)).toBe(MIN_LOD_LINES); // a speck: the floor
+    expect(lodLineCount(lengths, 50, 90, 100, 0)).toBe(60_000); // unknown size: no cap
   });
 });
