@@ -147,11 +147,21 @@ ITEM_SUMMARY_KEYS = ("uuid", "name", "className", "type", "subType", "size", "gr
 IMAGE_HOSTS = ("cdn.star-citizen.wiki", "media.starcitizen.tools", "cstone.space")
 
 
-def _first_image(v: Any) -> str | None:
-    """Best ``images[]`` URL (``thumbnail_url`` else ``original_url``) on an
-    allowed https host, preferring hosts earlier in ``IMAGE_HOSTS``; None when
-    no image is loadable by the editor (a blocked URL would only produce a CSP
-    violation plus an image-error report)."""
+def _allowed_image_url(url: Any) -> int | None:
+    """``IMAGE_HOSTS`` rank of an https URL the editor may load, else None."""
+    if not isinstance(url, str) or not url:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
+        return None
+    return IMAGE_HOSTS.index(parts.hostname)
+
+
+def _pick_image(v: Any, keys: tuple[str, ...]) -> str | None:
+    """Best ``images[]`` URL on an allowed https host, preferring hosts earlier
+    in ``IMAGE_HOSTS`` (then list order). Per entry, the first of ``keys`` whose
+    URL is loadable is used. None when no image is loadable by the editor (a
+    blocked URL would only produce a CSP violation plus an image-error report)."""
     imgs = v.get("images") if isinstance(v, dict) else None
     if not isinstance(imgs, list):
         return None
@@ -159,16 +169,26 @@ def _first_image(v: Any) -> str | None:
     for img in imgs:
         if not isinstance(img, dict):
             continue
-        url = img.get("thumbnail_url") or img.get("original_url")
-        if not isinstance(url, str) or not url:
-            continue
-        parts = urlsplit(url)
-        if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
-            continue
-        rank = IMAGE_HOSTS.index(parts.hostname)
-        if best is None or rank < best[0]:
-            best = (rank, url)
+        for key in keys:
+            url = img.get(key)
+            rank = _allowed_image_url(url)
+            if rank is not None:
+                if best is None or rank < best[0]:
+                    best = (rank, url)
+                break
     return best[1] if best else None
+
+
+def _first_image(v: Any) -> str | None:
+    """Item/card image: ``thumbnail_url`` else ``original_url`` (see ``_pick_image``)."""
+    return _pick_image(v, ("thumbnail_url", "original_url"))
+
+
+def _hero_image(v: Any) -> str | None:
+    """Vehicle image for the terminal's ship panel: the full-size
+    ``original_url`` else ``thumbnail_url`` -- the Wiki's 600px thumbnails look
+    soft at panel size. Same host filtering/preference as ``_first_image``."""
+    return _pick_image(v, ("original_url", "thumbnail_url"))
 
 
 def _description(d: Any) -> str | None:
@@ -195,9 +215,10 @@ def item_option(i: dict) -> dict:
 
 
 def vehicle_profile_extra(v: dict) -> dict:
-    """Optional vehicle fields for the terminal view; absent ones omitted."""
+    """Optional vehicle fields for the terminal view; absent ones omitted.
+    ``image`` is the full-size hero image (``_hero_image``)."""
     out: dict = {}
-    image = _first_image(v)
+    image = _hero_image(v)
     if image:
         out["image"] = image
     dim = v.get("dimension")

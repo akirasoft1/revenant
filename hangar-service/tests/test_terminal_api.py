@@ -66,11 +66,12 @@ def test_item_option_fallbacks_and_omissions():
 # ---------- vehicle profile ----------
 
 def test_vehicle_profile_extra():
-    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/t.webp"}],
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/t.webp",
+                     "original_url": "https://media.starcitizen.tools/o/t.jpg"}],
          "dimension": {"length": 70, "width": 27.75, "height": 15.25},
          "mass": 383801, "crew": {"min": 4, "max": 5, "weapon": 2}}
     assert vehicle_profile_extra(v) == {
-        "image": "https://media.starcitizen.tools/thumb/t.webp", "dimension": {"length": 70, "width": 27.75, "height": 15.25},
+        "image": "https://media.starcitizen.tools/o/t.jpg", "dimension": {"length": 70, "width": 27.75, "height": 15.25},
         "mass": 383801, "crew": {"min": 4, "max": 5}}
     assert vehicle_profile_extra({}) == {}
 
@@ -298,6 +299,38 @@ def test_first_image_drops_hosts_the_editor_cannot_load():
     from src.catalog import _first_image
     assert _first_image({"images": [_img("https://evil.example/x.png")]}) is None
     assert _first_image({"images": [_img("http://cdn.star-citizen.wiki/images/c.jpg")]}) is None  # not https
+
+
+# --- vehicle hero image: full-size original (the 600px thumbnails are soft in the panel) ---
+
+def test_vehicle_hero_uses_original_url():
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/t.webp",
+                     "original_url": "https://media.starcitizen.tools/o/t.jpg"}]}
+    assert vehicle_profile_extra(v)["image"] == "https://media.starcitizen.tools/o/t.jpg"
+
+
+def test_vehicle_hero_falls_back_to_thumbnail_url():
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/t.webp"}]}
+    assert vehicle_profile_extra(v)["image"] == "https://media.starcitizen.tools/thumb/t.webp"
+
+
+def test_vehicle_hero_keeps_host_preference_and_filtering():
+    v = {"images": [{"thumbnail_url": "https://cstone.space/t/a.png", "original_url": "https://cstone.space/o/a.png"},
+                    {"thumbnail_url": "https://media.starcitizen.tools/thumb/b.jpg",
+                     "original_url": "https://media.starcitizen.tools/o/b.jpg"}]}
+    assert vehicle_profile_extra(v)["image"] == "https://media.starcitizen.tools/o/b.jpg"
+    # an original on a host the editor can't load is skipped in favour of the entry's allowed thumbnail
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/c.jpg",
+                     "original_url": "https://evil.example/c.jpg"}]}
+    assert vehicle_profile_extra(v)["image"] == "https://media.starcitizen.tools/thumb/c.jpg"
+    assert "image" not in vehicle_profile_extra({"images": [_img("https://evil.example/x.png")]})
+
+
+def test_item_images_still_use_the_thumbnail():
+    i = {"uuid": "i1", "name": "X", "type": "Shield",
+         "images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/i.webp",
+                     "original_url": "https://media.starcitizen.tools/o/i.jpg"}]}
+    assert item_option(i)["image"] == "https://media.starcitizen.tools/thumb/i.webp"
 
 
 def test_csp_image_hosts_come_from_the_catalog_list():
