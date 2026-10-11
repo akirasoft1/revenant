@@ -6,6 +6,7 @@ import type { Hangar, Ship, SlotOption } from '../api/types';
 import { canEdit, useMe } from '../auth/AuthGate';
 import { shipTitle } from '../components/HangarView';
 import { ClassicShipView, groupSlots } from '../components/ClassicShipView';
+import { TerminalBoundary } from '../components/terminal/TerminalBoundary';
 import { ErrorNote, Loading, errorText } from '../components/Status';
 import { loadViewPref, saveViewPref, type ViewPref } from '../lib/terminal';
 import { MemberId, useMemberName } from './MemberHangarPage';
@@ -50,9 +51,16 @@ export function ShipDetailPage() {
   const wide = useWide();
   const [pref, setPref] = useState<ViewPref>(() => loadViewPref());
   const terminal = wide && pref === 'terminal';
+  // Set when the Terminal chunk fails to load: Classic for this page load (not persisted).
+  const [terminalFailed, setTerminalFailed] = useState(false);
   const choose = (v: ViewPref) => {
     setPref(v);
     saveViewPref(v);
+    if (v === 'terminal') setTerminalFailed(false);
+  };
+  const terminalLoadFailed = () => {
+    setTerminalFailed(true);
+    setPref('classic');
   };
   const hangar = useQuery({ queryKey: ['hangar', memberId], queryFn: () => getHangar(memberId) });
   const ship = hangar.data?.ships.find((s) => s.shipId === shipId);
@@ -159,11 +167,20 @@ export function ShipDetailPage() {
       ) : loadout.length === 0 ? (
         <p className="empty">This ship has no editable component slots.</p>
       ) : terminal ? (
-        <Suspense fallback={<Loading label="Booting terminal…" />}>
-          <TerminalShipView {...viewProps!} positions={positions.data} me={me} onExit={() => choose('classic')} />
-        </Suspense>
+        <TerminalBoundary onError={terminalLoadFailed}>
+          <Suspense fallback={<Loading label="Booting terminal…" />}>
+            <TerminalShipView {...viewProps!} positions={positions.data} me={me} onExit={() => choose('classic')} />
+          </Suspense>
+        </TerminalBoundary>
       ) : (
-        <ClassicShipView {...viewProps!} />
+        <>
+          {terminalFailed && (
+            <p className="alert alert-warn" role="status">
+              Terminal view failed to load — reload the page to try again.
+            </p>
+          )}
+          <ClassicShipView {...viewProps!} />
+        </>
       )}
     </>
   );

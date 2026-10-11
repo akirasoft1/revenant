@@ -34,7 +34,10 @@ our own CSS and inline SVG icons, no game assets). Spec:
 - **Toggle:** shown only when `matchMedia('(min-width: 900px)')` matches; the
   choice persists in `localStorage` `hangar.shipView` (`"classic" | "terminal"`,
   every access in try/catch, anything else → Classic). Narrow screens always get
-  Classic. The Terminal bundle and stylesheet are lazy-loaded on first use.
+  Classic. The Terminal bundle and stylesheet are lazy-loaded on first use. If that chunk
+  fails to load (e.g. a tab opened before a deploy), an error boundary falls back to
+  Classic for that page load with "Terminal view failed to load — reload the page
+  to try again."
 - **Layout:** top bar (title, "Changes saved" pulse for 2.5s after a successful
   write, signed-in-as, ship name/manufacturer/model); left: category tabs (a tab
   with no ports is disabled) + a 2-column grid of compatible items for the selected
