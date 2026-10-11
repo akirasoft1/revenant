@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { LoadoutSlot, Ship, SlotOption, StockItem, VehiclePositions, VehicleSummary } from '../../api/types';
 import { ME, renderWithProviders } from '../../test/utils';
 
 const getSlotOptions = vi.fn();
+const reportImageError = vi.fn();
 vi.mock('../../api/client', async (orig) => {
   const actual = await orig<typeof import('../../api/client')>();
   return {
     ...actual,
     getSlotOptions: (...a: unknown[]) => getSlotOptions(...a),
-    reportImageError: vi.fn(),
+    reportImageError: (...a: unknown[]) => reportImageError(...a),
   };
 });
 
@@ -362,6 +363,99 @@ describe('TerminalShipView', () => {
     await user.click(markers[0]);
     expect(selectedPort()).toHaveTextContent('XL-1');
     expect(markers[0]).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('with positions the ship panel shows the view image, and markers sit in a box sized to that image', () => {
+    const positions: VehiclePositions = {
+      views: { top: { imageUrl: 'https://media.starcitizen.tools/top.png', width: 1600, height: 900 } },
+      slots: { [QD]: { view: 'top', x: 0.5, y: 0.25 } },
+    };
+    setup({ positions });
+    const panel = screen.getByTestId('ship-panel');
+    const viewImg = within(panel).getByRole('img', { name: 'top view' });
+    expect(viewImg).toHaveAttribute('src', 'https://media.starcitizen.tools/top.png');
+    // The view replaces the render in the panel.
+    expect(within(panel).queryByRole('img', { name: /render/ })).toBeNull();
+    // Markers are positioned against the figure, whose box is the image's own aspect
+    // ratio (no max-height letterboxing), and the image fills that box exactly.
+    const figure = screen.getByTestId('ship-view');
+    expect(figure).toContainElement(viewImg);
+    expect(figure).toContainElement(screen.getByTestId('port-marker'));
+    expect(figure.style.aspectRatio).toBe('1600 / 900');
+    expect(figure.style.maxHeight).toBe('');
+    expect(viewImg).toHaveClass('t-view-img');
+  });
+
+  it('view chips switch views even when the selected port has a marker in another view', async () => {
+    const positions: VehiclePositions = {
+      views: {
+        top: { imageUrl: 'https://media.starcitizen.tools/top.png', width: 1600, height: 900 },
+        side: { imageUrl: 'https://media.starcitizen.tools/side.png', width: 1600, height: 600 },
+      },
+      slots: { [GUN]: { view: 'top', x: 0.1, y: 0.1 }, [QD]: { view: 'side', x: 0.6, y: 0.4 } },
+    };
+    const { user } = setup({ positions });
+    // GUN (selected by default) lives in "top".
+    const panel = screen.getByTestId('ship-panel');
+    expect(within(panel).getByRole('img', { name: 'top view' })).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'side' }));
+    expect(within(panel).getByRole('img', { name: 'side view' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'side' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('ship-view').style.aspectRatio).toBe('1600 / 600');
+    // Selecting a port in the chosen view keeps it.
+    await selectPort(user, /quantum drive/);
+    expect(within(panel).getByRole('img', { name: 'side view' })).toBeInTheDocument();
+    // Selecting a port whose marker is in a different view clears the choice.
+    await selectPort(user, /nose/);
+    expect(within(panel).getByRole('img', { name: 'top view' })).toBeInTheDocument();
+    // A markerless port keeps whatever view is showing.
+    await user.click(within(panel).getByRole('button', { name: 'side' }));
+    await selectPort(user, /shield/);
+    expect(within(panel).getByRole('img', { name: 'side view' })).toBeInTheDocument();
+  });
+
+  it('ship panel shows the vehicle render at full strength, the model name and the stats', () => {
+    setup();
+    const panel = screen.getByTestId('ship-panel');
+    const img = within(panel).getByRole('img', { name: 'Harbinger render' });
+    expect(img).toHaveAttribute('src', VEHICLE.image);
+    expect(img.closest('[aria-hidden="true"]')).toBeNull();
+    expect(img).toHaveClass('t-shippanel-img');
+    // A decorative blurred copy of the same render fills behind it.
+    const backdrop = within(panel).getByTestId('ship-panel-backdrop');
+    expect(backdrop).toHaveAttribute('src', VEHICLE.image);
+    expect(backdrop).toHaveAttribute('alt', '');
+    expect(backdrop).toHaveAttribute('aria-hidden', 'true');
+    expect(within(panel).getByTestId('ship-panel-name')).toHaveTextContent('Aegis Dynamics');
+    expect(within(panel).getByTestId('ship-panel-name')).toHaveTextContent('Harbinger');
+    expect(panel).toContainElement(screen.getByTestId('ship-stats'));
+    expect(within(panel).queryByText('No render available')).toBeNull();
+    // The port rail sits below the panel, not inside it.
+    expect(panel).not.toContainElement(rail());
+    expect(panel.compareDocumentPosition(rail()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('ship panel without an image shows the type icon and "No render available"', () => {
+    setup({ vehicle: { ...VEHICLE, image: undefined } });
+    const panel = screen.getByTestId('ship-panel');
+    expect(within(panel).queryByRole('img')).toBeNull();
+    expect(within(panel).getByTestId('type-icon')).toBeInTheDocument();
+    expect(within(panel).queryByTestId('ship-panel-backdrop')).toBeNull();
+    expect(panel).toHaveTextContent('No render available');
+    expect(panel).toContainElement(screen.getByTestId('ship-stats'));
+  });
+
+  it('ship panel falls back to the icon and label when the render fails to load', () => {
+    reportImageError.mockReset();
+    setup();
+    const panel = screen.getByTestId('ship-panel');
+    fireEvent.error(within(panel).getByRole('img', { name: 'Harbinger render' }));
+    expect(within(panel).getByTestId('type-icon')).toBeInTheDocument();
+    expect(within(panel).queryByTestId('ship-panel-backdrop')).toBeNull();
+    expect(panel).toHaveTextContent('No render available');
+    // Only the foreground reports; the backdrop never adds a second report.
+    expect(reportImageError).toHaveBeenCalledTimes(1);
+    expect(reportImageError).toHaveBeenCalledWith(VEHICLE.image, 'hero');
   });
 
   it('no positions: no markers', () => {

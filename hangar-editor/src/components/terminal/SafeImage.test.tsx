@@ -37,4 +37,14 @@ describe('SafeImage', () => {
     expect(screen.getByTestId('type-icon')).toBeInTheDocument();
     expect(fn).not.toHaveBeenCalled();
   });
+  it('renders a custom fallback instead of the icon (no src, and after an error)', () => {
+    stubFetch();
+    const { unmount } = render(<SafeImage alt="x" type="all" context="hero" fallback={<span>No render</span>} />);
+    expect(screen.getByText('No render')).toBeInTheDocument();
+    expect(screen.queryByTestId('type-icon')).toBeNull();
+    unmount();
+    render(<SafeImage src="https://cdn.star-citizen.wiki/f.png" alt="F" type="all" context="hero" fallback={<span>No render</span>} />);
+    fireEvent.error(screen.getByRole('img'));
+    expect(screen.getByText('No render')).toBeInTheDocument();
+  });
 });

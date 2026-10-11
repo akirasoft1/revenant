@@ -17,6 +17,7 @@ on the parent's ``editable_children`` would hide every swappable gun.
 import asyncio
 import copy
 import logging
+import re
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -147,11 +148,21 @@ ITEM_SUMMARY_KEYS = ("uuid", "name", "className", "type", "subType", "size", "gr
 IMAGE_HOSTS = ("cdn.star-citizen.wiki", "media.starcitizen.tools", "cstone.space")
 
 
-def _first_image(v: Any) -> str | None:
-    """Best ``images[]`` URL (``thumbnail_url`` else ``original_url``) on an
-    allowed https host, preferring hosts earlier in ``IMAGE_HOSTS``; None when
-    no image is loadable by the editor (a blocked URL would only produce a CSP
-    violation plus an image-error report)."""
+def _allowed_image_url(url: Any) -> int | None:
+    """``IMAGE_HOSTS`` rank of an https URL the editor may load, else None."""
+    if not isinstance(url, str) or not url:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
+        return None
+    return IMAGE_HOSTS.index(parts.hostname)
+
+
+def _pick_image(v: Any, keys: tuple[str, ...]) -> str | None:
+    """Best ``images[]`` URL on an allowed https host, preferring hosts earlier
+    in ``IMAGE_HOSTS`` (then list order). Per entry, the first of ``keys`` whose
+    URL is loadable is used. None when no image is loadable by the editor (a
+    blocked URL would only produce a CSP violation plus an image-error report)."""
     imgs = v.get("images") if isinstance(v, dict) else None
     if not isinstance(imgs, list):
         return None
@@ -159,14 +170,59 @@ def _first_image(v: Any) -> str | None:
     for img in imgs:
         if not isinstance(img, dict):
             continue
-        url = img.get("thumbnail_url") or img.get("original_url")
-        if not isinstance(url, str) or not url:
+        for key in keys:
+            url = img.get(key)
+            rank = _allowed_image_url(url)
+            if rank is not None:
+                if best is None or rank < best[0]:
+                    best = (rank, url)
+                break
+    return best[1] if best else None
+
+
+def _first_image(v: Any) -> str | None:
+    """Item/card image: ``thumbnail_url`` else ``original_url`` (see ``_pick_image``)."""
+    return _pick_image(v, ("thumbnail_url", "original_url"))
+
+
+# The ship panel is ~480px wide (2x for high-DPI); full-size Wiki originals are
+# up to 3840x2160 / ~1 MB, the default 600px thumbnails look soft. MediaWiki
+# (media.starcitizen.tools) renders any width on request: rewriting the
+# thumbnail's "<N>px-" segment to 1280px gives a sharp ~130 KB WebP (checked
+# 2026-10-11: Harbinger 1280px = 133 KB vs original 921 KB).
+HERO_WIDTH = 1280
+_MW_THUMB = re.compile(r"^(https://media\.starcitizen\.tools/thumb/.+/)(\d+)px-([^/]+)$")
+
+
+def _hero_image(v: Any) -> str | None:
+    """Vehicle image for the terminal's ship panel. Same entry choice as
+    ``_first_image`` (host filtering/preference); for a MediaWiki thumbnail the
+    width is rewritten to ``HERO_WIDTH`` (or the original is used when it is
+    smaller than that); elsewhere the full-size ``original_url`` else the
+    thumbnail."""
+    imgs = v.get("images") if isinstance(v, dict) else None
+    if not isinstance(imgs, list):
+        return None
+    best: tuple[int, str] | None = None
+    for img in imgs:
+        if not isinstance(img, dict):
             continue
-        parts = urlsplit(url)
-        if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
-            continue
-        rank = IMAGE_HOSTS.index(parts.hostname)
-        if best is None or rank < best[0]:
+        thumb, orig = img.get("thumbnail_url"), img.get("original_url")
+        url = None
+        m = _MW_THUMB.match(thumb) if isinstance(thumb, str) else None
+        if m and _allowed_image_url(thumb) is not None:
+            width = img.get("original_width")
+            if isinstance(width, (int, float)) and 0 < width <= HERO_WIDTH and _allowed_image_url(orig) is not None:
+                url = orig
+            else:
+                url = f"{m.group(1)}{HERO_WIDTH}px-{m.group(3)}"
+        else:
+            for cand in (orig, thumb):
+                if _allowed_image_url(cand) is not None:
+                    url = cand
+                    break
+        rank = _allowed_image_url(url) if url else None
+        if rank is not None and (best is None or rank < best[0]):
             best = (rank, url)
     return best[1] if best else None
 
@@ -195,9 +251,10 @@ def item_option(i: dict) -> dict:
 
 
 def vehicle_profile_extra(v: dict) -> dict:
-    """Optional vehicle fields for the terminal view; absent ones omitted."""
+    """Optional vehicle fields for the terminal view; absent ones omitted.
+    ``image`` is the full-size hero image (``_hero_image``)."""
     out: dict = {}
-    image = _first_image(v)
+    image = _hero_image(v)
     if image:
         out["image"] = image
     dim = v.get("dimension")
