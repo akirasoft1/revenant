@@ -34,7 +34,12 @@ class Bundle:
 
 
 def _num(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:      # a JSON integer too large for a float
+        return False
 
 
 def _inflate(data: bytes) -> bytes:
@@ -47,6 +52,9 @@ def _inflate(data: bytes) -> bytes:
         raise SwfError(f"decompressed size is over the {MAX_DECOMPRESSED // (1024 * 1024)} MB limit")
     if not d.eof:
         raise SwfError("not a valid gzip stream: truncated")
+    if d.unused_data:
+        # Browsers' DecompressionStream rejects trailing bytes, so it would store but never render.
+        raise SwfError("not a valid gzip stream: trailing bytes after the gzip member")
     return out
 
 
@@ -83,8 +91,8 @@ def parse(data: bytes) -> Bundle:
     if not _num(header["halfExtent"]) or header["halfExtent"] <= 0:
         raise SwfError("halfExtent must be a positive number")
     lines = header["lines"]
-    if not isinstance(lines, int) or isinstance(lines, bool) or lines < 0:
-        raise SwfError("lines must be a non-negative integer")
+    if not isinstance(lines, int) or isinstance(lines, bool) or lines < 1:
+        raise SwfError("lines must be a positive integer")
     if lines > MAX_LINES:
         raise SwfError(f"lines is over the {MAX_LINES} limit")
     nodes = header["nodes"]

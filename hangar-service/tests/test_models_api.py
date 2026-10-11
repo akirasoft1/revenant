@@ -242,6 +242,22 @@ def test_has_wireframe_false_when_store_errors():
         assert r.status_code == 200 and r.json()["vehicle"]["hasWireframe"] is False
 
 
+def test_has_wireframe_lookup_is_bounded(monkeypatch):
+    import asyncio
+
+    class Slow(InMemoryModelStore):
+        async def meta_for_vehicle(self, *a, **k):
+            await asyncio.sleep(60)
+
+    real = asyncio.wait_for
+    monkeypatch.setattr("src.app.asyncio.wait_for", lambda c, t: real(c, 0.05))
+    app = make(Slow())
+    with TestClient(app, base_url=ORIGIN) as c:
+        admin(c)
+        r = c.get(f"/api/v1/catalog/vehicles/{TAURUS_UUID}/slots")
+        assert r.status_code == 200 and r.json()["vehicle"]["hasWireframe"] is False
+
+
 def test_bucket_unset_503_on_model_routes_only():
     app = make(bucket="")
     with TestClient(app, base_url=ORIGIN) as c:

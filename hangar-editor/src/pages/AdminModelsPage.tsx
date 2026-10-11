@@ -14,6 +14,18 @@ const WireframeViewer = lazy(() => import('../components/wireframe/WireframeView
 /** Uploads in flight at once: enough to overlap round trips, small enough to be polite to the server. */
 export const UPLOAD_CONCURRENCY = 3;
 
+/**
+ * Minimum gap between upload STARTS (about 30 a minute). Each upload makes the server do a Wiki detail
+ * fetch for an uncached vehicle, and that limiter (60/min) is shared with every hangar read, so an
+ * unpaced 220-ship batch would make the bot's hangar tools answer "unavailable" for minutes.
+ */
+export const UPLOAD_MIN_INTERVAL_MS = 2000;
+
+function fmtEta(ms: number): string {
+  const s = Math.ceil(ms / 1000);
+  return s < 90 ? `${s} s` : `${Math.ceil(s / 60)} min`;
+}
+
 /** A model changed: every cache an open ship page derives from it is now suspect. */
 export function invalidateModelCaches(qc: QueryClient): void {
   for (const key of ['models', 'vehicle-slots', 'vehicle-positions', 'wireframe']) {
@@ -106,13 +118,38 @@ function UploadSection() {
   const queue = useRef<Item[]>([]);
   const running = useRef(0);
   const succeeded = useRef(0);
+  const lastStart = useRef(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unmounted = useRef(false);
+
+  useEffect(
+    () => () => {
+      unmounted.current = true;
+      queue.current = [];
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+    },
+    [],
+  );
 
   const patch = useCallback((id: number, p: Partial<Item>) => {
     setItems((all) => all.map((i) => (i.id === id ? { ...i, ...p } : i)));
   }, []);
 
-  const pump = useCallback(() => {
+  const pump = useCallback(function pump() {
+    if (unmounted.current) return;
     while (running.current < UPLOAD_CONCURRENCY && queue.current.length > 0) {
+      const wait = lastStart.current + UPLOAD_MIN_INTERVAL_MS - Date.now();
+      if (wait > 0) {
+        if (timer.current === null) {
+          timer.current = setTimeout(() => {
+            timer.current = null;
+            pump();
+          }, wait);
+        }
+        return;
+      }
+      lastStart.current = Date.now();
       const item = queue.current.shift()!;
       running.current += 1;
       patch(item.id, { status: 'uploading', error: undefined });
@@ -177,6 +214,7 @@ function UploadSection() {
   const matched = done.filter((i) => i.result?.vehicleUuid).length;
   const noShip = done.length - matched;
   const retryable = failed.filter((i) => i.retryable).length;
+  const queuedCount = items.filter((i) => i.status === 'queued').length;
 
   return (
     <section className="panel">
@@ -192,6 +230,9 @@ function UploadSection() {
         onDrop={onDrop}
       >
         <p className="muted small">Drop .swf.gz files here (up to 2 MB each), or choose them. Many at once is fine.</p>
+        <p className="muted small" data-testid="upload-pacing-note">
+          Uploads are paced to about 30 a minute so the bot&apos;s hangar lookups keep working — a full set of ~220 ships takes about 8 minutes.
+        </p>
         <input
           key={inputKey}
           type="file"
@@ -209,6 +250,7 @@ function UploadSection() {
           <p role="status" data-testid="upload-progress">
             {done.length} / {total} uploaded, {failed.length} failed
             {active > 0 ? `, ${active} in progress` : ''}
+            {queuedCount > 0 ? `, about ${fmtEta(queuedCount * UPLOAD_MIN_INTERVAL_MS)} left` : ''}
           </p>
           {active === 0 && (
             <div className="summary-box" data-testid="upload-summary">

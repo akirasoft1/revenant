@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthGate } from '../auth/AuthGate';
 import { App } from '../App';
-import { AdminModelsPage, UPLOAD_CONCURRENCY, rejectReason } from './AdminModelsPage';
+import { AdminModelsPage, UPLOAD_CONCURRENCY, UPLOAD_MIN_INTERVAL_MS, rejectReason } from './AdminModelsPage';
 import { ME, mockFetch, renderWithProviders } from '../test/utils';
 import type { ModelInfo } from '../api/types';
 
@@ -142,6 +142,13 @@ describe('stored models table', () => {
 });
 
 describe('upload', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('uploads many files with bounded concurrency, continues past failures, summarises, retries', async () => {
     let inflight = 0;
     let maxInflight = 0;
@@ -178,7 +185,7 @@ describe('upload', () => {
       for (let i = 0; i < 40; i++) {
         await act(async () => {
           releases.splice(0).forEach((r) => r());
-          await new Promise((r) => setTimeout(r, 0));
+          await vi.advanceTimersByTimeAsync(UPLOAD_MIN_INTERVAL_MS);
         });
       }
     };
@@ -187,7 +194,10 @@ describe('upload', () => {
     const bad = file('notes.txt');
     const big = file('HUGE.swf.gz', 3 * 1024 * 1024);
     fireEvent.change(screen.getByLabelText('Wireframe bundles'), { target: { files: [...names.map((n) => file(n)), bad, big] } });
-    await waitFor(() => expect(inflight).toBe(UPLOAD_CONCURRENCY));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(UPLOAD_MIN_INTERVAL_MS * UPLOAD_CONCURRENCY);
+    });
+    expect(inflight).toBe(UPLOAD_CONCURRENCY);
     await flush();
     await waitFor(() => expect(screen.getByTestId('upload-progress')).toHaveTextContent('7 / 10 uploaded, 3 failed'));
     expect(maxInflight).toBe(UPLOAD_CONCURRENCY);
@@ -223,5 +233,104 @@ describe('upload', () => {
     await waitFor(() => expect(screen.getByTestId('upload-progress')).toHaveTextContent('1 / 1 uploaded, 0 failed'));
     const keys = spy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
     for (const k of ['models', 'vehicle-slots', 'vehicle-positions', 'wireframe']) expect(keys).toContain(k);
+  });
+
+  /** Fetch mock that records every upload start time and never resolves until released. */
+  function pacedFetch() {
+    const starts: number[] = [];
+    const releases: (() => void)[] = [];
+    let inflight = 0;
+    let maxInflight = 0;
+    const base = globalThis.fetch;
+    mockFetch({ 'GET /api/me': { body: ADMIN }, 'GET /api/v1/models': { body: { models: [] } } });
+    const inner = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      if ((init.method ?? 'GET') === 'POST' && String(input) === '/api/v1/models') {
+        starts.push(Date.now());
+        inflight++;
+        maxInflight = Math.max(maxInflight, inflight);
+        const f = init.body as File;
+        await new Promise<void>((r) => releases.push(r));
+        inflight--;
+        if (f.name.startsWith('BAD')) return new Response(JSON.stringify({ error: 'invalid_request', message: 'bad' }), { status: 400 });
+        return new Response(JSON.stringify(model()), { status: 200 });
+      }
+      return inner(input, init);
+    }) as typeof fetch;
+    return { starts, releases, max: () => maxInflight, restore: () => { globalThis.fetch = base; } };
+  }
+
+  it('paces upload starts at least UPLOAD_MIN_INTERVAL_MS apart and never exceeds the concurrency cap', async () => {
+    const p = pacedFetch();
+    renderPage();
+    await screen.findByLabelText('Wireframe bundles');
+    fireEvent.change(screen.getByLabelText('Wireframe bundles'), {
+      target: { files: Array.from({ length: 6 }, (_, i) => file(`S${i}.swf.gz`)) },
+    });
+    for (let i = 0; i < 12; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UPLOAD_MIN_INTERVAL_MS);
+        p.releases.splice(0).forEach((r) => r());
+      });
+    }
+    expect(p.starts).toHaveLength(6);
+    for (let i = 1; i < p.starts.length; i++) expect(p.starts[i] - p.starts[i - 1]).toBeGreaterThanOrEqual(UPLOAD_MIN_INTERVAL_MS);
+    expect(p.max()).toBeLessThanOrEqual(UPLOAD_CONCURRENCY);
+    expect(screen.getByTestId('upload-pacing-note')).toHaveTextContent('30 a minute');
+    p.restore();
+  });
+
+  it('shows an ETA while files are queued', async () => {
+    const p = pacedFetch();
+    renderPage();
+    await screen.findByLabelText('Wireframe bundles');
+    fireEvent.change(screen.getByLabelText('Wireframe bundles'), {
+      target: { files: Array.from({ length: 6 }, (_, i) => file(`S${i}.swf.gz`)) },
+    });
+    await waitFor(() => expect(screen.getByTestId('upload-progress')).toHaveTextContent(/about \d+ s left/));
+    p.restore();
+  });
+
+  it('retry-failed is paced too', async () => {
+    const p = pacedFetch();
+    renderPage();
+    await screen.findByLabelText('Wireframe bundles');
+    fireEvent.change(screen.getByLabelText('Wireframe bundles'), {
+      target: { files: ['BAD1', 'BAD2', 'BAD3', 'BAD4'].map((n) => file(`${n}.swf.gz`)) },
+    });
+    for (let i = 0; i < 10; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UPLOAD_MIN_INTERVAL_MS);
+        p.releases.splice(0).forEach((r) => r());
+      });
+    }
+    expect(p.starts).toHaveLength(4);
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry failed' }));
+    for (let i = 0; i < 10; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UPLOAD_MIN_INTERVAL_MS);
+        p.releases.splice(0).forEach((r) => r());
+      });
+    }
+    expect(p.starts).toHaveLength(8);
+    for (let i = 5; i < p.starts.length; i++) expect(p.starts[i] - p.starts[i - 1]).toBeGreaterThanOrEqual(UPLOAD_MIN_INTERVAL_MS);
+    p.restore();
+  });
+
+  it('unmounting clears the pacing timer and stops further uploads', async () => {
+    const p = pacedFetch();
+    const { unmount } = renderPage();
+    await screen.findByLabelText('Wireframe bundles');
+    fireEvent.change(screen.getByLabelText('Wireframe bundles'), {
+      target: { files: Array.from({ length: 3 }, (_, i) => file(`S${i}.swf.gz`)) },
+    });
+    await waitFor(() => expect(p.starts.length).toBe(1));
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    const before = vi.getTimerCount();
+    unmount();
+    expect(vi.getTimerCount()).toBeLessThan(before);
+    await vi.advanceTimersByTimeAsync(UPLOAD_MIN_INTERVAL_MS * 5);
+    expect(p.starts).toHaveLength(1);
+    p.restore();
   });
 });

@@ -135,6 +135,22 @@ def test_object_deleted_when_metadata_write_fails():
     assert st.b.objs == {}
 
 
+def test_rollback_failure_is_logged(caplog):
+    store, st, fs = mk()
+    fs.set_err = gexc.ServiceUnavailable("down")
+    orig = Blob.delete
+
+    def bad_delete(self, **kw):
+        raise gexc.ServiceUnavailable("gcs down")
+    Blob.delete = bad_delete
+    try:
+        with caplog.at_level("WARNING"), pytest.raises(RepositoryError):
+            run(store.put("vehicle", "X_Y", b"data", {"kind": "vehicle"}))
+    finally:
+        Blob.delete = orig
+    assert "models/vehicle/X_Y.swf.gz" in caplog.text and "orphaned" in caplog.text
+
+
 def test_put_missing_bucket_is_repository_error():
     store, st, _ = mk()
     st.b.err = gexc.NotFound("bucket gone")

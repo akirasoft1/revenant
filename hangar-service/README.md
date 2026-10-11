@@ -342,11 +342,11 @@ editor's Terminal view. All model routes are `/api/v1` only (browser API).
 | GET | `/api/v1/models/vehicle/{uuid}/wireframe` | any principal | bundle bytes, `ETag: "<sha256>"`, `Cache-Control: private, max-age=86400`, 304 on `If-None-Match`; 404 |
 
 `/catalog/vehicles/{uuid}/slots` also carries `vehicle.hasWireframe` (false when the store is
-unconfigured or errors). Service tokens and non-admin members get 403 on upload/list/delete.
+unconfigured, errors or takes over 2 s). Each upload may trigger a Wiki vehicle detail fetch for an uncached vehicle, so the admin page paces batch uploads to ~30 a minute (the Wiki limiter, 60/min, is shared with hangar reads). Service tokens and non-admin members get 403 on upload/list/delete.
 
 * **Validation** (400 `invalid_request` naming the problem): gzip, magic `SWF1`, header JSON with
   the required keys, `kind == "vehicle"`, `lines <= 80,000`, `nodes <= 5,000`, decompressed
-  <= 8 MB, payload length == `lines * 12`.
+  <= 8 MB, payload length == `lines * 12`, `lines >= 1`, no bytes after the gzip member (browsers' `DecompressionStream` rejects them), numbers finite (huge integers are a 400, not a 500).
 * **Slot matching** (`src/slot_match.py`): for each catalog slot id `a/b/c`, nodes named `a`
   (case-insensitive), then for each further segment the nearest descendants of that name
   (BFS, not descending past a match). One -> `{xyz}`; none -> `missing`; several -> the first if
@@ -354,7 +354,7 @@ unconfigured or errors). Service tokens and non-admin members get 403 on upload/
   with `{slots, space: "gltf-y-up-m", source: "extracted", className, updatedAt, updatedBy}`.
   A class name not in the catalog is stored with `vehicleUuid: null` and writes no positions.
 * **Storage:** bytes at `models/<kind>/<className>.swf.gz` in the bucket, metadata in Firestore
-  `models/{kind}:{className}` (written after the object; the object is removed if that fails).
+  `models/{kind}:{className}` (written after the object; the object is removed if that fails, which for a RE-upload leaves the previous model listed without bytes until it is uploaded again; a failed cleanup logs a WARNING naming the orphaned object).
   Delete removes both, plus the positions doc only when its `source == "extracted"`.
 * **Bucket + IAM (coordinator):** a private bucket (uniform access, no public access), and
   `roles/storage.objectAdmin` on it for `hangar-runtime@revenant-discord-bot-2.iam.gserviceaccount.com`.

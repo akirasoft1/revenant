@@ -41,6 +41,23 @@ def test_parse_rejects(data, frag):
     assert frag.lower() in str(e.value).lower()
 
 
+def test_trailing_bytes_after_gzip_rejected():
+    with pytest.raises(swf.SwfError, match="trailing"):
+        swf.parse(make_bundle() + b"\x00junk")
+
+
+def test_huge_integer_is_a_400_not_an_overflow():
+    with pytest.raises(swf.SwfError, match="halfExtent"):
+        swf.parse(make_bundle(header_overrides={"halfExtent": 10 ** 400}))
+    with pytest.raises(swf.SwfError, match="center"):
+        swf.parse(make_bundle(header_overrides={"center": [10 ** 400, 0, 0]}))
+
+
+def test_zero_lines_rejected():
+    with pytest.raises(swf.SwfError, match="lines"):
+        swf.parse(make_bundle(lines=0))
+
+
 def test_missing_key():
     raw = b"SWF1"
     hb = json.dumps({"format": 1}).encode()

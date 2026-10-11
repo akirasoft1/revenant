@@ -1618,7 +1618,10 @@ async def _has_wireframe(models: ModelStore | None, vehicle_uuid: str) -> bool:
     if models is None:
         return False
     try:
-        return await models.meta_for_vehicle(vehicle_uuid) is not None
+        return await asyncio.wait_for(models.meta_for_vehicle(vehicle_uuid), 2.0) is not None
+    except asyncio.TimeoutError:
+        log.warning("hangar: wireframe lookup timed out for vehicle %s", vehicle_uuid)
+        return False
     except Exception as e:
         log.warning("hangar: wireframe lookup failed for vehicle %s: %s", vehicle_uuid, e)
         return False

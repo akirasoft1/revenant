@@ -2,16 +2,22 @@
 
 Bundle bytes live in a private GCS bucket at ``models/<kind>/<className>.swf.gz``;
 metadata in Firestore ``models/{kind}:{className}``. The metadata is written
-AFTER the object and the object is removed if that write fails, so a listed
-model always has its bytes. All storage failures raise ``RepositoryError``
+AFTER the object, and the object is removed if that write fails. For a NEW model
+that leaves nothing behind. For a RE-upload the object is overwritten in place, so
+a failed metadata write removes the object too: the previous model stays listed
+(its metadata is unchanged) but may be left without bytes until it is uploaded
+again. If the cleanup itself fails, the orphaned object is logged at WARNING. All storage failures raise ``RepositoryError``
 (the API answers 503 ``unavailable``).
 """
 import abc
 import asyncio
 import copy
+import logging
 from typing import Any
 
 from .repository import RepositoryError
+
+log = logging.getLogger(__name__)
 
 COLLECTION = "models"
 _TIMEOUT_S = 10.0
@@ -127,8 +133,9 @@ class GcsFirestoreModelStore(ModelStore):
         except BaseException:
             try:
                 await self._gcs(lambda: self._bucket().blob(path).delete())
-            except Exception:
-                pass
+            except Exception as cleanup_err:
+                log.warning("models: rollback failed, orphaned object %s in bucket %s: %s",
+                            path, self._bucket_name, cleanup_err)
             raise
 
     async def get_meta(self, kind, class_name):

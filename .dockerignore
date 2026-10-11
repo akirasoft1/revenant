@@ -60,7 +60,11 @@ OrgGuides/
 
 # Extracted game geometry and wireframe bundles: private, never in an image
 # (same rule as .gitignore). tools/ is desktop-only tooling, not part of the bot.
-*.swf.gz
-*.glb
-tools/wireframes/out/
+**/*.swf.gz
+**/*.glb
 tools/
+
+# HangarXPLOR exports hold personal pledge data (Docker patterns are
+# root-anchored, so both forms are needed).
+shiplist.json
+**/shiplist.json
