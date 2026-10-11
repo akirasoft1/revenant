@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { deleteShip, getHangar, renameShip } from '../api/client';
 import type { Ship } from '../api/types';
 import { useMe } from '../auth/AuthGate';
+import { formatTotals, rsiBadgeText } from '../lib/pledge';
 import { AddShipForm } from './AddShipForm';
 import { ErrorNote, Loading, errorText } from './Status';
 
@@ -51,6 +52,13 @@ function ShipCard({ ship, memberId, editable }: { ship: Ship; memberId: string; 
                 <span className="badge badge-stock">stock</span>
               )}
             </>
+          )}
+        </span>
+        <span className="ship-meta">
+          {ship.rsi ? (
+            <span className="badge badge-stock" data-testid="rsi-badge">{rsiBadgeText(ship.rsi)}</span>
+          ) : (
+            <span className="muted small">Added manually</span>
           )}
         </span>
       </Link>
@@ -136,7 +144,19 @@ export function HangarView({ memberId, editable }: { memberId: string; editable:
           >
             Import from spviewer
           </Link>
+          <Link
+            className="btn btn-ghost"
+            to={memberId === me.discordId ? '/import' : `/import?member=${encodeURIComponent(memberId)}`}
+          >
+            Import from HangarXPLOR
+          </Link>
         </div>
+      )}
+      {hangar.data.pledgeSummary && Object.keys(hangar.data.pledgeSummary.totals).length > 0 && (
+        <p className="muted" data-testid="pledge-total">
+          {formatTotals(hangar.data.pledgeSummary.totals)} pledged on ships across{' '}
+          {hangar.data.pledgeSummary.pledges} {hangar.data.pledgeSummary.pledges === 1 ? 'pledge' : 'pledges'}
+        </p>
       )}
       {editable && adding && <AddShipForm memberId={memberId} onDone={() => setAdding(false)} />}
       {ships.length === 0 ? (

@@ -50,11 +50,38 @@ export interface Ship {
   ownerName?: string | null;
   loadout: LoadoutSlot[] | null;
   loadoutError: 'unavailable' | 'not_found' | null;
+  /** Present only on ships imported from HangarXPLOR (HTF). */
+  rsi?: RsiInfo;
+}
+
+export interface PledgeCost {
+  amount: number | null;
+  currency: string | null;
+  raw?: string | null;
+}
+
+export interface RsiInfo {
+  key?: string;
+  pledgeId?: string;
+  pledgeName?: string | null;
+  pledgeDate?: string | null;
+  pledgeCost?: PledgeCost | null;
+  lti?: boolean;
+  warbond?: boolean;
+  rsiName?: string | null;
+}
+
+export interface PledgeSummary {
+  totals: Record<string, number>;
+  pledges: number;
+  ships: number;
+  lti: number;
 }
 
 export interface Hangar {
   member: string;
   ships: Ship[];
+  pledgeSummary?: PledgeSummary;
 }
 
 export interface VehicleSummary {
@@ -213,4 +240,85 @@ export interface ImportApplyResult {
   ships: Ship[];
   /** Optional per-row failures, if the server reports them. */
   errors: { rowIndex?: number; error: string; message: string }[];
+}
+
+// ----- HTF (HangarXPLOR) import -----
+
+export interface HtfPledgeView {
+  id: string;
+  name: string | null;
+  date: string | null;
+  cost: PledgeCost | null;
+  lti: boolean;
+  warbond: boolean;
+}
+
+export interface HtfCandidate {
+  shipId: string;
+  label: string;
+}
+
+export interface HtfPreviewRow {
+  index: number;
+  kind: 'new' | 'existing' | 'link' | 'skipped';
+  rsiKey: string | null;
+  vehicle: ItemRef | null;
+  nickname: string | null;
+  pledge: HtfPledgeView | null;
+  existing: HtfCandidate | null;
+  linkCandidates: HtfCandidate[];
+  reason: 'not_a_ship' | 'unmatched' | 'invalid' | null;
+  detail?: string | null;
+  countedInTotals?: boolean;
+}
+
+export interface HtfMissing {
+  shipId: string;
+  label: string;
+  rsiKey: string | null;
+  hasFittings: boolean;
+  defaultRemove: boolean;
+}
+
+export interface HtfPreview {
+  rows: HtfPreviewRow[];
+  missing: HtfMissing[];
+  partial: boolean;
+  summary: Record<string, number>;
+}
+
+export interface HtfChoices {
+  /** Row index (as a string) -> shipId to link, or "new". Only non-default picks. */
+  links: Record<string, string>;
+  remove: string[];
+}
+
+export interface HtfApplyRowResult {
+  index: number;
+  result: 'created' | 'linked' | 'updated' | 'unchanged' | 'skipped' | 'error';
+  shipId?: string;
+  error?: string;
+  message?: string;
+}
+
+export interface HtfApplyResult {
+  rows: HtfApplyRowResult[];
+  removed: string[];
+  ledgerSynced: boolean;
+}
+
+export interface LeaderboardEntry {
+  member: string;
+  displayName: string | null;
+  totals: Record<string, number>;
+  pledges: number;
+  ships: number;
+  lti: number;
+  topPledge: { name: string | null; amount: number; currency: string } | null;
+  lastImport: string | null;
+}
+
+export interface PledgeLeaderboard {
+  entries: LeaderboardEntry[];
+  caveat: string;
 }

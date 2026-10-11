@@ -4,6 +4,10 @@
 // the service's CSRF check requires.
 import type {
   Hangar,
+  HtfApplyResult,
+  HtfChoices,
+  HtfPreview,
+  PledgeLeaderboard,
   ImportApplyResult,
   ImportApplyRow,
   ImportPreviewRow,
@@ -240,3 +244,25 @@ export async function importApply(
   if (Array.isArray(r)) return { ships: r, errors: [] };
   return { ships: r.ships ?? [], errors: r.errors ?? [] };
 }
+
+// ----- HTF (HangarXPLOR) import -----
+
+export async function htfPreview(file: unknown, memberId?: string): Promise<HtfPreview> {
+  const q = memberId ? `?member=${enc(memberId)}` : '';
+  const r = await request<Partial<HtfPreview>>(`${API_PREFIX}/import/htf/preview${q}`, {
+    method: 'POST',
+    json: { file },
+  });
+  return { rows: r.rows ?? [], missing: r.missing ?? [], partial: !!r.partial, summary: r.summary ?? {} };
+}
+
+export async function htfApply(file: unknown, choices: HtfChoices, memberId?: string): Promise<HtfApplyResult> {
+  const q = memberId ? `?member=${enc(memberId)}` : '';
+  const r = await request<Partial<HtfApplyResult>>(`${API_PREFIX}/import/htf/apply${q}`, {
+    method: 'POST',
+    json: { file, choices },
+  });
+  return { rows: r.rows ?? [], removed: r.removed ?? [], ledgerSynced: r.ledgerSynced !== false };
+}
+
+export const getPledgeLeaderboard = () => request<PledgeLeaderboard>(`${API_PREFIX}/pledges/leaderboard`);

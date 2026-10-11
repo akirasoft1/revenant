@@ -13,6 +13,7 @@ import {
   type FittedCounts,
   type Selections,
 } from '../components/ImportPreview';
+import { HtfImport } from '../components/HtfImport';
 import { shipTitle } from '../components/HangarView';
 import { errorText } from '../components/Status';
 
@@ -262,6 +263,7 @@ export function ImportPage() {
           </div>
         </section>
       )}
+      <HtfImport target={target} forOther={forOther} targetLabel={targetLabel} targetName={targetName} />
     </>
   );
 }

@@ -50,6 +50,34 @@ describe('HangarView', () => {
     expect(screen.getByRole('link', { name: 'Import from spviewer' })).toHaveAttribute('href', '/import');
   });
 
+  it('shows RSI badge, manual marker and the pledge total line', async () => {
+    const rsiShip: Ship = {
+      ...SHIP,
+      shipId: 's2',
+      nickname: null,
+      vehicleName: 'Aurora',
+      rsi: { lti: true, pledgeName: 'Aurora MR', pledgeCost: { amount: 350, currency: 'USD' } },
+    };
+    mockFetch({
+      'GET /api/me': { body: ME },
+      'GET /api/v1/members/111/hangar': {
+        body: {
+          member: '111',
+          ships: [SHIP, rsiShip],
+          pledgeSummary: { totals: { USD: 1200, EUR: 50 }, pledges: 3, ships: 4, lti: 2 },
+        },
+      },
+    });
+    renderWithProviders(
+      <AuthGate>
+        <HangarView memberId="111" editable />
+      </AuthGate>,
+    );
+    expect(await screen.findByText('RSI · LTI · Aurora MR · $350.00')).toBeInTheDocument();
+    expect(screen.getByText('Added manually')).toBeInTheDocument();
+    expect(screen.getByTestId('pledge-total')).toHaveTextContent('$1,200.00 + €50.00 pledged on ships across 3 pledges');
+  });
+
   it('renames a ship inline', async () => {
     const { calls } = setup();
     const user = userEvent.setup();
