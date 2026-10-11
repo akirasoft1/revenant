@@ -29,6 +29,23 @@ const clamp = (s, n = MAX_CHOICE_LEN) => {
   return str.length <= n ? str : `${str.slice(0, n - 1)}…`;
 };
 
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+function formatMoney(amount, currency) {
+  const n = Number(amount) || 0;
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(n);
+  } catch (_) {
+    return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  }
+}
+
+// {USD: 1234.5, EUR: 5} -> "$1,234.50 + €5.00" (USD first, then alphabetical)
+function formatTotals(totals) {
+  const keys = Object.keys(totals || {}).sort((a, b) => (a === 'USD' ? -1 : b === 'USD' ? 1 : a.localeCompare(b)));
+  return keys.length ? keys.map((c) => formatMoney(totals[c], c)).join(' + ') : '$0.00';
+}
+
 function shipLabel(s) {
   return s.nickname ? `${s.nickname} (${s.vehicleName})` : String(s.vehicleName || s.shipId);
 }
@@ -52,7 +69,8 @@ class HangarSlashCommand extends BaseSlashCommand {
           .addUserOption(member))
         .addSubcommand((s) => s.setName('remove').setDescription('Remove a ship from a hangar')
           .addStringOption((o) => o.setName('ship').setDescription('Ship in the hangar').setRequired(true).setAutocomplete(true).setMaxLength(SHIP_MAX))
-          .addUserOption(member)),
+          .addUserOption(member))
+        .addSubcommand((s) => s.setName('leaderboard').setDescription('Who has pledged the most on ships (from RSI imports)')),
       cooldown: 2,
       ephemeral: true,
     });
@@ -96,6 +114,11 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
 
     try {
+      if (sub === 'leaderboard') {
+        // The one public reply: skip deferIfNeeded, which forces ephemeral for this command.
+        if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral: false });
+        return await this._leaderboard(interaction);
+      }
       await this.deferIfNeeded(interaction, true);
       if (sub === 'list') return await this._list(interaction, who);
       if (sub === 'add') return await this._add(interaction, who, actorId);
@@ -126,6 +149,44 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
   }
 
+  async _leaderboard(interaction) {
+    const res = await this.hangarClient.getPledgeLeaderboard();
+    if (!res.ok) {
+      await this.sendReply(interaction, { content: UNAVAILABLE, allowedMentions: { parse: [] } });
+      return;
+    }
+    const entries = (res.data && res.data.entries) || [];
+    if (!entries.length) {
+      const where = this.editorUrl ? ` — see Import on ${this.editorUrl}` : '.';
+      await this.sendReply(interaction, `No one has imported an RSI hangar yet${where}`);
+      return;
+    }
+    const caveat = res.data && res.data.caveat ? `\n_${res.data.caveat}_` : '';
+    const lines = entries.map((e, n) => {
+      const name = e.displayName || `<@${e.member}>`;
+      const parts = [`${e.ships} ship${e.ships === 1 ? '' : 's'}`];
+      if (e.lti) parts.push(`${e.lti} LTI`);
+      if (e.topPledge) parts.push(`top: ${e.topPledge.name} (${formatMoney(e.topPledge.amount, e.topPledge.currency)})`);
+      return `${n < 3 ? MEDALS[n] : `${n + 1}.`} **${name}** — ${formatTotals(e.totals)} · ${parts.join(' · ')}`;
+    });
+    const out = this._fit('**Pledge leaderboard**', lines, MAX_REPLY - caveat.length);
+    await this.sendReply(interaction, { content: out + caveat, allowedMentions: { parse: [] } });
+  }
+
+  // header + as many lines as fit in `budget`, ending "…and N more." when cut.
+  _fit(header, lines, budget) {
+    let out = header;
+    for (let n = 0; n < lines.length; n++) {
+      const more = `\n…and ${lines.length - n} more.`;
+      const candidate = `${out}\n${lines[n]}`;
+      if (candidate.length > budget - (n === lines.length - 1 ? 0 : more.length + 2)) {
+        return out + more;
+      }
+      out = candidate;
+    }
+    return out;
+  }
+
   async _list(interaction, who) {
     const res = await this.hangarClient.getHangar(who.targetId);
     if (!res.ok) {
@@ -139,20 +200,12 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
     const header = `**${who.self ? 'Your' : `<@${who.targetId}>'s`} hangar** (${ships.length} ship${ships.length === 1 ? '' : 's'})`;
     const lines = ships.map((s) => this._shipLine(s));
-    const footer = this._footer();
-    const budget = MAX_REPLY - footer.length;
-    let out = header;
-    for (let n = 0; n < lines.length; n++) {
-      const remaining = lines.length - n;
-      const more = `\n…and ${remaining} more.`;
-      const candidate = `${out}\n${lines[n]}`;
-      // Keep room for the "…and N more" tail unless this is the last line.
-      if (candidate.length > budget - (n === lines.length - 1 ? 0 : more.length + 2)) {
-        out += more;
-        break;
-      }
-      out = candidate;
-    }
+    const ps = res.data && res.data.pledgeSummary;
+    const total = ps && ps.totals && Object.keys(ps.totals).length
+      ? `\n💰 ${formatTotals(ps.totals)} pledged on ships across ${ps.pledges} pledge${ps.pledges === 1 ? '' : 's'}`
+      : '';
+    const footer = total + this._footer();
+    const out = this._fit(header, lines, MAX_REPLY - footer.length);
     await this._say(interaction, out + footer);
   }
 

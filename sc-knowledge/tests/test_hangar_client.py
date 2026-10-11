@@ -203,7 +203,7 @@ def test_client_is_read_only():
     No write-shaped public method may exist, and the only HTTP verb in the
     module source is GET."""
     public = {n for n, _ in inspect.getmembers(HangarClient) if not n.startswith("_")}
-    assert public == {"get_hangar", "aclose"}
+    assert public == {"get_hangar", "pledge_leaderboard", "aclose"}
     import src.hangar as mod
     src = inspect.getsource(mod)
     for verb in ("\"POST\"", "\"PUT\"", "\"PATCH\"", "\"DELETE\"", ".post(", ".put(",
@@ -257,3 +257,29 @@ def test_default_factory_builds_real_id_token_credentials(tmp_path):
     creds = _default_credentials_factory(str(key), URL)
     assert isinstance(creds, service_account.IDTokenCredentials)
     assert creds._target_audience == URL
+
+
+_BOARD = {"entries": [{"member": "111", "displayName": "Akira", "totals": {"USD": 100.0}, "pledges": 1,
+                       "ships": 1, "lti": 1, "topPledge": None, "lastImport": "2026-10-01"}], "caveat": "c"}
+
+
+async def test_pledge_leaderboard_is_a_plain_get_without_acting_member():
+    seen = []
+
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(200, json=_BOARD)
+    c = _client(handler)
+    assert await c.pledge_leaderboard() == _BOARD
+    assert await c.pledge_leaderboard() == _BOARD          # cached
+    assert len(seen) == 1
+    req = seen[0]
+    assert req.method == "GET" and str(req.url) == f"{URL}/v1/pledges/leaderboard"
+    assert req.headers["Authorization"] == "Bearer tok-x"
+    assert "X-Acting-Member" not in req.headers
+
+
+async def test_pledge_leaderboard_5xx_is_unavailable():
+    c = _client(lambda req: httpx.Response(503, json={"error": "unavailable", "message": "down"}))
+    with pytest.raises(HangarUnavailable):
+        await c.pledge_leaderboard()

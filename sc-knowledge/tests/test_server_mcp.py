@@ -14,7 +14,7 @@ from tests.conftest import fixture_transport
 
 EXPECTED = {"sc_find_item", "sc_compare_components", "sc_faction_missions",
             "sc_trade_routes", "sc_commodity_prices", "sc_org_guides", "sc_location_shops",
-            "sc_member_hangar", "sc_member_fit_check"}
+            "sc_member_hangar", "sc_member_fit_check", "sc_pledge_leaderboard"}
 
 GUIDES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "guides")
 
@@ -407,6 +407,8 @@ async def test_hangar_tools_unavailable_when_hangar_url_unset(server_url, monkey
     assert data["error"] == "unavailable"
     data = await _call(server_url, "sc_member_fit_check", {"member_id": "111", "item": "V801-12"})
     assert data["error"] == "unavailable"
+    data = await _call(server_url, "sc_pledge_leaderboard", {})
+    assert data["error"] == "unavailable"
 
 
 class _FakeHangarClient:
@@ -419,6 +421,9 @@ class _FakeHangarClient:
             "vehicleClassName": "RSI_Constellation_Taurus", "nickname": None, "fitted": {},
             "loadout": [{"slot": "hardpoint_radar", "type": "Radar", "sizeMin": 1, "sizeMax": 2,
                          "item": None, "source": "stock"}], "loadoutError": None}]}
+
+    async def pledge_leaderboard(self):
+        return {"entries": [{"member": "111", "displayName": "Akira", "totals": {"USD": 5.0}}], "caveat": "c"}
 
     async def aclose(self):
         self.closed = True
@@ -436,6 +441,8 @@ async def test_hangar_tools_round_trip_with_client():
         data = await _call(url, "sc_member_fit_check", {"member_id": "222", "item": "V801-12"})
         assert data["member"] == "222"
         assert data["ships"][0]["slots"][0]["verdict"] == "upgrade"  # empty radar slot
+        board = await _call(url, "sc_pledge_leaderboard", {})
+        assert board["entries"][0]["displayName"] == "Akira"
     assert fake.closed
 
 
@@ -459,3 +466,16 @@ async def test_hangar_tool_docstrings_scope_and_member_id():
         d = " ".join(tools[name].description.split())
         assert "ONLY" in d and "numeric Discord ID" in d and '"my"' in d and "sandbox" in d
     assert "purchasable_only" in tools["sc_compare_components"].description
+
+
+async def test_pledge_leaderboard_docstring_scope():
+    app = build_app(load(), guides_dir=GUIDES_DIR)
+    async with _running(app) as url:
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        async with streamable_http_client(f"{url}/mcp") as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                tools = {t.name: t for t in (await s.list_tools()).tools}
+    d = " ".join(tools["sc_pledge_leaderboard"].description.split())
+    assert "pledged" in d and "HangarXPLOR" in d and "sandbox" in d

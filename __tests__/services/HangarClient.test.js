@@ -213,6 +213,21 @@ describe('HangarClient', () => {
     expect(res).toMatchObject({ ok: false, error: 'unavailable' });
   });
 
+  test('getPledgeLeaderboard GETs /v1/pledges/leaderboard with no acting member', async () => {
+    fetchImpl.mockResolvedValue(jsonResponse(200, { entries: [], caveat: 'c' }));
+    const res = await make().getPledgeLeaderboard();
+    expect(res).toEqual({ ok: true, data: { entries: [], caveat: 'c' } });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${API}/v1/pledges/leaderboard`);
+    expect(init.method).toBe('GET');
+    expect(init.headers['X-Acting-Member']).toBeUndefined();
+  });
+
+  test('getPledgeLeaderboard never throws', async () => {
+    fetchImpl.mockRejectedValue(new Error('boom'));
+    expect(await make().getPledgeLeaderboard()).toMatchObject({ ok: false, error: 'unavailable' });
+  });
+
   test('not configured -> unavailable without any call', async () => {
     const res = await make({ apiUrl: '' }).getHangar('111');
     expect(res).toMatchObject({ ok: false, error: 'unavailable' });

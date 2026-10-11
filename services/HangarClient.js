@@ -86,6 +86,10 @@ class HangarClient {
     });
   }
 
+  getPledgeLeaderboard({ timeoutMs } = {}) {
+    return this._request('GET', '/v1/pledges/leaderboard', { timeoutMs });
+  }
+
   searchVehicles(q, { limit = 25, timeoutMs } = {}) {
     const params = new URLSearchParams({ q: q || '', limit: String(limit) });
     return this._request('GET', `/v1/catalog/vehicles?${params.toString()}`, { timeoutMs });

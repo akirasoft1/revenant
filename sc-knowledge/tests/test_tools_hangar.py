@@ -57,6 +57,13 @@ class FakeHangar:
         self.raise_exc = raise_exc
         self.calls = []
 
+    async def pledge_leaderboard(self):
+        if self.raise_exc:
+            raise self.raise_exc
+        return {"entries": [{"member": AKIRA, "displayName": "Akira", "totals": {"USD": 1234.5}, "pledges": 3,
+                             "ships": 4, "lti": 2, "topPledge": {"name": "Idris", "amount": 1500, "currency": "USD"},
+                             "lastImport": "2026-10-01"}], "caveat": "per HangarXPLOR imports"}
+
     async def get_hangar(self, member_id):
         self.calls.append(member_id)
         if self.raise_exc:
@@ -472,3 +479,51 @@ async def test_member_hangar_bounded_by_deadline():
         TAURUS_MEMBER)
     assert r["error"] == "unavailable" and "timed out" in r["detail"]
     assert time.monotonic() - t0 < 0.6
+
+
+RSI_HARBINGER = {**HARBINGER, "rsi": {"key": "1:x:0", "pledgeId": "1", "shipCode": "x", "ordinal": 0,
+                                      "pledgeName": "Standalone Ship - Harbinger", "pledgeDate": "2025-01-02",
+                                      "pledgeCost": "$250.00 USD", "lti": True, "warbond": False,
+                                      "rsiName": "Vanguard Harbinger", "importedAt": "2026-10-01"}}
+
+
+def _rsi_tools(hangars, exc=None):
+    class _C(FakeHangar):
+        async def get_hangar(self, member_id):
+            return hangars[member_id]
+    return HangarTools(_C(raise_exc=exc), FakeItems())
+
+
+async def test_member_hangar_passes_rsi_pledge_fields_and_summary():
+    summary = {"totals": {"USD": 250.0}, "pledges": 1, "ships": 1, "lti": 1}
+    t = _rsi_tools({AKIRA: {"member": AKIRA, "ships": [RSI_HARBINGER, TAURUS], "pledgeSummary": summary}})
+    out = await t.member_hangar(AKIRA)
+    assert out["pledgeSummary"] == summary
+    h = next(s for s in out["ships"] if s["vehicle"] == "Vanguard Harbinger")
+    assert h["rsi"] == {"pledgeName": "Standalone Ship - Harbinger", "pledgeDate": "2025-01-02",
+                        "pledgeCost": "$250.00 USD", "lti": True, "warbond": False,
+                        "rsiName": "Vanguard Harbinger"}
+    assert "rsi" not in next(s for s in out["ships"] if s["vehicle"] == "Constellation Taurus")
+    one = await t.member_hangar(AKIRA, "Harbinger")
+    assert one["ship"]["rsi"]["lti"] is True and one["pledgeSummary"] == summary
+
+
+async def test_member_hangar_without_pledge_data_has_no_pledge_keys():
+    out = await HangarTools(FakeHangar(), FakeItems()).member_hangar(AKIRA)
+    assert "pledgeSummary" not in out
+    assert all("rsi" not in s for s in out["ships"])
+
+
+async def test_pledge_leaderboard_ok():
+    out = await HangarTools(FakeHangar(), FakeItems()).pledge_leaderboard()
+    assert out["entries"][0]["totals"] == {"USD": 1234.5}
+    assert out["entries"][0]["displayName"] == "Akira"
+    assert out["caveat"] == "per HangarXPLOR imports"
+    assert "error" not in out
+
+
+async def test_pledge_leaderboard_unavailable():
+    out = await HangarTools(FakeHangar(raise_exc=HangarUnavailable("down")), FakeItems()).pledge_leaderboard()
+    assert out["error"] == "unavailable"
+    out = await HangarTools(None, FakeItems()).pledge_leaderboard()
+    assert out["error"] == "unavailable"

@@ -114,6 +114,9 @@ def _labels(ships: list[dict]) -> dict[str, str]:
     return {sid: (f"{v} (ship {sid})" if counts[v] > 1 else v) for sid, v in base.items()}
 
 
+_RSI_FIELDS = ("pledgeName", "pledgeDate", "pledgeCost", "lti", "warbond", "rsiName")
+
+
 def _compact_ship(ship: dict, label: str) -> dict:
     out = {"shipId": ship.get("shipId"), "label": label, "vehicle": ship.get("vehicleName"),
            "nickname": ship.get("nickname")}
@@ -126,6 +129,9 @@ def _compact_ship(ship: dict, label: str) -> dict:
                            "size": _size_label(s.get("sizeMin"), s.get("sizeMax")),
                            "item": (s.get("item") or {}).get("name"), "source": s.get("source")}
                           for s in loadout]
+    rsi = ship.get("rsi")
+    if isinstance(rsi, dict):
+        out["rsi"] = {k: rsi[k] for k in _RSI_FIELDS if k in rsi}
     return out
 
 
@@ -261,6 +267,22 @@ class HangarTools:
         except HangarError as e:
             return None, error(e.code, e.message)
 
+    async def pledge_leaderboard(self) -> dict:
+        if self._client is None:
+            return error("unavailable", "the member hangar is not configured on this "
+                                        "server (HANGAR_API_URL unset)")
+        try:
+            body = await asyncio.wait_for(self._client.pledge_leaderboard(), self._deadline_s)
+        except TimeoutError:
+            return error("unavailable", f"pledge leaderboard unavailable: timed out after "
+                                        f"{self._deadline_s}s")
+        except HangarUnavailable as e:
+            return error("unavailable", f"pledge leaderboard unavailable: {e}")
+        except HangarError as e:
+            return error(e.code, e.message)
+        return {"source": "hangar-service (member HangarXPLOR imports)",
+                "entries": body.get("entries") or [], "caveat": body.get("caveat")}
+
     async def _target(self, item: str) -> dict:
         try:
             return await asyncio.wait_for(self._items.component(item), self._item_timeout_s)
@@ -276,6 +298,8 @@ class HangarTools:
         ships = body.get("ships") or []
         labels = _labels(ships)
         out = {"source": "hangar-service (member-recorded loadouts)", "member": body.get("member")}
+        if body.get("pledgeSummary"):
+            out["pledgeSummary"] = body["pledgeSummary"]
         if not ship or not ship.strip():
             out.update(ships=[_compact_ship(s, labels[s["shipId"]]) for s in ships], count=len(ships))
             if not ships:
