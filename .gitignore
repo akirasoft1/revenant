@@ -69,3 +69,6 @@ tools/wireframes/out/
 tools/.venv/
 tools/.pytest_cache/
 tools/**/__pycache__/
+
+# HangarXPLOR exports hold personal pledge data (never commit)
+shiplist.json
