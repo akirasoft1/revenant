@@ -337,3 +337,19 @@ def test_csp_image_hosts_come_from_the_catalog_list():
     from src.catalog import IMAGE_HOSTS
     from src.static_site import IMAGE_ORIGINS
     assert IMAGE_ORIGINS == tuple(f"https://{h}" for h in IMAGE_HOSTS)
+
+
+
+def test_vehicle_hero_rewrites_mediawiki_thumbnail_to_1280px():
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/7/73/Harb.jpg/600px-Harb.jpg.webp?64hw5",
+                     "original_url": "https://media.starcitizen.tools/7/73/Harb.jpg?64hw5",
+                     "original_width": 3840, "original_height": 2160}]}
+    assert vehicle_profile_extra(v)["image"] == \
+        "https://media.starcitizen.tools/thumb/7/73/Harb.jpg/1280px-Harb.jpg.webp?64hw5"
+
+
+def test_vehicle_hero_uses_original_when_smaller_than_hero_width():
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/a/b/S.jpg/600px-S.jpg.webp",
+                     "original_url": "https://media.starcitizen.tools/a/b/S.jpg",
+                     "original_width": 1000, "original_height": 500}]}
+    assert vehicle_profile_extra(v)["image"] == "https://media.starcitizen.tools/a/b/S.jpg"

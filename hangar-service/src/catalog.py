@@ -17,6 +17,7 @@ on the parent's ``editable_children`` would hide every swappable gun.
 import asyncio
 import copy
 import logging
+import re
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -184,11 +185,46 @@ def _first_image(v: Any) -> str | None:
     return _pick_image(v, ("thumbnail_url", "original_url"))
 
 
+# The ship panel is ~480px wide (2x for high-DPI); full-size Wiki originals are
+# up to 3840x2160 / ~1 MB, the default 600px thumbnails look soft. MediaWiki
+# (media.starcitizen.tools) renders any width on request: rewriting the
+# thumbnail's "<N>px-" segment to 1280px gives a sharp ~130 KB WebP (checked
+# 2026-10-11: Harbinger 1280px = 133 KB vs original 921 KB).
+HERO_WIDTH = 1280
+_MW_THUMB = re.compile(r"^(https://media\.starcitizen\.tools/thumb/.+/)(\d+)px-([^/]+)$")
+
+
 def _hero_image(v: Any) -> str | None:
-    """Vehicle image for the terminal's ship panel: the full-size
-    ``original_url`` else ``thumbnail_url`` -- the Wiki's 600px thumbnails look
-    soft at panel size. Same host filtering/preference as ``_first_image``."""
-    return _pick_image(v, ("original_url", "thumbnail_url"))
+    """Vehicle image for the terminal's ship panel. Same entry choice as
+    ``_first_image`` (host filtering/preference); for a MediaWiki thumbnail the
+    width is rewritten to ``HERO_WIDTH`` (or the original is used when it is
+    smaller than that); elsewhere the full-size ``original_url`` else the
+    thumbnail."""
+    imgs = v.get("images") if isinstance(v, dict) else None
+    if not isinstance(imgs, list):
+        return None
+    best: tuple[int, str] | None = None
+    for img in imgs:
+        if not isinstance(img, dict):
+            continue
+        thumb, orig = img.get("thumbnail_url"), img.get("original_url")
+        url = None
+        m = _MW_THUMB.match(thumb) if isinstance(thumb, str) else None
+        if m and _allowed_image_url(thumb) is not None:
+            width = img.get("original_width")
+            if isinstance(width, (int, float)) and 0 < width <= HERO_WIDTH and _allowed_image_url(orig) is not None:
+                url = orig
+            else:
+                url = f"{m.group(1)}{HERO_WIDTH}px-{m.group(3)}"
+        else:
+            for cand in (orig, thumb):
+                if _allowed_image_url(cand) is not None:
+                    url = cand
+                    break
+        rank = _allowed_image_url(url) if url else None
+        if rank is not None and (best is None or rank < best[0]):
+            best = (rank, url)
+    return best[1] if best else None
 
 
 def _description(d: Any) -> str | None:
