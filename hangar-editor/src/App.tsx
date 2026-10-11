@@ -74,6 +74,9 @@ export function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>
+      <footer className="site-footer">
+        Unofficial fan site — not affiliated with Cloud Imperium Games. Images: Star Citizen Wiki / starcitizen.tools.
+      </footer>
     </AuthGate>
   );
 }

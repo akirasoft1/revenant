@@ -1,28 +1,39 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fitSlot, getHangar, getVehicleSlots, resetSlot } from '../api/client';
-import type { Hangar, LoadoutSlot, Ship, SlotOption } from '../api/types';
+import { fitSlot, getHangar, getVehiclePositions, getVehicleSlots, resetShip, resetSlot } from '../api/client';
+import type { Hangar, Ship, SlotOption } from '../api/types';
 import { canEdit, useMe } from '../auth/AuthGate';
-import { TYPE_ORDER, slotLabel, typeLabel } from '../lib/labels';
-import { sizeLabel } from '../lib/picker';
 import { shipTitle } from '../components/HangarView';
-import { SlotPicker } from '../components/SlotPicker';
+import { ClassicShipView, groupSlots } from '../components/ClassicShipView';
 import { ErrorNote, Loading, errorText } from '../components/Status';
+import { loadViewPref, saveViewPref, type ViewPref } from '../lib/terminal';
 import { MemberId, useMemberName } from './MemberHangarPage';
 
-export function groupSlots(loadout: LoadoutSlot[]): [string, LoadoutSlot[]][] {
-  const groups = new Map<string, LoadoutSlot[]>();
-  for (const s of loadout) {
-    const list = groups.get(s.type) ?? [];
-    list.push(s);
-    groups.set(s.type, list);
+// Kept for existing importers.
+export { groupSlots };
+
+const WIDE_QUERY = '(min-width: 900px)';
+
+function matchesWide(): boolean {
+  try {
+    return typeof window.matchMedia === 'function' && window.matchMedia(WIDE_QUERY).matches;
+  } catch {
+    return false;
   }
-  const rank = (t: string) => {
-    const i = TYPE_ORDER.indexOf(t);
-    return i === -1 ? TYPE_ORDER.length : i;
-  };
-  return [...groups.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]));
+}
+
+/** Live `(min-width: 900px)` match; false where matchMedia is unavailable. */
+function useWide(): boolean {
+  const [wide, setWide] = useState(matchesWide);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(WIDE_QUERY);
+    const onChange = () => setWide(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  return wide;
 }
 
 export function ShipDetailPage() {
@@ -31,6 +42,13 @@ export function ShipDetailPage() {
   const { memberId = '', shipId = '' } = useParams();
   const ownerName = useMemberName(memberId);
   const editable = canEdit(me, memberId);
+  const wide = useWide();
+  const [pref, setPref] = useState<ViewPref>(() => loadViewPref());
+  const terminal = wide && pref === 'terminal';
+  const choose = (v: ViewPref) => {
+    setPref(v);
+    saveViewPref(v);
+  };
   const hangar = useQuery({ queryKey: ['hangar', memberId], queryFn: () => getHangar(memberId) });
   const ship = hangar.data?.ships.find((s) => s.shipId === shipId);
   const stock = useQuery({
@@ -39,8 +57,14 @@ export function ShipDetailPage() {
     enabled: !!ship && !ship.loadoutError,
     staleTime: 60 * 60_000,
   });
+  // Warm the positions cache for the Terminal view (consumed there).
+  useQuery({
+    queryKey: ['vehicle-positions', ship?.vehicleUuid],
+    queryFn: () => getVehiclePositions(ship!.vehicleUuid),
+    enabled: terminal && !!ship && !ship.loadoutError,
+    staleTime: 60 * 60_000,
+  });
   const stockBySlot = new Map((stock.data?.slots ?? []).map((s) => [s.slot, s.stockItem]));
-  const [picking, setPicking] = useState<LoadoutSlot | null>(null);
 
   const putShip = (updated: Ship) =>
     qc.setQueryData<Hangar>(['hangar', memberId], (old) =>
@@ -49,14 +73,16 @@ export function ShipDetailPage() {
 
   const fit = useMutation({
     mutationFn: ({ slot, item }: { slot: string; item: SlotOption }) => fitSlot(memberId, shipId, slot, item.uuid),
-    onSuccess: (updated) => {
-      putShip(updated);
-      setPicking(null);
-    },
+    onSuccess: putShip,
   });
   const reset = useMutation({
     mutationFn: (slot: string) => resetSlot(memberId, shipId, slot),
     onSuccess: putShip,
+  });
+  // The whole-ship reset answers with the chat-edit shape, not a Ship: refetch the hangar.
+  const resetAll = useMutation({
+    mutationFn: () => resetShip(memberId, shipId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hangar', memberId] }),
   });
 
   if (hangar.isPending) return <Loading label="Loading ship…" />;
@@ -74,6 +100,21 @@ export function ShipDetailPage() {
   }
 
   const hangarLink = memberId === me.discordId ? '/' : `/members/${memberId}`;
+  const loadout = ship.loadout;
+  const viewProps = loadout && {
+    memberId,
+    ship,
+    loadout,
+    stockBySlot,
+    vehicle: stock.data?.vehicle,
+    editable,
+    onFit: (slot: string, item: SlotOption) => fit.mutateAsync({ slot, item }),
+    onReset: (slot: string) => reset.mutateAsync(slot),
+    onResetShip: () => resetAll.mutateAsync(),
+    busy: fit.isPending || reset.isPending || resetAll.isPending,
+    error: fit.isError ? errorText(fit.error) : resetAll.isError ? errorText(resetAll.error) : null,
+    onDismissError: () => fit.reset(),
+  };
   return (
     <>
       <p className="crumbs">
@@ -90,91 +131,31 @@ export function ShipDetailPage() {
         {shipTitle(ship)} {!editable && <span className="badge">read-only</span>}
       </h1>
       {ship.nickname && <p className="muted">{ship.vehicleName}</p>}
+      {wide && loadout && loadout.length > 0 && (
+        <div className="view-toggle" role="group" aria-label="Ship view">
+          <button className={`btn btn-small${pref === 'classic' ? '' : ' btn-ghost'}`} aria-pressed={pref === 'classic'} onClick={() => choose('classic')}>
+            Classic
+          </button>
+          <button className={`btn btn-small${pref === 'terminal' ? '' : ' btn-ghost'}`} aria-pressed={pref === 'terminal'} onClick={() => choose('terminal')}>
+            Terminal
+          </button>
+        </div>
+      )}
 
-      {ship.loadout == null ? (
+      {loadout == null ? (
         <p className="alert alert-warn">
           {ship.loadoutError === 'not_found'
             ? 'This ship is no longer in the game catalog, so its slots cannot be shown.'
             : 'The game catalog is unavailable right now; slots cannot be shown. Try again shortly.'}
         </p>
-      ) : ship.loadout.length === 0 ? (
+      ) : loadout.length === 0 ? (
         <p className="empty">This ship has no editable component slots.</p>
+      ) : terminal ? (
+        // Task 3 replaces this placeholder with the lazily-loaded TerminalShipView
+        // (props: viewProps + onExit = () => choose('classic')).
+        <div data-testid="terminal-view" />
       ) : (
-        <>
-          {reset.isError && <p className="alert alert-error">{errorText(reset.error)}</p>}
-          {groupSlots(ship.loadout).map(([type, slots]) => (
-            <section key={type} className="slot-group">
-              <h2>{typeLabel(type)}</h2>
-              <table className="slot-table">
-                <thead>
-                  <tr>
-                    <th>Slot</th>
-                    <th>Size</th>
-                    <th>Item</th>
-                    <th>
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {slots.map((s) => {
-                    const stockItem = stockBySlot.get(s.slot);
-                    return (
-                      <tr key={s.slot}>
-                        <td data-label="Slot" className="slot-name" title={s.slot}>
-                          {slotLabel(s.slot)}
-                        </td>
-                        <td data-label="Size">{sizeLabel(s.sizeMin, s.sizeMax)}</td>
-                        <td data-label="Item">
-                          <span className="item-name">{s.item?.name ?? <em className="muted">empty</em>}</span>{' '}
-                          <span className={s.source === 'fitted' ? 'badge badge-fitted' : 'badge badge-stock'}>
-                            {s.source}
-                          </span>
-                          {s.source === 'fitted' && stockItem && (
-                            <span className="muted small stock-note"> stock: {stockItem.name}</span>
-                          )}
-                        </td>
-                        <td className="slot-actions">
-                          {editable && (
-                            <>
-                              <button className="btn btn-small" onClick={() => setPicking(s)}>
-                                Change
-                              </button>
-                              {s.source === 'fitted' && (
-                                <button
-                                  className="btn btn-small btn-ghost"
-                                  disabled={reset.isPending && reset.variables === s.slot}
-                                  onClick={() => reset.mutate(s.slot)}
-                                >
-                                  Reset to stock
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </section>
-          ))}
-        </>
-      )}
-
-      {picking && (
-        <SlotPicker
-          vehicleUuid={ship.vehicleUuid}
-          slot={picking}
-          stockUuid={stockBySlot.get(picking.slot)?.uuid ?? null}
-          busy={fit.isPending}
-          error={fit.isError ? errorText(fit.error) : null}
-          onPick={(item) => fit.mutate({ slot: picking.slot, item })}
-          onClose={() => {
-            setPicking(null);
-            fit.reset();
-          }}
-        />
+        <ClassicShipView {...viewProps!} />
       )}
     </>
   );

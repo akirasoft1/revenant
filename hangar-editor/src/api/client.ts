@@ -11,6 +11,7 @@ import type {
   MemberSummary,
   Ship,
   SlotOption,
+  VehiclePositions,
   VehicleSlots,
   VehicleSummary,
 } from './types';
@@ -159,6 +160,32 @@ export async function searchVehicles(q: string, signal?: AbortSignal): Promise<V
 
 export const getVehicleSlots = (uuid: string) =>
   request<VehicleSlots>(`${API_PREFIX}/catalog/vehicles/${enc(uuid)}/slots`);
+
+export const getVehiclePositions = (uuid: string) =>
+  request<VehiclePositions>(`${API_PREFIX}/catalog/vehicles/${enc(uuid)}/positions`);
+
+/** Whole-ship reset. Response is the chat-edit shape (`{ship:{shipId,label}, changes}`), NOT a Ship. */
+export const resetShip = (memberId: string, shipId: string) =>
+  request<unknown>(`${member(memberId)}/ships/${enc(shipId)}/reset`, { method: 'POST', json: { slot: 'all' } });
+
+const reportedImages = new Set<string>();
+
+/** Fire-and-forget: tell the server an image failed to load. One report per URL per page load. */
+export function reportImageError(url: string, context: string): void {
+  if (reportedImages.has(url)) return;
+  reportedImages.add(url);
+  try {
+    void fetch(`${API_PREFIX}/client-events/image-error`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, context }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* never let telemetry break the UI */
+  }
+}
 
 /**
  * [Task 2] Compatible items for one slot. ASSUMPTION: response is
