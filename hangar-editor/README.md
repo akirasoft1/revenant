@@ -57,8 +57,10 @@ our own CSS and inline SVG icons, no game assets). Spec:
 - **Keyboard:** `A` / `D` previous / next port in the current tab (wraps), `R`
   reset port (confirm), `Esc` back to Classic (persisted). Ignored while typing
   in an input/textarea/select/contenteditable or with Ctrl/Meta/Alt held.
-- **Images:** item and ship images come from `https://cdn.star-citizen.wiki` and
-  `https://media.starcitizen.tools` (the only image hosts the CSP allows). A failed
+- **Images:** item and ship images come from `https://cdn.star-citizen.wiki`,
+  `https://media.starcitizen.tools` and `https://cstone.space` (the only image hosts
+  the CSP allows; the server returns only URLs on those hosts, preferring the wiki CDNs
+  -- the list is `IMAGE_HOSTS` in `hangar-service/src/catalog.py`). A failed
   image falls back to our type icon and is reported once per URL per page load to
   `POST /api/v1/client-events/image-error` (`{url, context}` where context is
   `card`, `compare`, `hero` or `positions-view`); hangar-service logs it as
