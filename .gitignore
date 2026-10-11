@@ -60,3 +60,8 @@ OrgGuides/
 # Local secret files of any .env variant (e.g. .env_sc_hanger) — never commit.
 .env_*
 .env-*
+
+# Extracted game geometry and wireframe bundles (never commit -- this repo is public)
+*.swf.gz
+*.glb
+tools/wireframes/out/
