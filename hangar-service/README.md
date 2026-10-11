@@ -328,6 +328,40 @@ non-array / over 500 entities -> 400 `invalid_request`, catalog unreadable ->
   then other currencies, then member id. `GET /members/{id}/hangar` adds
   `pledgeSummary: {totals, pledges, ships, lti}` (`lti` = ships in LTI pledges) when the member has RSI ships.
 
+## Wireframe models (`/api/v1/models`)
+
+Spec: `docs/superpowers/specs/2026-10-11-ship-wireframes-design.md`. Ship wireframe bundles
+(`.swf.gz`, built offline by `tools/wireframes`) are uploaded by admins and drawn by the
+editor's Terminal view. All model routes are `/api/v1` only (browser API).
+
+| Method | Path | Who | Result |
+|---|---|---|---|
+| POST | `/api/v1/models` | admin session (`HANGAR_ADMIN_IDS`) + same-origin | raw `application/octet-stream` body, <= 2 MB (413 `too_large`); 200 `{kind, className, vehicleUuid, vehicleName, lines, bytes, sha256, build, slots: {matched, missing, ambiguous}, uploadedBy, uploadedAt}` |
+| GET | `/api/v1/models` | admin session | `{models: [same shape]}` |
+| DELETE | `/api/v1/models/{kind}/{className}` | admin session + same-origin | 204; 404 if absent |
+| GET | `/api/v1/models/vehicle/{uuid}/wireframe` | any principal | bundle bytes, `ETag: "<sha256>"`, `Cache-Control: private, max-age=86400`, 304 on `If-None-Match`; 404 |
+
+`/catalog/vehicles/{uuid}/slots` also carries `vehicle.hasWireframe` (false when the store is
+unconfigured or errors). Service tokens and non-admin members get 403 on upload/list/delete.
+
+* **Validation** (400 `invalid_request` naming the problem): gzip, magic `SWF1`, header JSON with
+  the required keys, `kind == "vehicle"`, `lines <= 80,000`, `nodes <= 5,000`, decompressed
+  <= 8 MB, payload length == `lines * 12`.
+* **Slot matching** (`src/slot_match.py`): for each catalog slot id `a/b/c`, nodes named `a`
+  (case-insensitive), then for each further segment the nearest descendants of that name
+  (BFS, not descending past a match). One -> `{xyz}`; none -> `missing`; several -> the first if
+  all lie within 0.05 m, else `ambiguous`. The result REPLACES `vehiclePositions/{vehicleUuid}`
+  with `{slots, space: "gltf-y-up-m", source: "extracted", className, updatedAt, updatedBy}`.
+  A class name not in the catalog is stored with `vehicleUuid: null` and writes no positions.
+* **Storage:** bytes at `models/<kind>/<className>.swf.gz` in the bucket, metadata in Firestore
+  `models/{kind}:{className}` (written after the object; the object is removed if that fails).
+  Delete removes both, plus the positions doc only when its `source == "extracted"`.
+* **Bucket + IAM (coordinator):** a private bucket (uniform access, no public access), and
+  `roles/storage.objectAdmin` on it for `hangar-runtime@revenant-discord-bot-2.iam.gserviceaccount.com`.
+  Deploy with `HANGAR_MODELS_BUCKET=<bucket>`.
+* Logs: INFO `hangar: model upload kind=… class=… vehicle=… lines=… bytes=… matched=… missing=… ambiguous=… by=…`
+  and `hangar: model delete kind=… class=… vehicle=… positions_removed=… by=…`.
+
 ## Auth
 
 Two layers:
@@ -435,6 +469,7 @@ Two layers:
 | `HANGAR_VERSION` | image build arg `GIT_SHA` (else `$K_REVISION` or `dev`) | Reported by `/health` and `/version.txt`, sent in the Wiki User-Agent |
 | `HANGAR_STATIC_DIR` | `/app/static` in the image; locally `../hangar-editor/dist` | The built web editor. Missing / no `index.html` → the API still works, editor paths 404 (one WARNING at startup) |
 | `HANGAR_RUM_ORIGINS` | *(none)* | Comma/space-separated https origins (Dynatrace RUM script CDN + beacon endpoint) added to the SPA CSP's `script-src` and `connect-src`. Only needed when the image was built with `VITE_DT_RUM_SRC`; non-https entries are ignored with a WARNING |
+| `HANGAR_MODELS_BUCKET` | *(empty → model routes answer 503 `unavailable`; everything else unaffected)* | Private GCS bucket for wireframe bundles (production `revenant-discord-bot-2-hangar-models`) |
 | `HANGAR_STORAGE` | `firestore` | `memory` = non-persistent, **local dev only** (refused when `K_SERVICE` is set, i.e. on Cloud Run) |
 | `HANGAR_PUBLIC_ORIGIN` | `https://hangar.aklabs.io` | Web editor origin: CSRF check + OAuth redirect URI (`<origin>/api/auth/callback`). Trailing slash dropped |
 | `DISCORD_CLIENT_ID` | *(empty → browser login off)* | Discord application client ID (`1558216042151419935`) |

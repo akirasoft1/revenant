@@ -83,6 +83,8 @@ class Config:
     # Dynatrace RUM origins (script CDN, beacon endpoint) allowed by the SPA's
     # CSP for scripts and connections; empty = RUM not allowed (not configured).
     rum_origins_raw: str = ""
+    # Private GCS bucket holding wireframe bundles; empty = model routes answer 503.
+    models_bucket: str = ""
 
     def _rum_entries(self) -> list[str]:
         return [x for x in re.split(r"[\s,]+", self.rum_origins_raw) if x]
@@ -169,6 +171,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         allowed_guild_ids=_csv(env.get("HANGAR_ALLOWED_GUILD_IDS")),
         static_dir=(env.get("HANGAR_STATIC_DIR") or "").strip() or DEFAULT_STATIC_DIR,
         rum_origins_raw=(env.get("HANGAR_RUM_ORIGINS") or "").strip(),
+        models_bucket=(env.get("HANGAR_MODELS_BUCKET") or "").strip(),
         max_ships_per_member=_positive_int(env, "HANGAR_MAX_SHIPS_PER_MEMBER", DEFAULT_MAX_SHIPS_PER_MEMBER),
     )
 

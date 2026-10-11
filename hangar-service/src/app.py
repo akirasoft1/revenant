@@ -17,6 +17,10 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     GET    /v1/catalog/vehicles/{uuid}/slots
     GET    /v1/catalog/vehicles/{uuid}/positions                hardpoint positions doc or {}
     POST   /api/v1/client-events/image-error                    browser-only, 204
+    POST   /api/v1/models                                   admin session: upload a .swf.gz wireframe bundle
+    GET    /api/v1/models                                   admin session: stored models
+    DELETE /api/v1/models/{kind}/{className}                admin session, 204
+    GET    /api/v1/models/vehicle/{uuid}/wireframe          bundle bytes (ETag), any principal
     GET    /v1/catalog/items?type=&size=&q=
     GET    /v1/members                                      member directory (>= 1 ship)
     GET    /v1/catalog/slot-options?vehicle=<uuid>&slot=<id> compatible items for one slot
@@ -55,6 +59,7 @@ import asyncio
 from datetime import datetime, timezone
 import contextlib
 import dataclasses
+import hashlib
 import hmac
 import json
 import logging
@@ -84,9 +89,11 @@ from .http import UpstreamError
 from .loadout import check_compatible, effective_loadout
 from .options import slot_options
 from .client_events import SlidingWindowLimiter, log_image_error
+from .models import GcsFirestoreModelStore, InMemoryModelStore, ModelStore
 from .positions import FirestorePositionsStore, InMemoryPositionsStore, PositionsStore
 from .repository import UNSET, InMemoryShipRepository, RepositoryError, ShipRepository
-from . import htf
+from . import htf, swf
+from .slot_match import match_slots as match_bundle_slots
 from .ship_resolve import resolve_ship, ship_labels
 from .item_resolve import resolve_item
 from .slot_hint import ALL_WORDS, BOTH, match_slots
@@ -447,7 +454,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                clock: Callable[[], float] | None = None,
                monotonic: Callable[[], float] = time.monotonic,
                login_gate: LoginGate | None = None,
-               positions: PositionsStore | None = None) -> FastAPI:
+               positions: PositionsStore | None = None,
+               models: ModelStore | None = None) -> FastAPI:
     owns_catalog = catalog is None
     if catalog is None:
         catalog = build_catalog(config.wiki_base, version=config.version)
@@ -475,9 +483,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             log.error("hangar: HANGAR_AUDIENCE is not set -- every authenticated request will be "
                       "rejected (401) until it is set to this service's URL")
         if app.state.repository is None:
-            app.state.repository, built_positions = _build_repository(config)
+            app.state.repository, built_positions, fs_client = _build_repository(config)
             if app.state.positions is None:
                 app.state.positions = built_positions
+            if app.state.models is None:
+                app.state.models = _build_model_store(config, fs_client)
         warm_task = asyncio.create_task(catalog.warm()) if warm else None
         log.info("hangar-service %s ready (storage=%s, wiki=%s, allowed callers=%s, admins=%d)",
                  config.version, config.storage, config.wiki_base,
@@ -507,6 +517,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     # lifespan builds the Firestore store next to the Firestore repository.
     app.state.positions = positions if positions is not None else (
         InMemoryPositionsStore() if repository is not None else None)
+    # Wireframe models: only with a bucket configured (tests inject a store);
+    # otherwise None and the model routes answer 503 ``unavailable``.
+    app.state.models = models
     app.state.image_error_limiter = SlidingWindowLimiter(limit=20, window_s=60)
     app.state.authenticator = Authenticator(resolvers)
     app.state.session_codec = codec
@@ -937,7 +950,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if vehicle is None or slots is None:
             raise _not_found(f"no vehicle {uuid!r}")
         profile = await catalog.vehicle_profile(uuid)
-        return {"vehicle": profile if profile is not None else vehicle, "slots": [s.to_dict() for s in slots]}
+        out = dict(profile if profile is not None else vehicle)
+        out["hasWireframe"] = await _has_wireframe(app.state.models, vehicle["uuid"])
+        return {"vehicle": out, "slots": [s.to_dict() for s in slots]}
 
     @router.get("/catalog/vehicles/{uuid}/positions")
     async def vehicle_positions(uuid: str, principal: Principal = Depends(get_principal)):
@@ -1387,6 +1402,119 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         log_image_error(log, url=url, context=context, member=principal.acting_member)
         return Response(status_code=204)
 
+    # ----- wireframe models (browser API only: /api/v1 prefix) -----
+
+    def model_store() -> ModelStore:
+        store = app.state.models
+        if store is None:
+            raise ApiError(503, "unavailable", "wireframe models are not configured (HANGAR_MODELS_BUCKET unset)")
+        return store
+
+    def require_model_admin(principal: Principal, request: Request, *, write: bool) -> None:
+        if principal.kind != "session" or principal.subject not in config.admin_ids:
+            raise Forbidden("wireframe model management is for admins signed in to the web editor")
+        if write:
+            check_same_origin(request, config.public_origin)
+
+    def model_key(kind: str, class_name: str) -> None:
+        if kind != "vehicle" or not swf.CLASS_NAME_RE.fullmatch(class_name):
+            raise _bad("kind must be 'vehicle' and className a valid class name")
+
+    @browser_router.post("/models")
+    async def upload_model(request: Request, principal: Principal = Depends(get_principal)):
+        require_model_admin(principal, request, write=True)
+        store = model_store()
+        limit = swf.MAX_UPLOAD
+        declared = request.headers.get("content-length") or ""
+        too_large = ApiError(413, "too_large", f"upload is over the {limit // (1024 * 1024)} MB limit")
+        if re.fullmatch(r"[0-9]+", declared) and int(declared) > limit:
+            raise too_large
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise too_large
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        try:
+            bundle = swf.parse(data)
+        except swf.SwfError as e:
+            raise _bad(f"invalid wireframe bundle: {e}") from None
+        class_name = bundle.header["className"]
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        vehicle = await app.state.catalog.vehicle_by_class_name(class_name)
+        result = None
+        if vehicle is not None:
+            slots = await app.state.catalog.slots(vehicle["uuid"]) or []
+            result = match_bundle_slots(bundle.nodes, [sl.name for sl in slots])
+        slot_summary = ({"matched": len(result.slots), "missing": result.missing, "ambiguous": result.ambiguous}
+                        if result else {"matched": 0, "missing": [], "ambiguous": []})
+        meta = {"kind": "vehicle", "className": class_name,
+                "vehicleUuid": vehicle["uuid"] if vehicle else None,
+                "vehicleName": vehicle.get("name") if vehicle else None,
+                "lines": bundle.lines, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                "build": bundle.build, "slots": slot_summary,
+                "uploadedBy": principal.subject, "uploadedAt": now}
+        await store.put("vehicle", class_name, data, meta)
+        if result is not None:
+            try:
+                await app.state.positions.put(vehicle["uuid"], {
+                    "slots": result.slots, "space": bundle.header["space"], "source": "extracted",
+                    "className": class_name, "updatedAt": now, "updatedBy": principal.subject})
+            except RepositoryError:
+                with contextlib.suppress(Exception):
+                    await store.delete("vehicle", class_name)
+                raise
+        log.info("hangar: model upload kind=vehicle class=%s vehicle=%s lines=%d bytes=%d matched=%d "
+                 "missing=%d ambiguous=%d by=%s", class_name, meta["vehicleUuid"], bundle.lines, len(data),
+                 slot_summary["matched"], len(slot_summary["missing"]), len(slot_summary["ambiguous"]),
+                 principal.subject)
+        return meta
+
+    @browser_router.get("/models")
+    async def list_models(request: Request, principal: Principal = Depends(get_principal)):
+        require_model_admin(principal, request, write=False)
+        models_ = await model_store().list_meta()
+        return {"models": sorted(models_, key=lambda m: (m.get("kind") or "", (m.get("className") or "").casefold()))}
+
+    @browser_router.delete("/models/{kind}/{class_name}", status_code=204)
+    async def delete_model(kind: str, class_name: str, request: Request,
+                           principal: Principal = Depends(get_principal)):
+        require_model_admin(principal, request, write=True)
+        store = model_store()
+        model_key(kind, class_name)
+        meta = await store.get_meta(kind, class_name)
+        if meta is None:
+            raise _not_found(f"no {kind} model {class_name!r}")
+        await store.delete(kind, class_name)
+        vehicle_uuid = meta.get("vehicleUuid")
+        positions_removed = False
+        if vehicle_uuid:
+            doc = await app.state.positions.get(vehicle_uuid)
+            if doc and doc.get("source") == "extracted":
+                await app.state.positions.delete(vehicle_uuid)
+                positions_removed = True
+        log.info("hangar: model delete kind=%s class=%s vehicle=%s positions_removed=%s by=%s",
+                 kind, class_name, vehicle_uuid, positions_removed, principal.subject)
+        return Response(status_code=204)
+
+    @browser_router.get("/models/vehicle/{uuid}/wireframe")
+    async def vehicle_wireframe(uuid: str, request: Request, principal: Principal = Depends(get_principal)):
+        store = model_store()
+        vehicle = await app.state.catalog.vehicle(uuid)
+        meta = await store.meta_for_vehicle(vehicle["uuid"]) if vehicle is not None else None
+        if meta is None:
+            raise _not_found(f"no wireframe for vehicle {uuid!r}")
+        etag = f'"{meta["sha256"]}"'
+        headers = {"ETag": etag, "Cache-Control": "private, max-age=86400"}
+        wanted = [x.strip() for x in (request.headers.get("if-none-match") or "").split(",")]
+        if etag in wanted or "*" in wanted:
+            return Response(status_code=304, headers=headers)
+        data = await store.get_bytes("vehicle", meta["className"])
+        if data is None:
+            raise _not_found(f"no wireframe for vehicle {uuid!r}")
+        return Response(content=data, media_type="application/octet-stream", headers=headers)
+
     app.include_router(browser_router, prefix="/api/v1")
 
     # ----- browser login (web editor) -----
@@ -1483,11 +1611,32 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     return app
 
 
-def _build_repository(config: Config) -> tuple[ShipRepository, PositionsStore]:
+async def _has_wireframe(models: ModelStore | None, vehicle_uuid: str) -> bool:
+    """Whether a wireframe is stored for the vehicle; False if unconfigured or the store errors."""
+    if models is None:
+        return False
+    try:
+        return await models.meta_for_vehicle(vehicle_uuid) is not None
+    except RepositoryError as e:
+        log.warning("hangar: wireframe lookup failed for vehicle %s: %s", vehicle_uuid, e)
+        return False
+
+
+def _build_model_store(config: Config, fs_client: Any) -> ModelStore | None:
+    if not config.models_bucket:
+        log.info("hangar: HANGAR_MODELS_BUCKET unset -- wireframe model routes answer 503")
+        return None
+    if fs_client is None:                  # HANGAR_STORAGE=memory (local dev)
+        log.warning("hangar: HANGAR_STORAGE=memory -- wireframe models are NOT persisted (local dev only)")
+        return InMemoryModelStore()
+    return GcsFirestoreModelStore(config.models_bucket, fs_client, project=config.project)
+
+
+def _build_repository(config: Config) -> tuple[ShipRepository, PositionsStore, Any]:
     if config.storage == "memory":
         log.warning("hangar: HANGAR_STORAGE=memory -- ships are NOT persisted (local dev only)")
-        return InMemoryShipRepository(), InMemoryPositionsStore()
+        return InMemoryShipRepository(), InMemoryPositionsStore(), None
     from google.cloud import firestore
     from .repository import FirestoreShipRepository
     client = firestore.AsyncClient(project=config.project)
-    return FirestoreShipRepository(client), FirestorePositionsStore(client)
+    return FirestoreShipRepository(client), FirestorePositionsStore(client), client

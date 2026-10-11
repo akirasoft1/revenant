@@ -57,3 +57,8 @@ scratchpad/
 
 # Org-curated guides are private; the bot image COPYs the repo root and is public
 OrgGuides/
+
+# Extracted game data / generated wireframes never go into an image
+*.swf.gz
+*.glb
+tools/wireframes/out/
