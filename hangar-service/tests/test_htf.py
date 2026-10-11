@@ -389,3 +389,26 @@ def test_ledger_sync_partial_never_deletes():
     inc = [prec("A", 1.0, "USD")]
     up, dele = htf.ledger_sync([prec("C", 1.0, "USD")], inc, True)
     assert up == inc and dele == []
+
+
+# ---- Task 2 review minors ----------------------------------------------------
+
+@pytest.mark.parametrize("raw,amount,cur", [
+    ("USD 350.00", 350.0, "USD"),
+    ("eur 45,00", 45.0, "EUR"),
+    ("350 usd", 350.0, "USD"),
+    ("$ 350.00 USD", 350.0, "USD"),
+])
+def test_parse_cost_code_in_prefix_or_lowercase(raw, amount, cur):
+    assert htf.parse_cost(raw) == {"amount": amount, "currency": cur, "raw": raw}
+
+
+def test_pledge_cost_is_first_non_null_amount(vehicles):
+    base = {"ship_code": "ANVL_Carrack", "name": "Carrack", "pledge_id": "P", "entity_type": "ship"}
+    rows = [{**base, "pledge_cost": "garbage"}, {**base, "pledge_cost": "$100.00 USD"},
+            {**base, "pledge_cost": "$999.00 USD"}]
+    entries, _ = htf.parse_file(rows)
+    rec = htf.pledge_records(entries, vehicles, "2026-01-01T00:00:00+00:00")[0]
+    assert rec["cost"]["amount"] == 100.0
+    entries, _ = htf.parse_file([{**base, "pledge_cost": "garbage"}])
+    assert htf.pledge_records(entries, vehicles, "t")[0]["cost"]["raw"] == "garbage"

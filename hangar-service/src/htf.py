@@ -9,7 +9,7 @@ from .loadout import resolve_vehicle
 
 MAX_ENTITIES = 500
 
-_COST_RE = re.compile(r"^\s*([^\d\s-]*)\s*([\d.,]+)\s*([A-Z]{3})?\s*$")
+_COST_RE = re.compile(r"^\s*([^\d\s-]*)\s*([\d.,]+)\s*([A-Za-z]{3})?\s*$")
 _SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP"}
 
 
@@ -44,7 +44,12 @@ def parse_cost(raw: str | None) -> dict | None:
     amount = _parse_amount(num)
     if amount is None:
         return {"amount": None, "currency": None, "raw": raw}
-    currency = code or _SYMBOLS.get(symbol)
+    if code:
+        currency = code.upper()
+    elif symbol and re.fullmatch(r"[A-Za-z]{3}", symbol):
+        currency = symbol.upper()
+    else:
+        currency = _SYMBOLS.get(symbol)
     return {"amount": amount, "currency": currency, "raw": raw}
 
 
@@ -175,6 +180,8 @@ def pledge_records(entries: list[HtfEntry], vehicles: list[dict], now_iso: str) 
             rec = out[p["id"]] = {"pledgeId": p["id"], "name": p["name"], "date": p["date"],
                                   "dateIso": p["dateIso"], "cost": p["cost"], "lti": p["lti"],
                                   "warbond": p["warbond"], "ships": [], "importedAt": now_iso}
+        if (rec["cost"] or {}).get("amount") is None and (p["cost"] or {}).get("amount") is not None:
+            rec["cost"] = p["cost"]
         v = match_vehicle(e, vehicles)
         rec["ships"].append({"shipCode": e.ship_code, "name": e.name, "rsiName": _rsi_name(e, v),
                              "vehicleUuid": v.get("uuid") if v else None, "matched": v is not None})

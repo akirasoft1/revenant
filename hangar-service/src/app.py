@@ -52,6 +52,7 @@ Every error is ``{"error": <code>, "message": <text>, ...}`` with a stable code:
 (chat edits: several slots fit, + ``slots``).
 """
 import asyncio
+from datetime import datetime, timezone
 import contextlib
 import dataclasses
 import hmac
@@ -84,7 +85,8 @@ from .loadout import check_compatible, effective_loadout
 from .options import slot_options
 from .client_events import SlidingWindowLimiter, log_image_error
 from .positions import FirestorePositionsStore, InMemoryPositionsStore, PositionsStore
-from .repository import InMemoryShipRepository, RepositoryError, ShipRepository
+from .repository import UNSET, InMemoryShipRepository, RepositoryError, ShipRepository
+from . import htf
 from .ship_resolve import resolve_ship, ship_labels
 from .item_resolve import resolve_item
 from .slot_hint import ALL_WORDS, BOTH, match_slots
@@ -600,7 +602,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
     async def get_hangar(member: str = Depends(read_member)):
         ships = await app.state.repository.list_ships(member)
         views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in ships))
-        return {"member": member, "ships": list(views)}
+        out = {"member": member, "ships": list(views)}
+        if any(s.get("rsi") for s in ships):
+            summary = htf.pledge_summary(await app.state.repository.list_pledges(member))
+            if summary is not None:
+                out["pledgeSummary"] = {k: summary[k] for k in ("totals", "pledges", "ships", "lti")}
+        return out
 
     @router.post("/members/{discordId}/ships", status_code=201)
     async def add_ship(request: Request, discordId: str, principal: Principal = Depends(write_member)):
@@ -1111,6 +1118,185 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                         e["rowIndex"], target, e["error"], e["message"])
         views = await asyncio.gather(*(ship_view(app.state.catalog, s) for s in updated_ships))
         return {"ships": list(views), "errors": errors}
+
+    # ----- HTF (HangarXPLOR) import + pledge leaderboard -----
+
+    async def _htf_inputs(body: dict, target: str):
+        data = body.get("file")
+        if not isinstance(data, list):
+            raise _bad("'file' must be a Hangar Transfer Format export: a JSON array of entities")
+        try:
+            entries, skipped = htf.parse_file(data)
+        except ValueError as e:
+            raise _bad(str(e)) from None
+        vehicles = await app.state.catalog.vehicle_index()      # UpstreamError -> 503, nothing written
+        ships = await app.state.repository.list_ships(target)
+        return entries, skipped, vehicles, ships, htf.classify(entries, skipped, vehicles, ships)
+
+    @router.post("/import/htf/preview")
+    async def htf_preview(request: Request, member: str | None = None,
+                          principal: Principal = Depends(get_principal)):
+        # Read-only: any authenticated caller may preview against any member.
+        target = _import_member(principal, member)
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
+        async with import_slot():
+            *_, result = await _htf_inputs(body, target)
+        return result
+
+    def _htf_choices(body: dict, result: dict) -> tuple[dict[int, str], list[str]]:
+        choices = body.get("choices", {})
+        if not isinstance(choices, dict):
+            raise _bad("'choices' must be an object {links, remove}")
+        links, remove = choices.get("links", {}), choices.get("remove", [])
+        if not isinstance(links, dict):
+            raise _bad("choices.links must be an object mapping row index to a shipId or \"new\"")
+        if not isinstance(remove, list) or not all(isinstance(x, str) for x in remove):
+            raise _bad("choices.remove must be an array of shipIds")
+        rows = {r["index"]: r for r in result["rows"]}
+        link_to: dict[int, str] = {}
+        for key, val in links.items():
+            row = rows.get(int(key)) if isinstance(key, str) and key.isdigit() else None
+            if row is None or row["kind"] != "link":
+                raise _bad(f"choices.links[{key!r}]: row {key} is not a row that can be linked to an existing ship")
+            if not isinstance(val, str) or (val != "new" and val not in
+                                            {c["shipId"] for c in row["linkCandidates"]}):
+                raise _bad(f"choices.links[{key!r}]: {val!r} is not a link candidate for row {key}")
+            link_to[int(key)] = val
+        missing = {m["shipId"] for m in result["missing"]}
+        for sid in remove:
+            if sid not in missing:
+                raise _bad(f"choices.remove: ship {sid!r} is not missing from this export")
+        return link_to, list(dict.fromkeys(remove))
+
+    @router.post("/import/htf/apply")
+    async def htf_apply(request: Request, member: str | None = None,
+                        principal: Principal = Depends(get_principal)):
+        target = _import_member(principal, member)
+        authorize_browser_write(request, principal)
+        authorize_write(principal, target, config.admin_ids)
+        body = await _capped_json_object(request, IMPORT_BODY_MAX)
+        async with import_slot():
+            return await _htf_apply(principal, target, body)
+
+    def _rsi_same(a: dict | None, b: dict) -> bool:
+        strip = lambda r: {k: v for k, v in (r or {}).items() if k != "importedAt"}
+        return strip(a) == strip(b)
+
+    def _nick(value: str | None) -> str | None:
+        return ((value or "")[:NICKNAME_MAX].strip()) or None
+
+    async def _htf_apply(principal: Principal, target: str, body: dict) -> dict:
+        repo = app.state.repository
+        entries, skipped, vehicles, ships, result = await _htf_inputs(body, target)
+        link_to, remove = _htf_choices(body, result)      # re-derived server side; nothing written yet
+        by_index = {e.index: e for e in entries}
+        owned = {s["shipId"]: s for s in ships}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        plans = []
+        for row in result["rows"]:
+            kind = row["kind"]
+            if kind == "link":
+                choice = link_to.get(row["index"]) or row["linkCandidates"][0]["shipId"]
+                kind = "new" if choice == "new" else "link"
+            else:
+                choice = None
+            plans.append((row, kind, choice))
+        adding = sum(1 for _, k, _c in plans if k == "new")
+        if adding:
+            await ensure_ship_capacity(repo, target, adding=adding, limit=config.max_ships_per_member)
+        owner_name = owner_name_for(principal, target)
+        by = principal.acting_member or principal.subject
+        rows_out, counts = [], {"created": 0, "linked": 0, "updated": 0, "skipped": 0}
+        for row, kind, choice in plans:
+            out = {"index": row["index"]}
+            try:
+                if kind == "skipped":
+                    out["result"] = "skipped"
+                else:
+                    e = by_index[row["index"]]
+                    v = next((x for x in vehicles if x.get("uuid") == row["vehicle"]["uuid"]), None) \
+                        or {"uuid": row["vehicle"]["uuid"], "name": row["vehicle"]["name"]}
+                    rec = htf.rsi_record(e, v, now_iso)
+                    if kind == "new":
+                        ship = await repo.create_ship(
+                            target, vehicle_uuid=v["uuid"], vehicle_name=v["name"],
+                            vehicle_class_name=v.get("className"), nickname=_nick(rec["rsiName"]),
+                            updated_by=by, owner_name=owner_name, rsi=rec)
+                        out.update(result="created", shipId=ship["shipId"])
+                    elif kind == "link":
+                        cur = owned[choice]
+                        nick = _nick(rec["rsiName"]) if not cur.get("nickname") and rec["rsiName"] else UNSET
+                        done = await repo.set_rsi(target, choice, rec, nickname=nick, updated_by=by,
+                                                  owner_name=owner_name)
+                        out.update(shipId=choice, result="linked" if done else "error")
+                        if not done:
+                            out["error"] = "not_found"
+                    else:                                          # existing
+                        sid = row["existing"]["shipId"]
+                        cur = owned[sid]
+                        out["shipId"] = sid
+                        if _rsi_same(cur.get("rsi"), rec):
+                            out["result"] = "unchanged"
+                        else:
+                            old_name = (cur.get("rsi") or {}).get("rsiName")
+                            nick = _nick(rec["rsiName"]) if rec["rsiName"] and rec["rsiName"] != old_name \
+                                else UNSET
+                            done = await repo.set_rsi(target, sid, rec, nickname=nick, updated_by=by,
+                                                      owner_name=owner_name)
+                            out["result"] = "updated" if done else "error"
+                            if not done:
+                                out["error"] = "not_found"
+            except RepositoryError as err:
+                log.warning("hangar: htf import row %s for member %s failed: %s", row["index"], target, err)
+                out.update(result="error", error="unavailable")
+            rows_out.append(out)
+            counts[out["result"]] = counts.get(out["result"], 0) + 1
+        removed = []
+        for sid in remove:
+            try:
+                if await repo.delete_ship(target, sid):
+                    removed.append(sid)
+            except RepositoryError as err:
+                log.warning("hangar: htf import remove %s for member %s failed: %s", sid, target, err)
+        ledger_ok = True
+        try:
+            incoming = htf.pledge_records(entries, vehicles, now_iso)
+            upserts, deletes = htf.ledger_sync(await repo.list_pledges(target), incoming, result["partial"])
+            await repo.upsert_pledges(target, upserts)
+            if deletes:
+                await repo.delete_pledges(target, deletes)
+        except RepositoryError as err:
+            ledger_ok = False
+            log.warning("hangar: htf import pledge ledger for member %s not synced: %s", target, err)
+        if counts["created"] or removed:
+            invalidate_member_directory(app)
+        log.info("hangar: htf import member=%s created=%d linked=%d updated=%d removed=%d skipped=%d",
+                 target, counts["created"], counts["linked"], counts["updated"], len(removed),
+                 counts["skipped"])
+        return {"rows": rows_out, "removed": removed, "ledgerSynced": ledger_ok}
+
+    LEADERBOARD_CAVEAT = ("Pledged on ships only: HangarXPLOR exports ship-bearing pledges, so paints, game "
+                          "packages, gear and melted items are excluded. Each pledge counts once at its "
+                          "current value; currencies are not converted.")
+
+    @router.get("/pledges/leaderboard")
+    async def pledge_leaderboard(principal: Principal = Depends(get_principal)):
+        repo = app.state.repository
+        names = {m["discordId"]: m.get("ownerName") for m in await repo.list_members()}
+        entries = []
+        for mid in await repo.list_pledge_members():
+            if not any(s.get("rsi") for s in await repo.list_ships(mid)):
+                continue
+            summary = htf.pledge_summary(await repo.list_pledges(mid))
+            if summary is None:
+                continue
+            entries.append({"member": mid, "displayName": names.get(mid), **summary})
+
+        def order(e):
+            t = e["totals"]
+            return (-t.get("USD", 0.0), -sum(v for c, v in t.items() if c != "USD"), e["member"])
+        entries.sort(key=order)
+        return {"entries": entries, "caveat": LEADERBOARD_CAVEAT}
 
     # ----- member directory -----
 

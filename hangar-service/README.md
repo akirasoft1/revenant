@@ -52,6 +52,9 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | GET | `/v1/catalog/slot-options?vehicle=<uuid>&slot=<slotId>` | – | `{items: [{uuid, name, type, size, grade, class, keyStat: {name, value, lowerIsBetter} \| null, cheapestPrice?: {price, shop, location}, stats: [{key, label, value, unit, lowerIsBetter}], image?, manufacturer?, description?}]}` — see "Item picker" |
 | POST | `/v1/import/spviewer/preview[?member=]` | `{file: <spviewer export array>}` | `{rows: [{rowIndex, loadoutName, vehicle: {uuid, name} \| null, patch, changes: [{slot, from: {uuid, name} \| null, to: {uuid, name}}], skipped: [{slot?, reason, detail}], matchingShips: [{shipId, label}]}]}` — nothing stored |
 | POST | `/v1/import/spviewer/apply[?member=]` | `{rows: [{rowIndex, mode: "new"\|"existing", shipId?, nickname?}], file}` | `{ships: [Ship], errors: [{rowIndex, error, message}]}` — see "spviewer import" |
+| POST | `/v1/import/htf/preview[?member=]` | `{file: <HTF / HangarXPLOR array>}` | `{rows: [{index, kind: new\|existing\|link\|skipped, rsiKey, vehicle, nickname, pledge, existing, linkCandidates, reason, ...}], missing: [{shipId, label, rsiKey, hasFittings, defaultRemove}], partial, summary}` — nothing stored; see "HTF import" |
+| POST | `/v1/import/htf/apply[?member=]` | `{file, choices?: {links: {"<row index>": shipId\|"new"}, remove: [shipId]}}` | `{rows: [{index, result: created\|linked\|updated\|unchanged\|skipped\|error, shipId?, error?}], removed: [shipId], ledgerSynced}` |
+| GET | `/v1/pledges/leaderboard` | – | `{entries: [{member, displayName\|null, totals: {USD: n, ...}, pledges, ships, lti, topPledge: {name, amount, currency}\|null, lastImport}], caveat}` |
 
 **Every `/v1/...` route is also served at `/api/v1/...`** (same handler, same
 auth). Service callers use `/v1` on the `run.app` URL; the browser editor uses
@@ -289,6 +292,40 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   `unknown selection category <name>`, logged at WARNING).
 - The request body is read (and capped) **before** an import slot is taken,
   so a slow upload never holds one of the 2 slots.
+
+## HTF import and pledge ledger (`/import/htf/*`, `/pledges/leaderboard`)
+
+Imports a Hangar Transfer Format file (HangarXPLOR "Download JSON"; spec in
+`docs/superpowers/specs/2026-10-11-hangar-htf-import-design.md`). Pure logic in
+`src/htf.py`; the routes only wire it to the catalog and repository. Same body
+cap (2 MB + envelope), `?member=`, CSRF and write rule as the spviewer import;
+non-array / over 500 entities -> 400 `invalid_request`, catalog unreadable ->
+503 `unavailable` with nothing written.
+
+- **Preview** classifies each entity `new | existing | link | skipped` and lists
+  RSI ships `missing` from the file (`partial` suppresses every `defaultRemove`).
+- **Apply** re-derives the classification server side and validates `choices`
+  against it: a link target outside the row's `linkCandidates` (or for a
+  non-`link` row), or a `remove` of a ship not in `missing`, is a 400 naming it
+  and nothing is written. A `link` row with no choice links the first
+  candidate; `"new"` creates a separate ship. Ships are written one by one with
+  per-row results (`error` rows don't stop the rest). Ships carry `rsi`
+  (`key, pledgeId, shipCode, ordinal, pledge*, lti, warbond, rsiName,
+  importedAt`); fittings are never touched except by deleting a removed ship.
+  Re-applying the same file reports every row `unchanged`. Logs one INFO line:
+  `hangar: htf import member=<id> created=<n> linked=<n> updated=<n> removed=<n> skipped=<n>`.
+- **Pledge ledger** `members/{id}/rsiPledges/{pledgeId}` = `{pledgeId, name,
+  date, dateIso, cost, lti, warbond, ships: [{shipCode, name, rsiName,
+  vehicleUuid, matched}], importedAt}` for EVERY ship-bearing pledge in the file,
+  including concept ships that never match the catalog. Each apply upserts the
+  file's pledges and, unless the import is `partial`, deletes ledger pledges
+  absent from the file. A ledger failure after the ships were written is
+  logged and reported as `ledgerSynced: false`.
+- **Leaderboard** is computed per request from the ledger: a pledge's cost
+  counts once per `pledgeId` (first parsed amount), per currency, no FX; only
+  members with at least one RSI-sourced ship appear; sorted by USD total desc,
+  then other currencies, then member id. `GET /members/{id}/hangar` adds
+  `pledgeSummary: {totals, pledges, ships, lti}` when the member has RSI ships.
 
 ## Auth
 

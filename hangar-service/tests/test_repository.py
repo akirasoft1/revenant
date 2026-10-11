@@ -401,3 +401,42 @@ async def test_firestore_update_slots_is_one_update_with_quoted_paths():
     assert fields[f"fitted.`{other}`"] is firestore.DELETE_FIELD
     assert fields["updatedBy"] == "222"
     assert await repo.update_slots("111", "missing", {SLOT: None}, updated_by="111") is None
+
+
+# ---------- rsi + pledge ledger ----------
+
+RSI = {"key": "1:anvl_carrack:0", "pledgeId": "1", "rsiName": "Serenity"}
+
+
+async def test_rsi_create_set_and_nickname_semantics(repo):
+    from src.repository import UNSET
+    ship = await repo.create_ship("111", vehicle_uuid="v", vehicle_name="Carrack", vehicle_class_name="c",
+                                  nickname="Serenity", updated_by="111", rsi=RSI)
+    assert ship["rsi"] == RSI and (await repo.get_ship("111", ship["shipId"]))["rsi"] == RSI
+    plain = await _add(repo)
+    assert "rsi" not in plain
+    got = await repo.set_rsi("111", plain["shipId"], RSI, nickname=UNSET, updated_by="111")
+    assert got["rsi"] == RSI and got["nickname"] is None
+    got = await repo.set_rsi("111", plain["shipId"], {**RSI, "rsiName": "X"}, nickname="X", updated_by="111")
+    assert got["nickname"] == "X" and got["rsi"]["rsiName"] == "X"
+    assert await repo.set_rsi("111", "nope", RSI, updated_by="111") is None
+
+
+async def test_pledge_ledger_roundtrip(repo):
+    assert await repo.list_pledges("111") == []
+    a, b = {"pledgeId": "1", "name": "A"}, {"pledgeId": "a/b..", "name": "weird id"}
+    await repo.upsert_pledges("111", [a, b])
+    await repo.upsert_pledges("111", [{**a, "name": "A2"}])
+    got = {p["pledgeId"]: p["name"] for p in await repo.list_pledges("111")}
+    assert got == {"1": "A2", "a/b..": "weird id"}
+    assert await repo.list_pledge_members() == ["111"]
+    await repo.delete_pledges("111", ["a/b.."])
+    assert [p["pledgeId"] for p in await repo.list_pledges("111")] == ["1"]
+    assert await repo.list_pledges("222") == []
+
+
+def test_pledge_doc_id_is_firestore_safe():
+    from src.repository import pledge_doc_id
+    assert pledge_doc_id("12345") == "12345"
+    for bad in ("a/b", "..", "", "x" * 300):
+        assert "/" not in pledge_doc_id(bad) and pledge_doc_id(bad) not in ("", ".", "..")
