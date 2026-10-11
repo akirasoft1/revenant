@@ -284,6 +284,7 @@ export interface HtfPreview {
   rows: HtfPreviewRow[];
   missing: HtfMissing[];
   partial: boolean;
+  ledgerPartial?: boolean;
   summary: Record<string, number>;
 }
 

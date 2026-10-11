@@ -144,8 +144,16 @@ def test_match_falls_back_to_name(file_data, vehicles):
     assert htf.match_vehicle(unidentified, vehicles)["className"] == "ANVL_Gladiator"
 
 
-def test_match_falls_back_to_ship_name_when_name_unusable(vehicles):
-    e = htf.HtfEntry(0, "BOGUS", "zzzz qqqq", "Gladiator", {"id": "1"}, {})
+def test_match_never_uses_custom_ship_name_when_name_is_unmatched(vehicles):
+    # DRAK_Kraken (concept, not in catalog) named "Arrow" by its owner must NOT become an Arrow.
+    e = htf.HtfEntry(0, "DRAK_Kraken_Fake", "Zzzz Kraken Concept", "Arrow", PL, {})
+    assert htf.match_vehicle(e, vehicles) is None
+    out = htf.classify([e], [], vehicles, [])
+    assert out["rows"][0]["kind"] == "skipped" and out["rows"][0]["countedInTotals"] is True
+
+
+def test_match_uses_ship_name_only_when_name_is_empty(vehicles):
+    e = htf.HtfEntry(0, "BOGUS", None, "Gladiator", {"id": "1"}, {})
     assert htf.match_vehicle(e, vehicles)["className"] == "ANVL_Gladiator"
 
 
@@ -356,7 +364,7 @@ def test_pledge_summary_totals_per_currency():
                             prec("P2", 45.0, "EUR", name="Euro", imported="2026-03-01T00:00:00+00:00"),
                             prec("P3", 20.5, "USD", lti=True, name="Small")])
     assert s["totals"] == {"USD": 120.5, "EUR": 45.0}
-    assert s["pledges"] == 3 and s["ships"] == 5 and s["lti"] == 2
+    assert s["pledges"] == 3 and s["ships"] == 5 and s["lti"] == 4
     assert s["topPledge"] == {"name": "Big", "amount": 100.0, "currency": "USD"}
     assert s["lastImport"] == "2026-03-01T00:00:00+00:00"
 
@@ -412,3 +420,24 @@ def test_pledge_cost_is_first_non_null_amount(vehicles):
     assert rec["cost"]["amount"] == 100.0
     entries, _ = htf.parse_file([{**base, "pledge_cost": "garbage"}])
     assert htf.pledge_records(entries, vehicles, "t")[0]["cost"]["raw"] == "garbage"
+
+
+def test_ledger_partial_guard():
+    def ent(pid):
+        return htf.HtfEntry(0, "c", "n", None, {**PL, "id": pid}, {})
+    ex = [prec("A", 1, "USD"), prec("B", 1, "USD"), prec("C", 1, "USD"), prec("D", 1, "USD")]
+    assert htf.ledger_partial([ent("A")], ex) is True            # 1/4 < 50%
+    assert htf.ledger_partial([ent("A"), ent("B")], ex) is False  # exactly 50%
+    assert htf.ledger_partial([ent("Z")], [prec("A", 1, "USD")]) is False   # < 2 ledger pledges
+    assert htf.classify([ent("A")], [], [], [], ex)["ledgerPartial"] is True
+
+
+def test_ledger_sync_keep_ids_not_deleted():
+    inc = [prec("A", 1.0, "USD")]
+    up, dele = htf.ledger_sync([prec("B", 1.0, "USD"), prec("C", 1.0, "USD")], inc, False, {"B"})
+    assert dele == ["C"]
+
+
+def test_pledge_summary_counts_lti_ships():
+    out = htf.pledge_summary([prec("A", 1, "USD", lti=True, nships=3), prec("B", 1, "USD", nships=2)])
+    assert out["ships"] == 5 and out["lti"] == 3

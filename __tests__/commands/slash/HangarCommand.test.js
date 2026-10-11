@@ -266,8 +266,24 @@ describe('/hangar', () => {
       expect(t).toContain('4 ships');
       expect(t).toContain('2 LTI');
       expect(t).toContain('top: Idris-P Package ($1,500.00)');
-      expect(t.trimEnd().endsWith(`_${CAVEAT}_`)).toBe(true);
+      expect(t.trimEnd().endsWith(`_${CAVEAT} · last import 2026-10-01_`)).toBe(true);
       expect(lastReply(i).allowedMentions).toEqual({ parse: [] });
+    });
+
+    test('footer carries the oldest last-import date; pledge names are escaped and clamped', async () => {
+      const long = '*Big*_'.repeat(30);
+      client.getPledgeLeaderboard.mockResolvedValue(board([
+        entry(1, { lastImport: '2026-10-05T12:00:00+00:00', topPledge: { name: long, amount: 5, currency: 'USD' } }),
+        entry(2, { lastImport: '2026-09-01T08:00:00+00:00' }),
+      ]));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      const t = replyText(i);
+      expect(t).toContain(CAVEAT);
+      expect(t.trimEnd().endsWith('last import 2026-09-01_')).toBe(true);
+      expect(t).toContain('top: \\*');
+      expect(t).not.toContain(long);
+      expect(t).toMatch(/top: [^(]*…\s\(/);
     });
 
     test('stays within 2000 chars with "…and N more" and keeps the caveat', async () => {

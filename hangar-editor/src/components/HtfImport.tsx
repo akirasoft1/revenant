@@ -186,7 +186,7 @@ export function HtfImport({
       {data && !result && (
         <section className="panel">
           <h3>Review</h3>
-          {data.partial && (
+          {(data.partial || data.ledgerPartial) && (
             <p className="alert alert-warn" role="status">
               This export looks like a selection — nothing will be removed by default.
             </p>

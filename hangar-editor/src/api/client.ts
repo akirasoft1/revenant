@@ -253,7 +253,7 @@ export async function htfPreview(file: unknown, memberId?: string): Promise<HtfP
     method: 'POST',
     json: { file },
   });
-  return { rows: r.rows ?? [], missing: r.missing ?? [], partial: !!r.partial, summary: r.summary ?? {} };
+  return { rows: r.rows ?? [], missing: r.missing ?? [], partial: !!r.partial, ledgerPartial: !!r.ledgerPartial, summary: r.summary ?? {} };
 }
 
 export async function htfApply(file: unknown, choices: HtfChoices, memberId?: string): Promise<HtfApplyResult> {

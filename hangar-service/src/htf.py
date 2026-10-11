@@ -140,11 +140,9 @@ def match_vehicle(entry: HtfEntry, vehicles: list[dict]) -> dict | None:
         for v in vehicles:
             if (v.get("className") or "").casefold() == code:
                 return v
-    queries = []
-    for q in (entry.name, entry.ship_name):
-        if q and q.casefold() not in [x.casefold() for x in queries]:
-            queries.append(q)
-    for q in queries:
+    # ship_name is the member's CUSTOM RSI name, so it is only a fallback when there is no model name at all.
+    q = entry.name or entry.ship_name
+    if q:
         res = resolve_vehicle(q, vehicles)
         if res.status == "match" and res.match:
             uuid = res.match.get("uuid")
@@ -193,7 +191,8 @@ def _label(ship: dict) -> str:
     return f"{nick} ({model})" if nick else (model or "")
 
 
-def classify(entries: list[HtfEntry], skipped: list[dict], vehicles: list[dict], ships: list[dict]) -> dict:
+def classify(entries: list[HtfEntry], skipped: list[dict], vehicles: list[dict], ships: list[dict],
+             ledger: list[dict] | None = None) -> dict:
     hand = [s for s in ships if not s.get("rsi")]
     rsi_ships = [s for s in ships if s.get("rsi")]
     by_key = {s["rsi"].get("key"): s for s in rsi_ships}
@@ -241,7 +240,8 @@ def classify(entries: list[HtfEntry], skipped: list[dict], vehicles: list[dict],
                         "hasFittings": has, "defaultRemove": (not has) and not partial})
     summary = {k: sum(1 for r in rows if r["kind"] == k) for k in ("new", "existing", "link", "skipped")}
     summary["missing"] = len(missing)
-    return {"rows": rows, "missing": missing, "partial": partial, "summary": summary}
+    return {"rows": rows, "missing": missing, "partial": partial, "summary": summary,
+            "ledgerPartial": ledger_partial(entries, ledger or [])}
 
 
 def _pledge_view(e: HtfEntry) -> dict:
@@ -250,11 +250,22 @@ def _pledge_view(e: HtfEntry) -> dict:
             "lti": p["lti"], "warbond": p["warbond"]}
 
 
-def ledger_sync(existing: list[dict], incoming: list[dict], partial: bool) -> tuple[list[dict], list[str]]:
+def ledger_partial(entries: list[HtfEntry], existing: list[dict]) -> bool:
+    """The file covers < 50% of the member's existing ledger pledges (and they have >= 2): a selection export."""
+    ids = {r["pledgeId"] for r in existing}
+    if len(ids) < 2:
+        return False
+    return len({e.pledge["id"] for e in entries} & ids) < 0.5 * len(ids)
+
+
+def ledger_sync(existing: list[dict], incoming: list[dict], partial: bool,
+                keep_ids: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], list[str]]:
+    """keep_ids: pledges that still back a surviving RSI ship (a `missing` ship the user chose to keep)."""
     if partial:
         return list(incoming), []
     inc_ids = {r["pledgeId"] for r in incoming}
-    return list(incoming), [r["pledgeId"] for r in existing if r["pledgeId"] not in inc_ids]
+    return list(incoming), [r["pledgeId"] for r in existing
+                            if r["pledgeId"] not in inc_ids and r["pledgeId"] not in keep_ids]
 
 
 def pledge_summary(pledges: list[dict]) -> dict | None:
@@ -274,5 +285,5 @@ def pledge_summary(pledges: list[dict]) -> dict | None:
     imports = [p["importedAt"] for p in pledges if p.get("importedAt")]
     return {"totals": totals, "pledges": len(pledges),
             "ships": sum(len(p.get("ships") or []) for p in pledges),
-            "lti": sum(1 for p in pledges if p.get("lti")),
+            "lti": sum(len(p.get("ships") or []) for p in pledges if p.get("lti")),
             "topPledge": top, "lastImport": max(imports) if imports else None}

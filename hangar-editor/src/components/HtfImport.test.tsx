@@ -106,4 +106,11 @@ describe('HtfImport', () => {
     await user.click(await screen.findByRole('button', { name: /Import/ }));
     await waitFor(() => expect(screen.getByText(/pledge totals may be out of date/i)).toBeInTheDocument());
   });
+
+  it('shows the selection banner when only the ledger looks partial', async () => {
+    const user = userEvent.setup();
+    setup({ ...PREVIEW, partial: false, ledgerPartial: true }, { rows: [], removed: [], ledgerSynced: true });
+    await upload(user);
+    expect(await screen.findByText(/looks like a selection/)).toBeInTheDocument();
+  });
 });

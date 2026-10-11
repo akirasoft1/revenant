@@ -17,6 +17,8 @@ const NOT_ADMIN = "Only a bot admin can change someone else's hangar.";
 const MAX_REPLY = 2000;
 const MAX_CHOICES = 25;
 const MAX_CHOICE_LEN = 100;
+const MAX_PLEDGE_NAME = 60;
+const clampName = (n) => (n.length > MAX_PLEDGE_NAME ? `${n.slice(0, MAX_PLEDGE_NAME - 1)}…` : n);
 // Discord drops an autocomplete response after 3s; leave room for the respond() round trip.
 const AUTOCOMPLETE_TIMEOUT_MS = 2200;
 const MAX_FITTED_INLINE = 120;
@@ -181,12 +183,15 @@ class HangarSlashCommand extends BaseSlashCommand {
       await this.sendReply(interaction, `No one has imported an RSI hangar yet${where}`);
       return;
     }
-    const caveat = res.data && res.data.caveat ? `\n_${res.data.caveat}_` : '';
+    const imports = entries.map((e) => Date.parse(e.lastImport)).filter((t) => !Number.isNaN(t));
+    const last = imports.length ? `last import ${new Date(Math.min(...imports)).toISOString().slice(0, 10)}` : '';
+    const note = [res.data && res.data.caveat, last].filter(Boolean).join(' · ');
+    const caveat = note ? `\n_${note}_` : '';
     const lines = entries.map((e, n) => {
       const name = this._displayName(e);
       const parts = [`${e.ships} ship${e.ships === 1 ? '' : 's'}`];
       if (e.lti) parts.push(`${e.lti} LTI`);
-      if (e.topPledge) parts.push(`top: ${e.topPledge.name} (${formatMoney(e.topPledge.amount, e.topPledge.currency)})`);
+      if (e.topPledge) parts.push(`top: ${clampName(escapeMarkdown(String(e.topPledge.name ?? '')))} (${formatMoney(e.topPledge.amount, e.topPledge.currency)})`);
       return `${n < 3 ? MEDALS[n] : `${n + 1}.`} **${name}** — ${formatTotals(e.totals)} · ${parts.join(' · ')}`;
     });
     const out = this._fit('**Pledge leaderboard**', lines, MAX_REPLY - caveat.length);

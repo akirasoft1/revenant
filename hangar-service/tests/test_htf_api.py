@@ -292,7 +292,7 @@ def test_ledger_counts_unmatched_pledges_and_distinct_pledge_once(client, repo):
     lb = client.get("/v1/pledges/leaderboard", headers=H(None)).json()["entries"][0]
     # 350 + 1234.50 (once, three ships) + 350 (Kraken) + 0 (garbage) ; EUR 45
     assert lb["totals"] == {"USD": 1934.5, "EUR": 45.0} and lb["pledges"] == 5 and lb["ships"] == 7
-    assert lb["lti"] == 3 and lb["topPledge"] == {"name": "Pisces Fleet Package", "amount": 1234.5, "currency": "USD"}
+    assert lb["lti"] == 5 and lb["topPledge"] == {"name": "Pisces Fleet Package", "amount": 1234.5, "currency": "USD"}
 
 
 def test_partial_import_does_not_delete_ledger(client, repo):
@@ -305,11 +305,32 @@ def test_partial_import_does_not_delete_ledger(client, repo):
     assert set(repo._pledges[SELF]) == {"1001", "2002", "3003", "4004", "7007", "8008"}
 
 
+def test_ledger_partial_guard_suppresses_deletes(client, repo):
+    as_user(client)
+    apply(client, htf_file() + [KRAKEN])
+    only = [r for r in htf_file() if r.get("pledge_id") == "2002"]     # 1 of 5 ledger pledges
+    p = preview(client, only).json()
+    assert p["ledgerPartial"] is True and p["partial"] is False
+    apply(client, only)
+    assert set(repo._pledges[SELF]) == {"1001", "2002", "3003", "4004", "7007"}
+
+
+def test_kept_missing_ship_keeps_its_pledge(client, repo):
+    as_user(client)
+    apply(client, htf_file() + [KRAKEN])
+    f = [r for r in htf_file() if r.get("pledge_id") != "4004"]
+    p = preview(client, f).json()
+    assert p["ledgerPartial"] is False and p["partial"] is False and len(p["missing"]) >= 1
+    apply(client, f, choices={"remove": []})                  # user keeps the missing ship
+    assert set(repo._pledges[SELF]) == {"1001", "2002", "3003", "4004"}   # 7007 has no ship -> pruned
+
+
 def test_full_import_prunes_vanished_pledges(client, repo):
     as_user(client)
     apply(client, htf_file() + [KRAKEN])
     f = [r for r in htf_file() if r.get("pledge_id") != "4004"]
-    apply(client, f)
+    gone = [m["shipId"] for m in preview(client, f).json()["missing"]]
+    apply(client, f, choices={"remove": gone})
     assert set(repo._pledges[SELF]) == {"1001", "2002", "3003"}
 
 
@@ -372,7 +393,7 @@ def test_hangar_pledge_summary(client):
     assert "pledgeSummary" not in ships(client).json()
     apply(client, htf_file() + [KRAKEN])
     s = ships(client).json()["pledgeSummary"]
-    assert s == {"totals": {"USD": 1934.5, "EUR": 45.0}, "pledges": 5, "ships": 7, "lti": 3}
+    assert s == {"totals": {"USD": 1934.5, "EUR": 45.0}, "pledges": 5, "ships": 7, "lti": 5}
 
 
 # ---------- fix round 1 ----------

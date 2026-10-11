@@ -308,7 +308,7 @@ non-array / over 500 entities -> 400 `invalid_request`, catalog unreadable ->
   against it: a link target outside the row's `linkCandidates` (or for a
   non-`link` row), or a `remove` of a ship not in `missing`, is a 400 naming it
   and nothing is written. A `link` row with no choice links the first
-  candidate; `"new"` creates a separate ship. Ships are written one by one with
+  UNCLAIMED candidate (not claimed by an earlier row or explicit choice); `"new"` creates a separate ship. Ships are written one by one with
   per-row results (`error` rows don't stop the rest). Ships carry `rsi`
   (`key, pledgeId, shipCode, ordinal, pledge*, lti, warbond, rsiName,
   importedAt`); fittings are never touched except by deleting a removed ship.
@@ -318,14 +318,15 @@ non-array / over 500 entities -> 400 `invalid_request`, catalog unreadable ->
   date, dateIso, cost, lti, warbond, ships: [{shipCode, name, rsiName,
   vehicleUuid, matched}], importedAt}` for EVERY ship-bearing pledge in the file,
   including concept ships that never match the catalog. Each apply upserts the
-  file's pledges and, unless the import is `partial`, deletes ledger pledges
-  absent from the file. A ledger failure after the ships were written is
+  file's pledges and, unless the import is `partial` or `ledgerPartial` (the file covers < 50% of
+  the member's >= 2 existing ledger pledges), deletes ledger pledges absent from
+  the file, except those backing a `missing` ship the user chose to keep. A ledger failure after the ships were written is
   logged and reported as `ledgerSynced: false`.
 - **Leaderboard** is computed per request from the ledger: a pledge's cost
   counts once per `pledgeId` (first parsed amount), per currency, no FX; only
   members with at least one RSI-sourced ship appear; sorted by USD total desc,
   then other currencies, then member id. `GET /members/{id}/hangar` adds
-  `pledgeSummary: {totals, pledges, ships, lti}` when the member has RSI ships.
+  `pledgeSummary: {totals, pledges, ships, lti}` (`lti` = ships in LTI pledges) when the member has RSI ships.
 
 ## Auth
 

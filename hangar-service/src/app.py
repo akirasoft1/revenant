@@ -1138,7 +1138,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if not vehicles:        # an empty 200 would make every row "unmatched" and every RSI ship "missing"
             raise UpstreamError("wiki", 200, "empty vehicle index")
         ships = await app.state.repository.list_ships(target)
-        return entries, skipped, vehicles, ships, htf.classify(entries, skipped, vehicles, ships)
+        try:
+            ledger = await app.state.repository.list_pledges(target)
+        except RepositoryError as err:      # preview must not fail on a ledger outage; no guard info then
+            log.warning("hangar: htf ledger read for member %s failed: %s", target, err)
+            ledger = []
+        return entries, skipped, vehicles, ships, htf.classify(entries, skipped, vehicles, ships, ledger)
 
     @router.post("/import/htf/preview")
     async def htf_preview(request: Request, member: str | None = None,
@@ -1280,7 +1285,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         ledger_ok = True
         try:
             incoming = htf.pledge_records(entries, vehicles, now_iso)
-            upserts, deletes = htf.ledger_sync(await repo.list_pledges(target), incoming, result["partial"])
+            existing_ledger = await repo.list_pledges(target)
+            kept = {(owned[m["shipId"]].get("rsi") or {}).get("pledgeId") for m in result["missing"]
+                    if m["shipId"] not in remove and m["shipId"] in owned}
+            upserts, deletes = htf.ledger_sync(
+                existing_ledger, incoming,
+                result["partial"] or htf.ledger_partial(entries, existing_ledger), kept - {None})
             await repo.upsert_pledges(target, upserts)
             if deletes:
                 await repo.delete_pledges(target, deletes)
