@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fitSlot, getHangar, getVehiclePositions, getVehicleSlots, resetShip, resetSlot } from '../api/client';
@@ -9,6 +9,11 @@ import { ClassicShipView, groupSlots } from '../components/ClassicShipView';
 import { ErrorNote, Loading, errorText } from '../components/Status';
 import { loadViewPref, saveViewPref, type ViewPref } from '../lib/terminal';
 import { MemberId, useMemberName } from './MemberHangarPage';
+
+// The Terminal view (and its stylesheet) loads only when chosen.
+const TerminalShipView = lazy(() =>
+  import('../components/terminal/TerminalShipView').then((m) => ({ default: m.TerminalShipView })),
+);
 
 // Kept for existing importers.
 export { groupSlots };
@@ -57,8 +62,8 @@ export function ShipDetailPage() {
     enabled: !!ship && !ship.loadoutError,
     staleTime: 60 * 60_000,
   });
-  // Warm the positions cache for the Terminal view (consumed there).
-  useQuery({
+  // Hardpoint positions for the Terminal view's markers (absent/failed -> no markers).
+  const positions = useQuery({
     queryKey: ['vehicle-positions', ship?.vehicleUuid],
     queryFn: () => getVehiclePositions(ship!.vehicleUuid),
     enabled: terminal && !!ship && !ship.loadoutError,
@@ -113,7 +118,10 @@ export function ShipDetailPage() {
     onResetShip: () => resetAll.mutateAsync(),
     busy: fit.isPending || reset.isPending || resetAll.isPending,
     error: fit.isError ? errorText(fit.error) : resetAll.isError ? errorText(resetAll.error) : null,
-    onDismissError: () => fit.reset(),
+    onDismissError: () => {
+      fit.reset();
+      resetAll.reset();
+    },
   };
   return (
     <>
@@ -151,9 +159,9 @@ export function ShipDetailPage() {
       ) : loadout.length === 0 ? (
         <p className="empty">This ship has no editable component slots.</p>
       ) : terminal ? (
-        // Task 3 replaces this placeholder with the lazily-loaded TerminalShipView
-        // (props: viewProps + onExit = () => choose('classic')).
-        <div data-testid="terminal-view" />
+        <Suspense fallback={<Loading label="Booting terminal…" />}>
+          <TerminalShipView {...viewProps!} positions={positions.data} me={me} onExit={() => choose('classic')} />
+        </Suspense>
       ) : (
         <ClassicShipView {...viewProps!} />
       )}

@@ -21,8 +21,50 @@ theme, mobile-friendly). Tests: Vitest + Testing Library (jsdom).
 | `/` | My hangar: ship cards, add ship (catalog search), rename, remove (with confirm) |
 | `/members` | Directory of members with at least one ship |
 | `/members/:id` | A member's hangar (display names always shown with the Discord ID, since names are user-controlled). Read-only unless it is yours or you are an admin (`/api/me` `isAdmin`) |
-| `/members/:id/ships/:shipId` | Ship detail: slot table grouped by type (slot, size, current item, stock/fitted badge). **Change** opens the compatible-item picker (sorted by the type's key stat, respecting lower-is-better; filter by text/size; cheapest UEX price when known). **Reset to stock** |
+| `/members/:id/ships/:shipId` | Ship detail: slot table grouped by type (slot, size, current item, stock/fitted badge). **Change** opens the compatible-item picker (sorted by the type's key stat, respecting lower-is-better; filter by text/size; cheapest UEX price when known). **Reset to stock**. On screens ≥ 900px wide a **Classic / Terminal** toggle switches to the Terminal view (see below) |
 | `/import` (`?member=<id>` for admins) | spviewer import: export snippet + copy button, upload, per-row preview (changes and skipped reasons), new/existing ship choice, apply, summary. "Update existing" is pre-selected only for a matching ship with no fitted changes (the import is authoritative and resets every other slot to stock); otherwise "New ship" — also when the target hangar can't be fetched (the preview still works, counts are just unknown). A row with a `too_many_lookups` skip is marked "won't be applied — import fewer at once" and any row-level skip "cannot be imported"; both are left out of apply, matching the server, which refuses such rows. Admins reach `?member=<id>` from that member's hangar; the summary names the member with their ID |
+
+## Terminal view
+
+An alternative ship-detail layout inspired by the in-game loadout terminal
+(`src/components/terminal/`, styles in `terminal.css`, scoped under `.terminal`;
+our own CSS and inline SVG icons, no game assets). Spec:
+`docs/superpowers/specs/2026-10-11-hangar-terminal-view-design.md`.
+
+- **Toggle:** shown only when `matchMedia('(min-width: 900px)')` matches; the
+  choice persists in `localStorage` `hangar.shipView` (`"classic" | "terminal"`,
+  every access in try/catch, anything else → Classic). Narrow screens always get
+  Classic. The Terminal bundle and stylesheet are lazy-loaded on first use.
+- **Layout:** top bar (title, "Changes saved" pulse for 2.5s after a successful
+  write, signed-in-as, ship name/manufacturer/model); left: category tabs (a tab
+  with no ports is disabled) + a 2-column grid of compatible items for the selected
+  port (`slot-options`, best key stat first, `IN USE` / `STOCK` / `SIZE n` badges,
+  cheapest price on hover/focus); centre: `CURRENT → CANDIDATE` comparison (per
+  stat: value, ▲ green better / ▼ red worse delta respecting lower-is-better, bar
+  scaled to the best option; manufacturer, grade/class, description) and
+  **Install**; right: ship stats (mass, L × W × H, crew, ports per type — missing
+  fields omitted), the dimmed ship render, hardpoint markers, and the port rail
+  grouped by type.
+- **Writes:** selecting a card is a preview only. Install = the per-slot fit API;
+  Reset port / Reset ship = the existing reset APIs, both after a confirm. Install
+  is hidden when the candidate is the current item. Read-only hangars (someone
+  else's, unless admin) show no Install/Reset. Missile racks are read-only
+  (missiles aren't tracked) and fetch no options. Write failures show inline.
+- **Keyboard:** `A` / `D` previous / next port in the current tab (wraps), `R`
+  reset port (confirm), `Esc` back to Classic (persisted). Ignored while typing
+  in an input/textarea/select/contenteditable or with Ctrl/Meta/Alt held.
+- **Images:** item and ship images come from `https://cdn.star-citizen.wiki` and
+  `https://media.starcitizen.tools` (the only image hosts the CSP allows). A failed
+  image falls back to our type icon and is reported once per URL per page load to
+  `POST /api/v1/client-events/image-error` (`{url, context}` where context is
+  `card`, `compare`, `hero` or `positions-view`); hangar-service logs it as
+  `WARNING hangar: image load failed host=… url=… context=… member=…`.
+- **Positions:** `GET /api/v1/catalog/vehicles/{uuid}/positions` (Firestore
+  `vehiclePositions/{vehicleUuid}`, `{}` when none). A marker is drawn over the
+  matching view image at `(x, y)` (0–1) only for slots with a `view` point; `xyz`
+  points are stored but not drawn yet. Clicking a marker selects that port. With
+  several views, the selected port's view is shown (chips switch otherwise). No
+  positions → no markers; there is no write endpoint yet.
 
 ## API
 
