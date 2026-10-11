@@ -25,6 +25,8 @@ from urllib.parse import unquote
 
 from fastapi.responses import FileResponse, Response
 
+from .catalog import IMAGE_HOSTS
+
 log = logging.getLogger(__name__)
 
 ASSET_CACHE = "public, max-age=31536000, immutable"
@@ -35,8 +37,9 @@ NO_CACHE = "no-cache"
 RESERVED_PREFIXES = ("/api", "/v1", "/health", "/healthz", "/assets")
 # Discord avatars (``/api/me`` avatarUrl) are the only off-origin images.
 AVATAR_ORIGIN = "https://cdn.discordapp.com"
-# Wiki image CDNs (hotlinked item / vehicle images in the terminal view).
-IMAGE_ORIGINS = ("https://cdn.star-citizen.wiki", "https://media.starcitizen.tools")
+# Hotlinked item / vehicle image hosts (terminal view). Single source of truth
+# is catalog.IMAGE_HOSTS, which also filters which image URLs the API returns.
+IMAGE_ORIGINS = tuple(f"https://{h}" for h in IMAGE_HOSTS)
 
 
 def build_csp(rum_origins: tuple[str, ...]) -> str:

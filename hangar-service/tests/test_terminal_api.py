@@ -43,20 +43,20 @@ def test_all_stats_skips_missing_and_unknown_type():
 
 def test_item_option_enrichment():
     raw = {"uuid": "u", "name": "N", "type": "Shield", "manufacturer": {"name": "Gorgon"},
-           "images": [{"thumbnail_url": "https://t/1.webp", "original_url": "https://o/1.png"}],
+           "images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/1.webp", "original_url": "https://cdn.star-citizen.wiki/images/1.png"}],
            "description": {"en_EN": "  A shield.  ", "de_DE": "x"},
            "shield": {"max_health": 100}}
     o = item_option(raw)
-    assert o["image"] == "https://t/1.webp"
+    assert o["image"] == "https://media.starcitizen.tools/thumb/1.webp"
     assert o["description"] == "A shield."
     assert o["manufacturer"] == "Gorgon"
     assert o["stats"][0]["key"] == "max_health"
 
 
 def test_item_option_fallbacks_and_omissions():
-    o = item_option({"uuid": "u", "type": "Shield", "images": [{"original_url": "https://o/1.png"}],
+    o = item_option({"uuid": "u", "type": "Shield", "images": [{"original_url": "https://cdn.star-citizen.wiki/images/1.png"}],
                      "description": "plain"})
-    assert o["image"] == "https://o/1.png" and o["description"] == "plain"
+    assert o["image"] == "https://cdn.star-citizen.wiki/images/1.png" and o["description"] == "plain"
     bare = item_option({"uuid": "u", "type": "Shield"})
     assert "image" not in bare and "description" not in bare and bare["stats"] == []
     empty = item_option({"uuid": "u", "type": "Shield", "images": [], "description": {"en_EN": " "}})
@@ -66,11 +66,11 @@ def test_item_option_fallbacks_and_omissions():
 # ---------- vehicle profile ----------
 
 def test_vehicle_profile_extra():
-    v = {"images": [{"thumbnail_url": "https://m/t.webp"}],
+    v = {"images": [{"thumbnail_url": "https://media.starcitizen.tools/thumb/t.webp"}],
          "dimension": {"length": 70, "width": 27.75, "height": 15.25},
          "mass": 383801, "crew": {"min": 4, "max": 5, "weapon": 2}}
     assert vehicle_profile_extra(v) == {
-        "image": "https://m/t.webp", "dimension": {"length": 70, "width": 27.75, "height": 15.25},
+        "image": "https://media.starcitizen.tools/thumb/t.webp", "dimension": {"length": 70, "width": 27.75, "height": 15.25},
         "mass": 383801, "crew": {"min": 4, "max": 5}}
     assert vehicle_profile_extra({}) == {}
 
@@ -94,7 +94,7 @@ def _app(*, mutate_vehicle=None, mutate_item=None, positions=None, extra_cfg=Non
 @pytest.mark.parametrize("prefix", ["/v1", "/api/v1"])
 def test_vehicle_slots_profile(prefix):
     def mut(d):
-        d["images"] = [{"thumbnail_url": "https://m/t.webp"}]
+        d["images"] = [{"thumbnail_url": "https://media.starcitizen.tools/thumb/t.webp"}]
         d["dimension"] = {"length": 70, "width": 27.75, "height": 15.25}
         d["mass"] = 100
         d["crew"] = {"min": 1, "max": 2}
@@ -102,7 +102,7 @@ def test_vehicle_slots_profile(prefix):
         r = c.get(f"{prefix}/catalog/vehicles/{TAURUS_UUID}/slots", headers=H())
     assert r.status_code == 200
     v = r.json()["vehicle"]
-    assert v["image"] == "https://m/t.webp" and v["mass"] == 100 and v["crew"] == {"min": 1, "max": 2}
+    assert v["image"] == "https://media.starcitizen.tools/thumb/t.webp" and v["mass"] == 100 and v["crew"] == {"min": 1, "max": 2}
     assert v["dimension"]["length"] == 70
     expected: dict = {}
     for s in r.json()["slots"]:
@@ -269,3 +269,38 @@ def test_limiter_window_and_key_cap():
     for k in "abcd":
         small.allow(k)
     assert small.tracked_keys() == 3
+
+
+# --- image host preference (2026-10-11: cstone.space images were CSP-blocked) ---
+
+def _img(url):
+    return {"source": "x", "thumbnail_url": url, "original_url": url}
+
+
+def test_first_image_prefers_wiki_cdns_over_cstone():
+    from src.catalog import _first_image
+    v = {"images": [_img("https://cstone.space/uifimages/a.png"),
+                    _img("https://media.starcitizen.tools/thumb/b.jpg")]}
+    assert _first_image(v) == "https://media.starcitizen.tools/thumb/b.jpg"
+    v = {"images": [_img("https://cstone.space/uifimages/a.png"),
+                    _img("https://cdn.star-citizen.wiki/images/c.jpg")]}
+    assert _first_image(v) == "https://cdn.star-citizen.wiki/images/c.jpg"
+
+
+def test_first_image_falls_back_to_cstone_when_it_is_the_only_one():
+    from src.catalog import _first_image
+    assert _first_image({"images": [_img("https://cstone.space/uifimages/a.png")]}) == \
+        "https://cstone.space/uifimages/a.png"
+
+
+def test_first_image_drops_hosts_the_editor_cannot_load():
+    # a host outside the CSP would only produce a blocked request + an image-error report
+    from src.catalog import _first_image
+    assert _first_image({"images": [_img("https://evil.example/x.png")]}) is None
+    assert _first_image({"images": [_img("http://cdn.star-citizen.wiki/images/c.jpg")]}) is None  # not https
+
+
+def test_csp_image_hosts_come_from_the_catalog_list():
+    from src.catalog import IMAGE_HOSTS
+    from src.static_site import IMAGE_ORIGINS
+    assert IMAGE_ORIGINS == tuple(f"https://{h}" for h in IMAGE_HOSTS)

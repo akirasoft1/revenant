@@ -321,6 +321,19 @@ def build_app(config: Config, uex_transport: httpx.AsyncBaseTransport | None = N
         say they can add them with /hangar add. Do NOT use the sandbox."""
         return await _guarded("sc_member_hangar", lambda: hangar_tools.member_hangar(member_id, ship))
 
+    @mcp.tool(name="sc_pledge_leaderboard")
+    async def sc_pledge_leaderboard() -> dict:
+        """Ranking of org members by how much they have pledged on ships
+        (RSI store pledges), highest first, with each member's per-currency
+        totals, ship count, LTI count and biggest pledge. Call this for
+        questions about who has pledged or spent the most on ships, pledge
+        totals, or rankings among members ("who has the biggest hangar
+        value?"). Amounts are what members pledged on ship-bearing pledges
+        per their HangarXPLOR imports -- only members who imported appear,
+        and the figures are pledge prices, not current ship values; mention
+        the returned caveat when quoting numbers. Do NOT use the sandbox."""
+        return await _guarded("sc_pledge_leaderboard", lambda: hangar_tools.pledge_leaderboard())
+
     @mcp.tool(name="sc_member_fit_check")
     async def sc_member_fit_check(member_id: str, item: str) -> dict:
         """Is a component (e.g. "Hemera" quantum drive) usable by, and an

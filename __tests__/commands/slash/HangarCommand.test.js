@@ -47,6 +47,7 @@ function fakeClient() {
     renameShip: jest.fn().mockResolvedValue({ ok: true, data: { ship: ship({ nickname: 'New' }) } }),
     removeShip: jest.fn().mockResolvedValue({ ok: true, data: { deleted: true, shipId: 's1' } }),
     searchVehicles: jest.fn().mockResolvedValue({ ok: true, data: { vehicles: [] } }),
+    getPledgeLeaderboard: jest.fn().mockResolvedValue({ ok: true, data: { entries: [], caveat: '' } }),
   };
 }
 
@@ -233,6 +234,153 @@ describe('/hangar', () => {
     await cmd.execute(i2, ctx);
     expect(replyText(i2)).toBe(UNAVAILABLE);
     expect(client.getHangar).not.toHaveBeenCalled();
+  });
+
+  describe('leaderboard', () => {
+    const CAVEAT = 'Amounts are per HangarXPLOR imports.';
+    const entry = (n, over = {}) => ({
+      member: String(1000 + n), displayName: `Pilot${n}`, totals: { USD: 1234.5 }, pledges: 3, ships: 4, lti: 2,
+      topPledge: { name: 'Idris-P Package', amount: 1500, currency: 'USD' }, lastImport: '2026-10-01', ...over,
+    });
+    const board = (entries) => ({ ok: true, data: { entries, caveat: CAVEAT } });
+
+    test('is a PUBLIC reply: deferReply not ephemeral, reply not ephemeral', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1)]));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(i.deferReply).toHaveBeenCalledWith({ ephemeral: false });
+      expect(lastReply(i).ephemeral).toBeFalsy();
+    });
+
+    test('medals, names, totals, ships, LTI, top pledge, caveat; no pings', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([
+        entry(1), entry(2, { totals: { USD: 100, EUR: 50 }, lti: 0, ships: 1 }), entry(3), entry(4, { displayName: null }),
+      ]));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      const t = replyText(i);
+      expect(t).toContain('🥇 **Pilot1** — $1,234.50');
+      expect(t).toContain('🥈 **Pilot2** — $100.00 + €50.00');
+      expect(t).toContain('🥉 **Pilot3**');
+      expect(t).toContain('4. **<@1004>**');
+      expect(t).toContain('4 ships');
+      expect(t).toContain('2 LTI');
+      expect(t).toContain('top: Idris-P Package ($1,500.00)');
+      expect(t.trimEnd().endsWith(`_${CAVEAT} · last import 2026-10-01_`)).toBe(true);
+      expect(lastReply(i).allowedMentions).toEqual({ parse: [] });
+    });
+
+    test('footer carries the oldest last-import date; pledge names are escaped and clamped', async () => {
+      const long = '*Big*_'.repeat(30);
+      client.getPledgeLeaderboard.mockResolvedValue(board([
+        entry(1, { lastImport: '2026-10-05T12:00:00+00:00', topPledge: { name: long, amount: 5, currency: 'USD' } }),
+        entry(2, { lastImport: '2026-09-01T08:00:00+00:00' }),
+      ]));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      const t = replyText(i);
+      expect(t).toContain(CAVEAT);
+      expect(t.trimEnd().endsWith('last import 2026-09-01_')).toBe(true);
+      expect(t).toContain('top: \\*');
+      expect(t).not.toContain(long);
+      expect(t).toMatch(/top: [^(]*…\s\(/);
+    });
+
+    test('stays within 2000 chars with "…and N more" and keeps the caveat', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board(Array.from({ length: 60 }, (_, n) => entry(n + 1))));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      const t = replyText(i);
+      expect(t.length).toBeLessThanOrEqual(2000);
+      expect(t).toMatch(/…and \d+ more/);
+      expect(t).toContain(CAVEAT);
+    });
+
+    test('registry addressName wins over the service displayName', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1)]));
+      cmd = new HangarSlashCommand(client, { memberIdentity: { get: (id) => (id === '1001' ? { addressName: 'Akira' } : null) } });
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toContain('🥇 **Akira**');
+      expect(replyText(i)).not.toContain('Pilot1');
+    });
+
+    test('SpeakerNames is consulted when the registry has nothing', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1)]));
+      const resolve = jest.fn(() => 'Override');
+      cmd = new HangarSlashCommand(client, { memberIdentity: { get: () => null }, speakerNames: { resolve } });
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(resolve).toHaveBeenCalledWith({ id: '1001' }, null);
+      expect(replyText(i)).toContain('**Override**');
+    });
+
+    test('markdown in names is escaped', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue(board([entry(1, { displayName: '*_bad_*' })]));
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toContain('**\\*\\_bad\\_\\***');
+    });
+
+    test('command definition includes leaderboard', () => {
+      expect(cmd.data.toJSON().options.map((o) => o.name)).toContain('leaderboard');
+    });
+
+    test('empty board points at the editor', async () => {
+      cmd = new HangarSlashCommand(client, { editorUrl: 'https://hangar.aklabs.io' });
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toBe('No one has imported an RSI hangar yet — see Import on https://hangar.aklabs.io');
+    });
+
+    test('empty board without an editor url omits the pointer', async () => {
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toBe('No one has imported an RSI hangar yet.');
+    });
+
+    test('unavailable', async () => {
+      client.getPledgeLeaderboard.mockResolvedValue({ ok: false, error: 'unavailable', message: 'x' });
+      const i = fakeInteraction({ sub: 'leaderboard' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toBe(UNAVAILABLE);
+    });
+  });
+
+  describe('list pledge total', () => {
+    test('appends the total line when pledgeSummary is present', async () => {
+      client.getHangar.mockResolvedValue({ ok: true, data: { member: SELF, ships: [ship()],
+        pledgeSummary: { totals: { USD: 1234.5 }, pledges: 3, ships: 4, lti: 1 } } });
+      const i = fakeInteraction({ sub: 'list' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toContain('💰 $1,234.50 pledged on ships across 3 pledges');
+    });
+
+    test('singular pledge, multiple currencies', async () => {
+      client.getHangar.mockResolvedValue({ ok: true, data: { member: SELF, ships: [ship()],
+        pledgeSummary: { totals: { USD: 10, EUR: 5 }, pledges: 1, ships: 1, lti: 0 } } });
+      const i = fakeInteraction({ sub: 'list' });
+      await cmd.execute(i, ctx);
+      expect(replyText(i)).toContain('💰 $10.00 + €5.00 pledged on ships across 1 pledge');
+    });
+
+    test('no pledgeSummary -> no line; total survives truncation with footer', async () => {
+      const i0 = fakeInteraction({ sub: 'list' });
+      client.getHangar.mockResolvedValue({ ok: true, data: { member: SELF, ships: [ship()] } });
+      await cmd.execute(i0, ctx);
+      expect(replyText(i0)).not.toContain('💰');
+
+      cmd = new HangarSlashCommand(client, { editorUrl: 'https://hangar.aklabs.io' });
+      const ships = Array.from({ length: 80 }, (_, n) => ship({ shipId: `s${n}`, vehicleName: `Very Long Ship Model Name ${n}` }));
+      client.getHangar.mockResolvedValue({ ok: true, data: { member: SELF, ships,
+        pledgeSummary: { totals: { USD: 5 }, pledges: 2, ships: 80, lti: 0 } } });
+      const i = fakeInteraction({ sub: 'list' });
+      await cmd.execute(i, ctx);
+      const t = replyText(i);
+      expect(t.length).toBeLessThanOrEqual(2000);
+      expect(t).toContain('💰 $5.00 pledged on ships across 2 pledges');
+      expect(t).toContain('Edit in the browser');
+    });
   });
 
   describe('add', () => {

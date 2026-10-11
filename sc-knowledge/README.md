@@ -28,6 +28,7 @@ envelope.
 | `sc_commodity_prices(commodity, location=None, side="sell", limit=5)` | Current UEX buy/sell prices for a commodity, best price first. |
 | `sc_location_shops(location, category=None, exclusive_only=False, limit=40)` | What a place's live UEX shops sell, and which of those items are sold nowhere else. Optional category filter (with ship-parts/FPS-gear aliases) and exclusive-only flag. |
 | `sc_member_hangar(member_id, ship=None)` | A member's ships with their effective loadouts (slot, size, item, `stock`/`fitted`). `ship` resolves within that member's hangar: exact nickname → nickname fuzzy → exact model → model token/prefix (with a small community-shorthand table: "Connie" → Constellation, "Cutty" → Cutlass, …) → model fuzzy; ambiguous → `ambiguous` + `candidates`, unknown → `not_found` + `owned`. See "Member hangar tools" below. |
+| `sc_pledge_leaderboard()` | Members ranked by what they pledged on ships (per-currency totals, ships, LTI count, top pledge) from `GET /v1/pledges/leaderboard`, plus the service's caveat. Only members who imported a HangarXPLOR file appear. `sc_member_hangar` ships also carry `rsi` (`pledgeName, pledgeDate, pledgeCost, lti, warbond, rsiName`) and the result a `pledgeSummary` when the member imported. |
 | `sc_member_fit_check(member_id, item)` | Is an item a usable upgrade for any of a member's ships? Resolves the item (Wiki), checks every owned ship's compatible slots, and gives a per-slot verdict against what is fitted now. See below. |
 | `sc_org_guides(query, limit=3)` | BM25 search over privately-synced org guide text (mining/salvage/trading strategy notes; live data from the other tools wins for prices/stats). |
 
@@ -73,7 +74,7 @@ roster ("my" = the labelled speaker). A non-numeric `member_id` returns
 `invalid_request` (hangar-service's code for a bad member id) without a call. Reads of any member are allowed ("can Micro use
 it?"); there is no write path here.
 
-- **Read-only client** (`src/hangar.py`): only `GET /v1/members/{id}/hangar`,
+- **Read-only client** (`src/hangar.py`): only `GET /v1/members/{id}/hangar` and `GET /v1/pledges/leaderboard`,
   never an `X-Acting-Member` header (a test pins the absence of any write
   verb). Auth is a Google ID token minted from the `hangar-api@` key at
   `HANGAR_SA_KEY_PATH` (`service_account.IDTokenCredentials`, audience =

@@ -8,7 +8,7 @@
 // Reads (list) are open: the chat agent can already read any member's
 // hangar, so gating /hangar list would protect nothing.
 'use strict';
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, escapeMarkdown } = require('discord.js');
 const BaseSlashCommand = require('../base/BaseSlashCommand');
 const logger = require('../../logger');
 
@@ -17,6 +17,8 @@ const NOT_ADMIN = "Only a bot admin can change someone else's hangar.";
 const MAX_REPLY = 2000;
 const MAX_CHOICES = 25;
 const MAX_CHOICE_LEN = 100;
+const MAX_PLEDGE_NAME = 60;
+const clampName = (n) => (n.length > MAX_PLEDGE_NAME ? `${n.slice(0, MAX_PLEDGE_NAME - 1)}…` : n);
 // Discord drops an autocomplete response after 3s; leave room for the respond() round trip.
 const AUTOCOMPLETE_TIMEOUT_MS = 2200;
 const MAX_FITTED_INLINE = 120;
@@ -29,12 +31,29 @@ const clamp = (s, n = MAX_CHOICE_LEN) => {
   return str.length <= n ? str : `${str.slice(0, n - 1)}…`;
 };
 
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+function formatMoney(amount, currency) {
+  const n = Number(amount) || 0;
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(n);
+  } catch (_) {
+    return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  }
+}
+
+// {USD: 1234.5, EUR: 5} -> "$1,234.50 + €5.00" (USD first, then alphabetical)
+function formatTotals(totals) {
+  const keys = Object.keys(totals || {}).sort((a, b) => (a === 'USD' ? -1 : b === 'USD' ? 1 : a.localeCompare(b)));
+  return keys.length ? keys.map((c) => formatMoney(totals[c], c)).join(' + ') : '$0.00';
+}
+
 function shipLabel(s) {
   return s.nickname ? `${s.nickname} (${s.vehicleName})` : String(s.vehicleName || s.shipId);
 }
 
 class HangarSlashCommand extends BaseSlashCommand {
-  constructor(hangarClient, { editorUrl = '' } = {}) {
+  constructor(hangarClient, { editorUrl = '', memberIdentity = null, speakerNames = null } = {}) {
     const member = (o) => o.setName('member').setDescription('Another member (admin only for changes; default: you)').setRequired(false);
     super({
       data: new SlashCommandBuilder()
@@ -52,12 +71,33 @@ class HangarSlashCommand extends BaseSlashCommand {
           .addUserOption(member))
         .addSubcommand((s) => s.setName('remove').setDescription('Remove a ship from a hangar')
           .addStringOption((o) => o.setName('ship').setDescription('Ship in the hangar').setRequired(true).setAutocomplete(true).setMaxLength(SHIP_MAX))
-          .addUserOption(member)),
+          .addUserOption(member))
+        .addSubcommand((s) => s.setName('leaderboard').setDescription('Who has pledged the most on ships (from RSI imports)')),
       cooldown: 2,
       ephemeral: true,
     });
     this.hangarClient = hangarClient;
     this.editorUrl = String(editorUrl || '').trim();
+    this.memberIdentity = memberIdentity;
+    this.speakerNames = speakerNames;
+  }
+
+  // Leaderboard display name: registry addressName -> SpeakerNames (override
+  // table; Discord names are not available from an id alone) -> the service's
+  // displayName -> a mention. Rendered text is markdown-escaped.
+  _displayName(e) {
+    let name = '';
+    try {
+      const rec = this.memberIdentity && typeof this.memberIdentity.get === 'function' ? this.memberIdentity.get(e.member) : null;
+      name = (rec && rec.addressName) || '';
+      if (!name && this.speakerNames && typeof this.speakerNames.resolve === 'function') {
+        name = this.speakerNames.resolve({ id: String(e.member) }, null) || '';
+      }
+    } catch (err) {
+      logger.warn(`/hangar leaderboard: name resolution failed for ${e.member}: ${err && err.stack ? err.stack : err}`);
+    }
+    name = name || e.displayName;
+    return name ? escapeMarkdown(String(name)) : `<@${e.member}>`;
   }
 
   // "\nEdit in the browser: <url>" for /hangar list replies, or '' when unset.
@@ -96,6 +136,11 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
 
     try {
+      if (sub === 'leaderboard') {
+        // The one public reply: skip deferIfNeeded, which forces ephemeral for this command.
+        if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral: false });
+        return await this._leaderboard(interaction);
+      }
       await this.deferIfNeeded(interaction, true);
       if (sub === 'list') return await this._list(interaction, who);
       if (sub === 'add') return await this._add(interaction, who, actorId);
@@ -126,6 +171,47 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
   }
 
+  async _leaderboard(interaction) {
+    const res = await this.hangarClient.getPledgeLeaderboard();
+    if (!res.ok) {
+      await this.sendReply(interaction, { content: UNAVAILABLE, allowedMentions: { parse: [] } });
+      return;
+    }
+    const entries = (res.data && res.data.entries) || [];
+    if (!entries.length) {
+      const where = this.editorUrl ? ` — see Import on ${this.editorUrl}` : '.';
+      await this.sendReply(interaction, `No one has imported an RSI hangar yet${where}`);
+      return;
+    }
+    const imports = entries.map((e) => Date.parse(e.lastImport)).filter((t) => !Number.isNaN(t));
+    const last = imports.length ? `last import ${new Date(Math.min(...imports)).toISOString().slice(0, 10)}` : '';
+    const note = [res.data && res.data.caveat, last].filter(Boolean).join(' · ');
+    const caveat = note ? `\n_${note}_` : '';
+    const lines = entries.map((e, n) => {
+      const name = this._displayName(e);
+      const parts = [`${e.ships} ship${e.ships === 1 ? '' : 's'}`];
+      if (e.lti) parts.push(`${e.lti} LTI`);
+      if (e.topPledge) parts.push(`top: ${clampName(escapeMarkdown(String(e.topPledge.name ?? '')))} (${formatMoney(e.topPledge.amount, e.topPledge.currency)})`);
+      return `${n < 3 ? MEDALS[n] : `${n + 1}.`} **${name}** — ${formatTotals(e.totals)} · ${parts.join(' · ')}`;
+    });
+    const out = this._fit('**Pledge leaderboard**', lines, MAX_REPLY - caveat.length);
+    await this.sendReply(interaction, { content: out + caveat, allowedMentions: { parse: [] } });
+  }
+
+  // header + as many lines as fit in `budget`, ending "…and N more." when cut.
+  _fit(header, lines, budget) {
+    let out = header;
+    for (let n = 0; n < lines.length; n++) {
+      const more = `\n…and ${lines.length - n} more.`;
+      const candidate = `${out}\n${lines[n]}`;
+      if (candidate.length > budget - (n === lines.length - 1 ? 0 : more.length + 2)) {
+        return out + more;
+      }
+      out = candidate;
+    }
+    return out;
+  }
+
   async _list(interaction, who) {
     const res = await this.hangarClient.getHangar(who.targetId);
     if (!res.ok) {
@@ -139,20 +225,12 @@ class HangarSlashCommand extends BaseSlashCommand {
     }
     const header = `**${who.self ? 'Your' : `<@${who.targetId}>'s`} hangar** (${ships.length} ship${ships.length === 1 ? '' : 's'})`;
     const lines = ships.map((s) => this._shipLine(s));
-    const footer = this._footer();
-    const budget = MAX_REPLY - footer.length;
-    let out = header;
-    for (let n = 0; n < lines.length; n++) {
-      const remaining = lines.length - n;
-      const more = `\n…and ${remaining} more.`;
-      const candidate = `${out}\n${lines[n]}`;
-      // Keep room for the "…and N more" tail unless this is the last line.
-      if (candidate.length > budget - (n === lines.length - 1 ? 0 : more.length + 2)) {
-        out += more;
-        break;
-      }
-      out = candidate;
-    }
+    const ps = res.data && res.data.pledgeSummary;
+    const total = ps && ps.totals && Object.keys(ps.totals).length
+      ? `\n💰 ${formatTotals(ps.totals)} pledged on ships across ${ps.pledges} pledge${ps.pledges === 1 ? '' : 's'}`
+      : '';
+    const footer = total + this._footer();
+    const out = this._fit(header, lines, MAX_REPLY - footer.length);
     await this._say(interaction, out + footer);
   }
 

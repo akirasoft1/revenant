@@ -22,13 +22,32 @@ backtick-quoted ``FieldPath("fitted", slot)``.
 """
 import abc
 import copy
+import hashlib
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 MEMBERS = "members"
 SHIPS = "ships"
+PLEDGES = "rsiPledges"
 _TIMEOUT_S = 10.0
+
+
+class _Unset:
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = _Unset()      # "leave the field as stored" (None means "set to null")
+
+
+def pledge_doc_id(pledge_id: str) -> str:
+    """Firestore-safe document id for a pledge (RSI ids are numeric, but the
+    file is untrusted: '/', '.', over-long ids get a stable hash id)."""
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,100}", pledge_id):
+        return pledge_id
+    return "h" + hashlib.sha1(pledge_id.encode()).hexdigest()
 
 
 class RepositoryError(Exception):
@@ -48,7 +67,7 @@ def _iso(value: Any) -> Any:
 
 
 def _to_ship(ship_id: str, doc: dict) -> dict:
-    return {
+    out = {
         "shipId": ship_id,
         "vehicleUuid": doc.get("vehicleUuid"),
         "vehicleName": doc.get("vehicleName"),
@@ -60,15 +79,21 @@ def _to_ship(ship_id: str, doc: dict) -> dict:
         "updatedBy": doc.get("updatedBy"),
         "ownerName": doc.get("ownerName"),
     }
+    if doc.get("rsi"):
+        out["rsi"] = copy.deepcopy(doc["rsi"])
+    return out
 
 
 def _new_doc(vehicle_uuid: str, vehicle_name: str, vehicle_class_name: str | None,
-             nickname: str | None, updated_by: str, now: datetime, owner_name: str | None) -> dict:
+             nickname: str | None, updated_by: str, now: datetime, owner_name: str | None,
+             rsi: dict | None = None) -> dict:
     doc = {"vehicleUuid": vehicle_uuid, "vehicleName": vehicle_name,
            "vehicleClassName": vehicle_class_name, "nickname": nickname, "fitted": {},
            "createdAt": now, "updatedAt": now, "updatedBy": updated_by}
     if owner_name:
         doc["ownerName"] = owner_name
+    if rsi:
+        doc["rsi"] = copy.deepcopy(rsi)
     return doc
 
 
@@ -100,7 +125,29 @@ class ShipRepository(abc.ABC):
     @abc.abstractmethod
     async def create_ship(self, member_id: str, *, vehicle_uuid: str, vehicle_name: str,
                           vehicle_class_name: str | None, nickname: str | None,
-                          updated_by: str, owner_name: str | None = None) -> dict: ...
+                          updated_by: str, owner_name: str | None = None,
+                          rsi: dict | None = None) -> dict: ...
+
+    @abc.abstractmethod
+    async def set_rsi(self, member_id: str, ship_id: str, rsi: dict, *,
+                      nickname: "str | None | _Unset" = UNSET, updated_by: str,
+                      owner_name: str | None = None) -> dict | None:
+        """Set the ship's ``rsi`` (HTF pledge data) and, unless ``nickname`` is
+        ``UNSET``, its nickname -- one write. Fittings are never touched."""
+
+    @abc.abstractmethod
+    async def list_pledges(self, member_id: str) -> list[dict]:
+        """The member's pledge ledger (``members/{id}/rsiPledges/*``)."""
+
+    @abc.abstractmethod
+    async def upsert_pledges(self, member_id: str, records: list[dict]) -> None: ...
+
+    @abc.abstractmethod
+    async def delete_pledges(self, member_id: str, pledge_ids: list[str]) -> None: ...
+
+    @abc.abstractmethod
+    async def list_pledge_members(self) -> list[str]:
+        """Ids of members with >= 1 ledger pledge."""
 
     @abc.abstractmethod
     async def set_nickname(self, member_id: str, ship_id: str, nickname: str | None, *,
@@ -149,6 +196,7 @@ class InMemoryShipRepository(ShipRepository):
         self._ids = id_factory
         self._data: dict[str, dict[str, dict]] = {}
         self._order: list[tuple[str, str]] = []
+        self._pledges: dict[str, dict[str, dict]] = {}
         self.fail_with: Exception | None = None
 
     def _check(self) -> None:
@@ -169,11 +217,11 @@ class InMemoryShipRepository(ShipRepository):
         return _to_ship(ship_id, doc) if doc else None
 
     async def create_ship(self, member_id, *, vehicle_uuid, vehicle_name, vehicle_class_name,
-                          nickname, updated_by, owner_name=None) -> dict:
+                          nickname, updated_by, owner_name=None, rsi=None) -> dict:
         self._check()
         ship_id = self._ids()
         doc = _new_doc(vehicle_uuid, vehicle_name, vehicle_class_name, nickname, updated_by, self._clock(),
-                       owner_name)
+                       owner_name, rsi)
         self._data.setdefault(member_id, {})[ship_id] = doc
         self._order.append((member_id, ship_id))
         return _to_ship(ship_id, doc)
@@ -193,6 +241,34 @@ class InMemoryShipRepository(ShipRepository):
     async def set_nickname(self, member_id, ship_id, nickname, *, updated_by, owner_name=None):
         return await self._mutate(member_id, ship_id, updated_by, owner_name,
                                   lambda d: d.__setitem__("nickname", nickname))
+
+    async def set_rsi(self, member_id, ship_id, rsi, *, nickname=UNSET, updated_by, owner_name=None):
+        new = copy.deepcopy(rsi)
+
+        def apply(d):
+            d["rsi"] = new
+            if nickname is not UNSET:
+                d["nickname"] = nickname
+        return await self._mutate(member_id, ship_id, updated_by, owner_name, apply)
+
+    async def list_pledges(self, member_id):
+        self._check()
+        return [copy.deepcopy(p) for p in self._pledges.get(member_id, {}).values()]
+
+    async def upsert_pledges(self, member_id, records):
+        self._check()
+        store = self._pledges.setdefault(member_id, {})
+        for r in records:
+            store[r["pledgeId"]] = copy.deepcopy(r)
+
+    async def delete_pledges(self, member_id, pledge_ids):
+        self._check()
+        for pid in pledge_ids:
+            self._pledges.get(member_id, {}).pop(pid, None)
+
+    async def list_pledge_members(self):
+        self._check()
+        return [m for m, p in self._pledges.items() if p]
 
     async def set_slot(self, member_id, ship_id, slot, *, item_uuid, item_name, updated_by,
                        owner_name=None):
@@ -263,10 +339,10 @@ class FirestoreShipRepository(ShipRepository):
         return await self._guard(run)
 
     async def create_ship(self, member_id, *, vehicle_uuid, vehicle_name, vehicle_class_name,
-                          nickname, updated_by, owner_name=None) -> dict:
+                          nickname, updated_by, owner_name=None, rsi=None) -> dict:
         ship_id = uuid.uuid4().hex
         doc = _new_doc(vehicle_uuid, vehicle_name, vehicle_class_name, nickname, updated_by, self._clock(),
-                       owner_name)
+                       owner_name, rsi)
 
         async def run():
             await self._ships(member_id).document(ship_id).create(doc, timeout=_TIMEOUT_S)
@@ -297,6 +373,44 @@ class FirestoreShipRepository(ShipRepository):
 
     async def set_nickname(self, member_id, ship_id, nickname, *, updated_by, owner_name=None):
         return await self._update(member_id, ship_id, {"nickname": nickname}, updated_by, owner_name)
+
+    def _pledges(self, member_id: str):
+        return self._client.collection(MEMBERS).document(member_id).collection(PLEDGES)
+
+    async def set_rsi(self, member_id, ship_id, rsi, *, nickname=UNSET, updated_by, owner_name=None):
+        fields: dict = {"rsi": copy.deepcopy(rsi)}
+        if nickname is not UNSET:
+            fields["nickname"] = nickname
+        return await self._update(member_id, ship_id, fields, updated_by, owner_name)
+
+    async def list_pledges(self, member_id):
+        async def run():
+            return [snap.to_dict() or {}
+                    async for snap in self._pledges(member_id).stream(timeout=_TIMEOUT_S)]
+        return await self._guard(run)
+
+    async def upsert_pledges(self, member_id, records):
+        async def run():
+            for r in records:
+                await self._pledges(member_id).document(pledge_doc_id(r["pledgeId"])).set(
+                    copy.deepcopy(r), timeout=_TIMEOUT_S)
+        await self._guard(run)
+
+    async def delete_pledges(self, member_id, pledge_ids):
+        async def run():
+            for pid in pledge_ids:
+                await self._pledges(member_id).document(pledge_doc_id(pid)).delete(timeout=_TIMEOUT_S)
+        await self._guard(run)
+
+    async def list_pledge_members(self):
+        async def run():
+            ids: set[str] = set()
+            async for snap in self._client.collection_group(PLEDGES).stream(timeout=_TIMEOUT_S):
+                ref = snap.reference.parent.parent
+                if ref is not None:
+                    ids.add(ref.id)
+            return sorted(ids)
+        return await self._guard(run)
 
     async def set_slot(self, member_id, ship_id, slot, *, item_uuid, item_name, updated_by,
                        owner_name=None):

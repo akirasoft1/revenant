@@ -20,7 +20,7 @@ import logging
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 from rapidfuzz import fuzz
@@ -139,18 +139,36 @@ def item_summary(i: dict) -> dict:
 ITEM_SUMMARY_KEYS = ("uuid", "name", "className", "type", "subType", "size", "grade", "class", "manufacturer")
 
 
+# Image hosts the web editor may load (its CSP ``img-src`` is built from this
+# list in static_site.py), in preference order: the two wiki CDNs first, then
+# cstone.space, which the Wiki lists FIRST for ~13% of items (62/474 component
+# items, 2026-10-11) and which was CSP-blocked until then. Hotlinking cstone was
+# checked: 200 with or without a Referer, max-age 7 days.
+IMAGE_HOSTS = ("cdn.star-citizen.wiki", "media.starcitizen.tools", "cstone.space")
+
+
 def _first_image(v: Any) -> str | None:
-    """First ``images[]`` entry's ``thumbnail_url`` (else ``original_url``)."""
+    """Best ``images[]`` URL (``thumbnail_url`` else ``original_url``) on an
+    allowed https host, preferring hosts earlier in ``IMAGE_HOSTS``; None when
+    no image is loadable by the editor (a blocked URL would only produce a CSP
+    violation plus an image-error report)."""
     imgs = v.get("images") if isinstance(v, dict) else None
     if not isinstance(imgs, list):
         return None
+    best: tuple[int, str] | None = None
     for img in imgs:
-        if isinstance(img, dict):
-            url = img.get("thumbnail_url") or img.get("original_url")
-            if isinstance(url, str) and url:
-                return url
-        break
-    return None
+        if not isinstance(img, dict):
+            continue
+        url = img.get("thumbnail_url") or img.get("original_url")
+        if not isinstance(url, str) or not url:
+            continue
+        parts = urlsplit(url)
+        if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
+            continue
+        rank = IMAGE_HOSTS.index(parts.hostname)
+        if best is None or rank < best[0]:
+            best = (rank, url)
+    return best[1] if best else None
 
 
 def _description(d: Any) -> str | None:

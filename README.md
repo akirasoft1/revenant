@@ -99,7 +99,7 @@ For the system-level overview (software architecture + Kubernetes deployment top
 ### Member Hangar (Star Citizen)
 
 - Each member's ships and their component loadouts, stored in `hangar-service` (Cloud Run + Firestore) and managed with `/hangar` or the web editor
-- **Web editor at https://hangar.aklabs.io**: sign in with Discord (members of the org's Discord server only), add/rename/remove ships, fit components slot by slot from only-compatible items (ranked by key stat, with the cheapest shop price), reset to stock, browse other members' hangars, and import saved loadouts from spviewer.eu. Source in `hangar-editor/`; served by `hangar-service` behind a GCP load balancer
+- **Web editor at https://hangar.aklabs.io**: sign in with Discord (members of the org's Discord server only), add/rename/remove ships, fit components slot by slot from only-compatible items (ranked by key stat, with the cheapest shop price), reset to stock, browse other members' hangars, import saved loadouts from spviewer.eu, and import your RSI pledge hangar from HangarXPLOR (pledge cost, LTI, and a `/hangar leaderboard` of who has pledged the most on ships). Source in `hangar-editor/`; served by `hangar-service` behind a GCP load balancer
 - **Terminal view** (desktop): an in-game-style ship terminal layout with component images and stats, switchable with the classic table; images come from unofficial Star Citizen fansites
 - Ask in chat or voice: "what's a purchasable upgraded shield for my Harbinger?", "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?", "can Micro use it?", "what's on my Connie?"
 - Ship data is looked up only for questions about a member's own ships — never mentioned unprompted

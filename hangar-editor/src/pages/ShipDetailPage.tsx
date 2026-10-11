@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fitSlot, getHangar, getVehiclePositions, getVehicleSlots, resetShip, resetSlot } from '../api/client';
 import type { Hangar, Ship, SlotOption } from '../api/types';
 import { canEdit, useMe } from '../auth/AuthGate';
+import { rsiBadgeText } from '../lib/pledge';
 import { shipTitle } from '../components/HangarView';
 import { ClassicShipView, groupSlots } from '../components/ClassicShipView';
 import { TerminalBoundary } from '../components/terminal/TerminalBoundary';
@@ -147,6 +148,7 @@ export function ShipDetailPage() {
         {shipTitle(ship)} {!editable && <span className="badge">read-only</span>}
       </h1>
       {ship.nickname && <p className="muted">{ship.vehicleName}</p>}
+      {ship.rsi && <p><span className="badge badge-stock">{rsiBadgeText(ship.rsi, ship.vehicleName)}</span></p>}
       {wide && loadout && loadout.length > 0 && (
         <div className="view-toggle" role="group" aria-label="Ship view">
           <button className={`btn btn-small${pref === 'classic' ? '' : ' btn-ghost'}`} aria-pressed={pref === 'classic'} onClick={() => choose('classic')}>

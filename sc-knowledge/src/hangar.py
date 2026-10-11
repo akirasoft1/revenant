@@ -172,6 +172,10 @@ class HangarClient:
         """`GET /v1/members/{id}/hangar` -> {member, ships: [Ship]}."""
         return await self._get(f"/v1/members/{member_id}/hangar")
 
+    async def pledge_leaderboard(self) -> dict:
+        """`GET /v1/pledges/leaderboard` -> {entries: [...], caveat}."""
+        return await self._get("/v1/pledges/leaderboard")
+
     async def aclose(self) -> None:
         await self._http.aclose()
 
