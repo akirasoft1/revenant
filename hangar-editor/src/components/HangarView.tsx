@@ -56,7 +56,7 @@ function ShipCard({ ship, memberId, editable }: { ship: Ship; memberId: string; 
         </span>
         <span className="ship-meta">
           {ship.rsi ? (
-            <span className="badge badge-stock" data-testid="rsi-badge">{rsiBadgeText(ship.rsi)}</span>
+            <span className="badge badge-stock" data-testid="rsi-badge">{rsiBadgeText(ship.rsi, ship.vehicleName)}</span>
           ) : (
             <span className="muted small">Added manually</span>
           )}

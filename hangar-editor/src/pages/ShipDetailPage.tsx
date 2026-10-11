@@ -148,7 +148,7 @@ export function ShipDetailPage() {
         {shipTitle(ship)} {!editable && <span className="badge">read-only</span>}
       </h1>
       {ship.nickname && <p className="muted">{ship.vehicleName}</p>}
-      {ship.rsi && <p><span className="badge badge-stock">{rsiBadgeText(ship.rsi)}</span></p>}
+      {ship.rsi && <p><span className="badge badge-stock">{rsiBadgeText(ship.rsi, ship.vehicleName)}</span></p>}
       {wide && loadout && loadout.length > 0 && (
         <div className="view-toggle" role="group" aria-label="Ship view">
           <button className={`btn btn-small${pref === 'classic' ? '' : ' btn-ghost'}`} aria-pressed={pref === 'classic'} onClick={() => choose('classic')}>
