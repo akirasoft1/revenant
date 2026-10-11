@@ -39,3 +39,10 @@ def test_ambiguous_and_coincident():
 def test_multiple_roots_same_name_ambiguous():
     nodes = [node("a", -1, (0, 0, 0)), node("a", -1, (3, 0, 0))]
     assert match_slots(nodes, ["a"]).ambiguous == ["a"]
+
+
+def test_cycle_does_not_hang():
+    nodes = [node("a", 0), node("b", 0)]
+    assert match_slots(nodes, ["a/zzz"]).missing == ["a/zzz"]
+    nodes = [node("a", 1), node("b", 0)]
+    assert match_slots(nodes, ["a/zzz"]).missing == ["a/zzz"]

@@ -20,9 +20,12 @@ class MatchResult:
 
 
 def _descend(children: dict, nodes: list, start: int, name: str) -> list[int]:
-    found, queue = [], deque(children.get(start, ()))
+    found, queue, seen = [], deque(children.get(start, ())), {start}
     while queue:
         i = queue.popleft()
+        if i in seen:
+            continue
+        seen.add(i)
         if nodes[i]["name"].casefold() == name:
             found.append(i)
         else:

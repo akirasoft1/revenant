@@ -52,3 +52,31 @@ def test_decompressed_over_cap():
     data = gzip.compress(b"SWF1" + b"\x00" * (swf.MAX_DECOMPRESSED + 10))
     with pytest.raises(swf.SwfError, match="8 MB|decompress"):
         swf.parse(data)
+
+
+def test_parent_cycles_rejected():
+    with pytest.raises(swf.SwfError, match="cycle"):
+        swf.parse(make_bundle(nodes=[node("a", 0)]))
+    with pytest.raises(swf.SwfError, match="cycle"):
+        swf.parse(make_bundle(nodes=[node("a", 1), node("b", 0)]))
+    with pytest.raises(swf.SwfError, match="cycle"):
+        swf.parse(make_bundle(nodes=[node("r"), node("a", 2), node("b", 3), node("c", 1)]))
+
+
+def test_children_before_parents_allowed():
+    swf.parse(make_bundle(nodes=[node("child", 1), node("root", -1)]))
+
+
+@pytest.mark.parametrize("over,frag", [
+    ({"center": [float("nan"), 0, 0]}, "center"),
+    ({"halfExtent": float("inf")}, "halfExtent"),
+    ({"halfExtent": 0}, "halfExtent"),
+    ({"nodes": [{"name": "a", "parent": -1, "pos": [0, float("-inf"), 0]}]}, "nodes"),
+    ({"format": 2}, "format"),
+    ({"format": True}, "format"),
+    ({"space": "z-up"}, "space"),
+    ({"space": 5}, "space"),
+])
+def test_non_finite_and_header_fields(over, frag):
+    with pytest.raises(swf.SwfError, match=frag):
+        swf.parse(make_bundle(header_overrides=over))

@@ -95,13 +95,15 @@ class GcsFirestoreModelStore(ModelStore):
             self._bucket_obj = self._storage.bucket(self._bucket_name)
         return self._bucket_obj
 
-    async def _gcs(self, fn):
+    async def _gcs(self, fn, absent_ok=False):
         from google.api_core import exceptions as gexc
         from google.auth import exceptions as gauth
         try:
             return await asyncio.wait_for(asyncio.to_thread(fn), _TIMEOUT_S * 3)
-        except (gexc.NotFound,):
-            raise
+        except gexc.NotFound as e:
+            if absent_ok:
+                raise
+            raise RepositoryError(f"gcs NotFound: {e}") from e
         except (gexc.GoogleAPIError, gauth.GoogleAuthError, OSError, TimeoutError) as e:
             raise RepositoryError(f"gcs {type(e).__name__}: {e}") from e
 
@@ -137,7 +139,7 @@ class GcsFirestoreModelStore(ModelStore):
         from google.api_core import exceptions as gexc
         path = object_path(kind, class_name)
         try:
-            return await self._gcs(lambda: self._bucket().blob(path).download_as_bytes(timeout=_TIMEOUT_S * 2))
+            return await self._gcs(lambda: self._bucket().blob(path).download_as_bytes(timeout=_TIMEOUT_S * 2), absent_ok=True)
         except gexc.NotFound:
             return None
 
@@ -160,8 +162,8 @@ class GcsFirestoreModelStore(ModelStore):
     async def delete(self, kind, class_name):
         from google.api_core import exceptions as gexc
         path = object_path(kind, class_name)
+        await self._fs_call(self._doc(kind, class_name).delete(timeout=_TIMEOUT_S))
         try:
-            await self._gcs(lambda: self._bucket().blob(path).delete())
+            await self._gcs(lambda: self._bucket().blob(path).delete(), absent_ok=True)
         except gexc.NotFound:
             pass
-        await self._fs_call(self._doc(kind, class_name).delete(timeout=_TIMEOUT_S))

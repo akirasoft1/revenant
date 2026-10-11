@@ -40,6 +40,8 @@ class FailingModels(InMemoryModelStore):
     async def meta_for_vehicle(self, *a, **k):
         if "meta_for_vehicle" in self.fail_on:
             raise RepositoryError("boom")
+        if "meta_for_vehicle_unexpected" in self.fail_on:
+            raise KeyError("odd")
         return await super().meta_for_vehicle(*a, **k)
 
 
@@ -273,3 +275,62 @@ def test_delete_logs(parts, caplog):
             c.delete(f"{HP}/vehicle/{CLASS}", headers={"Origin": ORIGIN})
     assert any(f"model delete kind=vehicle class={CLASS}" in r.getMessage() and f"by={ADMIN}" in r.getMessage()
                for r in caplog.records)
+
+
+def test_class_name_casing_one_model(parts):
+    models, positions, app = parts
+    with TestClient(app, base_url=ORIGIN) as c:
+        admin(c)
+        up(c, make_bundle(class_name=CLASS.upper(), nodes=NODES, lines=4))
+        j = up(c, make_bundle(class_name=CLASS.lower(), nodes=NODES, lines=2)).json()
+        assert j["className"] == CLASS
+        ms = c.get(HP).json()["models"]
+        assert [m["className"] for m in ms] == [CLASS] and ms[0]["lines"] == 2
+    assert list(models.objects) == [f"vehicle:{CLASS}"]
+    assert positions._docs[TAURUS_UUID]["className"] == CLASS
+
+
+def test_delete_keeps_positions_written_by_other_model(parts):
+    models, positions, app = parts
+    with TestClient(app, base_url=ORIGIN) as c:
+        admin(c)
+        up(c)
+        positions._docs[TAURUS_UUID]["className"] = "OTHER_Model"
+        assert c.delete(f"{HP}/vehicle/{CLASS}", headers={"Origin": ORIGIN}).status_code == 204
+    assert TAURUS_UUID in positions._docs
+
+
+def test_delete_failure_leaves_listed_model_with_bytes():
+    models, positions = InMemoryModelStore(), InMemoryPositionsStore()
+
+    class BadPositions(InMemoryPositionsStore):
+        async def delete(self, *a):
+            raise RepositoryError("boom")
+    bad = BadPositions()
+    app = make(models, bad)
+    with TestClient(app, base_url=ORIGIN) as c:
+        admin(c)
+        up(c)
+        assert c.delete(f"{HP}/vehicle/{CLASS}", headers={"Origin": ORIGIN}).status_code == 503
+        assert len(c.get(HP).json()["models"]) == 1
+    assert models.objects and models.metas
+
+
+def test_has_wireframe_survives_unexpected_exception(caplog):
+    models = FailingModels()
+    app = make(models)
+    with TestClient(app, base_url=ORIGIN) as c:
+        admin(c)
+        models.fail_on = {"meta_for_vehicle_unexpected"}
+        with caplog.at_level(logging.WARNING):
+            r = c.get(f"/api/v1/catalog/vehicles/{TAURUS_UUID}/slots")
+    assert r.status_code == 200 and r.json()["vehicle"]["hasWireframe"] is False
+    assert any("wireframe lookup failed" in x.getMessage() for x in caplog.records)
+
+
+def test_cycle_upload_400(parts):
+    _, _, app = parts
+    with TestClient(app, base_url=ORIGIN) as c:
+        admin(c)
+        r = up(c, make_bundle(class_name=CLASS, nodes=[node("a", 0)]))
+        assert r.status_code == 400 and "cycle" in r.json()["message"]

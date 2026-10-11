@@ -1441,8 +1441,10 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         except swf.SwfError as e:
             raise _bad(f"invalid wireframe bundle: {e}") from None
         class_name = bundle.header["className"]
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         vehicle = await app.state.catalog.vehicle_by_class_name(class_name)
+        if vehicle is not None and vehicle.get("className"):
+            class_name = vehicle["className"]       # canonical casing: one model per vehicle
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         result = None
         if vehicle is not None:
             slots = await app.state.catalog.slots(vehicle["uuid"]) or []
@@ -1486,14 +1488,14 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         meta = await store.get_meta(kind, class_name)
         if meta is None:
             raise _not_found(f"no {kind} model {class_name!r}")
-        await store.delete(kind, class_name)
         vehicle_uuid = meta.get("vehicleUuid")
         positions_removed = False
         if vehicle_uuid:
             doc = await app.state.positions.get(vehicle_uuid)
-            if doc and doc.get("source") == "extracted":
+            if doc and doc.get("source") == "extracted" and doc.get("className") == class_name:
                 await app.state.positions.delete(vehicle_uuid)
                 positions_removed = True
+        await store.delete(kind, class_name)       # metadata first, then the object
         log.info("hangar: model delete kind=%s class=%s vehicle=%s positions_removed=%s by=%s",
                  kind, class_name, vehicle_uuid, positions_removed, principal.subject)
         return Response(status_code=204)
@@ -1617,7 +1619,7 @@ async def _has_wireframe(models: ModelStore | None, vehicle_uuid: str) -> bool:
         return False
     try:
         return await models.meta_for_vehicle(vehicle_uuid) is not None
-    except RepositoryError as e:
+    except Exception as e:
         log.warning("hangar: wireframe lookup failed for vehicle %s: %s", vehicle_uuid, e)
         return False
 

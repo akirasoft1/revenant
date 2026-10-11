@@ -5,6 +5,7 @@ int16 LE x ``lines * 6``. The server never renders the lines; it validates the
 envelope, reads the node list for slot matching and stores the bytes verbatim.
 """
 import json
+import math
 import re
 import struct
 import zlib
@@ -33,7 +34,7 @@ class Bundle:
 
 
 def _num(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def _inflate(data: bytes) -> bytes:
@@ -67,6 +68,10 @@ def parse(data: bytes) -> Bundle:
     missing = [k for k in _REQUIRED if k not in header]
     if missing:
         raise SwfError(f"header is missing keys: {', '.join(missing)}")
+    if header["format"] != 1 or isinstance(header["format"], bool):
+        raise SwfError(f"format must be 1, got {header['format']!r}")
+    if header["space"] != "gltf-y-up-m":
+        raise SwfError(f"space must be 'gltf-y-up-m', got {header['space']!r}")
     if header["kind"] != "vehicle":
         raise SwfError(f"kind must be 'vehicle', got {header['kind']!r}")
     cn = header["className"]
@@ -94,6 +99,18 @@ def parse(data: bytes) -> Bundle:
               and isinstance(n.get("pos"), list) and len(n["pos"]) == 3 and all(_num(x) for x in n["pos"]))
         if not ok:
             raise SwfError("nodes entries must be {name: str, parent: index or -1, pos: [x, y, z]}")
+    # Parent links must form a forest (a cycle would hang the slot-matching walk).
+    state = [0] * len(nodes)              # 0 new, 1 on current path, 2 done
+    for start in range(len(nodes)):
+        path, i = [], start
+        while i != -1 and state[i] == 0:
+            state[i] = 1
+            path.append(i)
+            i = nodes[i]["parent"]
+        if i != -1 and state[i] == 1:
+            raise SwfError("nodes contain a parent cycle")
+        for j in path:
+            state[j] = 2
     if len(raw) - 8 - hlen != lines * 12:
         raise SwfError(f"payload is {len(raw) - 8 - hlen} bytes but lines={lines} needs {lines * 12}")
     build = header["build"] if isinstance(header["build"], dict) else {}
