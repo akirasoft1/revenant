@@ -8,8 +8,9 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     POST   /v1/members/{discordId}/ships                    {vehicle, nickname?}
     PATCH  /v1/members/{discordId}/ships/{shipId}           {nickname}
     DELETE /v1/members/{discordId}/ships/{shipId}
-    PUT    /v1/members/{discordId}/ships/{shipId}/slots/{slot}   {item}
-    DELETE /v1/members/{discordId}/ships/{shipId}/slots/{slot}
+    PUT    /v1/members/{discordId}/ships/{shipId}/slots/{slot}   {item}     both answer {ship, dropped}:
+    DELETE /v1/members/{discordId}/ships/{shipId}/slots/{slot}              ``dropped`` = fittings under the
+                                                             slot removed with its change
     POST   /v1/members/{discordId}/fit                      {ship, item, slot?}   chat edits:
     POST   /v1/members/{discordId}/ships/{shipRef}/reset    {slot?}               free-text ship /
                                                              item / slot, resolved server side
@@ -24,7 +25,10 @@ Routes (spec: docs/superpowers/specs/2026-10-09-member-hangar-design.md):
     GET    /v1/catalog/items?type=&size=&q=
     GET    /v1/members                                      member directory (>= 1 ship)
     GET    /v1/catalog/slot-options?vehicle=<uuid>&slot=<id> compatible items for one slot
-                                                             (+ keyStat, cheapestPrice?)
+                                                             (+ keyStat, cheapestPrice?);
+                                                             &member=<id>&ship=<shipId>: the slot is
+                                                             looked up in THAT ship's resolved slots
+                                                             (ports of fitted items included)
     POST   /v1/import/spviewer/preview[?member=]            {file: <spviewer export array>}
     POST   /v1/import/spviewer/apply[?member=]              {rows: [{rowIndex, mode, shipId?, nickname?}], file}
 
@@ -86,7 +90,7 @@ from .session import (OAUTH_STATE_COOKIE, OAUTH_STATE_MAX_AGE_S, SESSION_COOKIE,
 from .catalog import UnknownItemType, build_catalog
 from .config import Config
 from .http import UpstreamError
-from .loadout import check_compatible, effective_loadout
+from .loadout import check_compatible, effective_loadout, prune_descendants, resolve_slots
 from .options import slot_options
 from .client_events import SlidingWindowLimiter, log_image_error
 from .models import GcsFirestoreModelStore, InMemoryModelStore, ModelStore
@@ -440,8 +444,22 @@ async def ship_view(catalog, ship: dict) -> dict:
                         ship["vehicleUuid"], ship["shipId"])
             error = "not_found"
         else:
-            loadout = effective_loadout(slots, ship.get("fitted"))
+            # Resolved: the ports of fitted items (a turret's guns) are slots too.
+            loadout = effective_loadout(await resolve_slots(catalog, slots, ship.get("fitted")),
+                                        ship.get("fitted"))
     return {**ship, "loadout": loadout, "loadoutError": error}
+
+
+def _under(fitted: dict, parents) -> bool:
+    """Whether ``fitted`` has an entry under any of the slots in ``parents``."""
+    return any(k.startswith(p + "/") for k in fitted for p in parents)
+
+
+def _log_dropped(member: str, ship_id: str, dropped: list[dict], by: Any) -> None:
+    for d in dropped:
+        log.info("hangar: member %s ship %s slot %s: fitted %s (%s) dropped with its parent's change "
+                 "(%s) (by %s)", member, ship_id, d["slot"], d["item"].get("name"), d["item"].get("uuid"),
+                 d["reason"], by)
 
 
 # ---------- app ----------
@@ -458,7 +476,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
                models: ModelStore | None = None) -> FastAPI:
     owns_catalog = catalog is None
     if catalog is None:
-        catalog = build_catalog(config.wiki_base, version=config.version)
+        catalog = build_catalog(config.wiki_base, version=config.version, uex_base=config.uex_base,
+                                uex_bearer=config.uex_bearer)
     browser_problem = config.browser_auth_problem()
     codec: SessionCodec | None = None
     oauth: DiscordOAuth | None = None
@@ -684,9 +703,11 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         ship = await repo.get_ship(discordId, shipId)
         if ship is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
-        slots = await catalog.slots(ship["vehicleUuid"])
-        if slots is None:
+        vehicle_slots = await catalog.slots(ship["vehicleUuid"])
+        if vehicle_slots is None:
             raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
+        fitted = ship.get("fitted") or {}
+        slots = await resolve_slots(catalog, vehicle_slots, fitted)
         target = next((s for s in slots if s.name == slot), None) if len(slot) <= SLOT_MAX else None
         if target is None:
             raise _not_found(f"{ship['vehicleName']} has no component slot {slot!r}")
@@ -698,33 +719,66 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if reason is not None:
             raise ApiError(422, "incompatible", reason)
         stock = target.stock_item
-        if stock and stock.get("uuid") == item.get("uuid"):
-            # `fitted` holds only changes from stock: fitting the stock item is a reset.
-            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=principal.acting_member,
-                                            owner_name=owner_name_for(principal, discordId))
+        # `fitted` holds only changes from stock: fitting the stock item is a reset.
+        entry = (None if stock and stock.get("uuid") == item.get("uuid")
+                 else {"itemUuid": item["uuid"], "itemName": item.get("name")})
+        current = (fitted.get(slot) or {}).get("itemUuid") if slot in fitted else (stock or {}).get("uuid")
+        after = {k: v for k, v in fitted.items() if k != slot}
+        if entry is not None:
+            after[slot] = entry
+        # The parent's item changed: fitted children whose port is gone (or no
+        # longer takes their item) go in the SAME write.
+        dropped = (await prune_descendants(catalog, vehicle_slots, after, [slot])
+                   if current != item.get("uuid") and _under(after, [slot]) else [])
+        by, owner = principal.acting_member, owner_name_for(principal, discordId)
+        if dropped:
+            updated = await repo.update_slots(discordId, shipId, {slot: entry, **{d["slot"]: None for d in dropped}},
+                                              updated_by=by, owner_name=owner)
+        elif entry is None:
+            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=by, owner_name=owner)
         else:
             updated = await repo.set_slot(discordId, shipId, slot, item_uuid=item["uuid"],
-                                          item_name=item.get("name"), updated_by=principal.acting_member,
-                                          owner_name=owner_name_for(principal, discordId))
+                                          item_name=item.get("name"), updated_by=by, owner_name=owner)
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
         log.info("hangar: member %s ship %s slot %s <- %s (%s) (by %s)", discordId, shipId, slot,
-                 item.get("name"), item.get("uuid"), principal.acting_member)
-        return {"ship": await ship_view(catalog, updated)}
+                 item.get("name"), item.get("uuid"), by)
+        _log_dropped(discordId, shipId, dropped, by)
+        return {"ship": await ship_view(catalog, updated), "dropped": dropped}
 
     @router.delete("/members/{discordId}/ships/{shipId}/slots/{slot:path}")
     async def reset_slot(discordId: str, shipId: str, slot: str,
                          principal: Principal = Depends(write_member)):
-        # No catalog check: a slot renamed by a patch must still be clearable.
+        # No catalog check on the slot itself: a slot renamed by a patch must
+        # still be clearable. The catalog is only read when the ship has fitted
+        # entries UNDER the slot being reset (they may not survive the reset).
         _check_ship_id(shipId)
         if len(slot) > SLOT_MAX:
             raise _not_found(f"no slot {slot!r}")
-        updated = await app.state.repository.clear_slot(discordId, shipId, slot,
-                                                        updated_by=principal.acting_member,
-                                                        owner_name=owner_name_for(principal, discordId))
+        repo, catalog = app.state.repository, app.state.catalog
+        ship = await repo.get_ship(discordId, shipId)
+        if ship is None:
+            raise _not_found(f"member {discordId} has no ship {shipId}")
+        fitted = ship.get("fitted") or {}
+        dropped: list[dict] = []
+        if slot in fitted and _under(fitted, [slot]):
+            vehicle_slots = await catalog.slots(ship["vehicleUuid"])
+            if vehicle_slots is None:
+                log.warning("hangar: vehicle %s (ship %s) is not in the catalog; resetting %s without "
+                            "checking the entries fitted under it", ship["vehicleUuid"], shipId, slot)
+            else:
+                after = {k: v for k, v in fitted.items() if k != slot}
+                dropped = await prune_descendants(catalog, vehicle_slots, after, [slot])
+        by, owner = principal.acting_member, owner_name_for(principal, discordId)
+        if dropped:
+            updated = await repo.update_slots(discordId, shipId, {slot: None, **{d["slot"]: None for d in dropped}},
+                                              updated_by=by, owner_name=owner)
+        else:
+            updated = await repo.clear_slot(discordId, shipId, slot, updated_by=by, owner_name=owner)
         if updated is None:
             raise _not_found(f"member {discordId} has no ship {shipId}")
-        return {"ship": await ship_view(app.state.catalog, updated)}
+        _log_dropped(discordId, shipId, dropped, by)
+        return {"ship": await ship_view(catalog, updated), "dropped": dropped}
 
     # ----- chat edits (free text resolved server side) -----
     #
@@ -771,6 +825,35 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if updated is None:
             raise _not_found(f"member {member} has no ship {ship['shipId']}")
 
+    async def _prune_after(vehicle_slots, fitted: dict, writes: dict, changes: list[dict]) -> list[dict]:
+        """The descendant rule for a chat edit: fitted entries under a slot
+        whose item is about to change (``writes``) that will no longer have a
+        port, or whose port no longer takes their item, are added to ``writes``
+        as deletes (same single write) and to ``changes`` as
+        ``{slot, from, to: {name: null, uuid: null}, dropped: true, reason}``.
+        Returns them as ``[{slot, item, reason}]``."""
+        after = {k: v for k, v in fitted.items() if k not in writes}
+        after.update({k: v for k, v in writes.items() if v is not None})
+        if not _under(after, writes):
+            return []
+        dropped = await prune_descendants(app.state.catalog, vehicle_slots, after, list(writes))
+        out = []
+        for d in dropped:
+            name = d["slot"]
+            if name in writes:
+                # A slot this same request was fitting, under another slot it
+                # is fitting: the parent's new item has no such port.
+                changes[:] = [c for c in changes if c["slot"] != name]
+                if name not in fitted:
+                    del writes[name]
+                    continue
+                d = {**d, "item": {"uuid": fitted[name].get("itemUuid"), "name": fitted[name].get("itemName")}}
+            writes[name] = None
+            changes.append({"slot": name, "from": _ref(d["item"]), "to": _ref(None), "dropped": True,
+                            "reason": d["reason"]})
+            out.append(d)
+        return out
+
     @router.post("/members/{discordId}/fit")
     async def chat_fit(request: Request, discordId: str, principal: Principal = Depends(write_member)):
         body = await _json_object(request)
@@ -779,10 +862,12 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         hint = _optional_text(body, "slot")
         catalog = app.state.catalog
         ship, label = await _owned_ship(discordId, ship_text)
-        slots = await catalog.slots(ship["vehicleUuid"])
-        if slots is None:
+        vehicle_slots = await catalog.slots(ship["vehicleUuid"])
+        if vehicle_slots is None:
             raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
-        loadout = {e["slot"]: e for e in effective_loadout(slots, ship.get("fitted"))}
+        fitted = ship.get("fitted") or {}
+        slots = await resolve_slots(catalog, vehicle_slots, fitted)
+        loadout = {e["slot"]: e for e in effective_loadout(slots, fitted)}
         visible = [s for s in slots if s.name in loadout]
         res = await resolve_item(catalog, item_text, visible)
         if res.status == "ambiguous":
@@ -858,20 +943,23 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
             stock = s.stock_item and s.stock_item.get("uuid") == item.get("uuid")
             writes[s.name] = None if stock else {"itemUuid": item["uuid"], "itemName": iname}
             changes.append({"slot": s.name, "from": _ref(current), "to": _ref(item)})
+        dropped = await _prune_after(vehicle_slots, fitted, writes, changes)
         by = principal.acting_member
         if writes:
             await _write_slots(discordId, ship, writes, principal)
             for c in changes:
-                log.info("hangar: chat fit: member %s ship %s (%s) slot %s: %s -> %s (%s) (by %s)",
-                         discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
-                         iname, item.get("uuid"), by)
+                if not c.get("dropped"):
+                    log.info("hangar: chat fit: member %s ship %s (%s) slot %s: %s -> %s (%s) (by %s)",
+                             discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
+                             iname, item.get("uuid"), by)
+            _log_dropped(discordId, ship["shipId"], dropped, by)
         else:
             log.info("hangar: chat fit: member %s ship %s (%s): %s already fitted in %s -- no change (by %s)",
                      discordId, ship["shipId"], label, iname, ", ".join(s.name for s in targets), by)
         return {"member": discordId, "ship": _ship_ref(ship, label),
                 "item": {"uuid": item.get("uuid"), "name": iname, "type": itype, "size": size,
                          "matchedBy": res.matched_by},
-                "changes": changes, "unchanged": not changes}
+                "changes": changes, "dropped": dropped, "unchanged": not changes}
 
     @router.post("/members/{discordId}/ships/{shipRef}/reset")
     async def chat_reset(request: Request, discordId: str, shipRef: str,
@@ -884,7 +972,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         fitted = ship.get("fitted") or {}
         # A vehicle gone from the catalog (None) leaves every fitted key an
         # orphan: "all" and exact-id resets still work without stock names.
-        slots = (await app.state.catalog.slots(ship["vehicleUuid"]) or []) if fitted else []
+        vehicle_slots = await app.state.catalog.slots(ship["vehicleUuid"]) if fitted else None
+        slots = await resolve_slots(app.state.catalog, vehicle_slots or [], fitted)
         stock = {s.name: s.stock_item for s in slots}
         entries = effective_loadout(slots, fitted)
         known = {e["slot"] for e in entries}
@@ -918,18 +1007,25 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
         by = principal.acting_member
         changes = [{"slot": t, "from": _ref(by_slot[t]["item"]), "to": _ref(stock.get(t))} for t in targets]
+        writes = {t: None for t in targets}
+        # Entries fitted under a reset slot go with it unless the stock item
+        # still has that port and it still takes them (vehicle gone: unknown, kept).
+        dropped = await _prune_after(vehicle_slots, fitted, writes, changes) if vehicle_slots is not None else []
         if targets:
-            # Delete exactly the slots read above -- never a whole-map replace,
-            # so a concurrent editor change to another slot survives.
-            await _write_slots(discordId, ship, {t: None for t in targets}, principal)
+            # Delete exactly the slots read above (plus dropped children) -- never a
+            # whole-map replace, so a concurrent editor change to another slot survives.
+            await _write_slots(discordId, ship, writes, principal)
             for c in changes:
-                log.info("hangar: chat reset: member %s ship %s (%s) slot %s: %s -> %s (stock) (by %s)",
-                         discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
-                         c["to"]["name"] or "empty", by)
+                if not c.get("dropped"):
+                    log.info("hangar: chat reset: member %s ship %s (%s) slot %s: %s -> %s (stock) (by %s)",
+                             discordId, ship["shipId"], label, c["slot"], c["from"]["name"] or "empty",
+                             c["to"]["name"] or "empty", by)
+            _log_dropped(discordId, ship["shipId"], dropped, by)
         else:
             log.info("hangar: chat reset: member %s ship %s (%s) slot %r: already stock -- no change (by %s)",
                      discordId, ship["shipId"], label, hint, by)
-        return {"member": discordId, "ship": _ship_ref(ship, label), "changes": changes, "unchanged": not changes}
+        return {"member": discordId, "ship": _ship_ref(ship, label), "changes": changes, "dropped": dropped,
+                "unchanged": not changes}
 
 
     # ----- catalog -----
@@ -979,16 +1075,35 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     @router.get("/catalog/slot-options")
     async def catalog_slot_options(vehicle: str | None = None, slot: str | None = None,
+                                   member: str | None = None, ship: str | None = None,
                                    principal: Principal = Depends(get_principal)):
-        if not vehicle or not slot:
-            raise _bad("'vehicle' (uuid) and 'slot' (slot id) are required")
         catalog = app.state.catalog
-        slots = await catalog.slots(vehicle) if len(vehicle) <= FREE_TEXT_MAX else None
-        if slots is None:
-            raise _not_found(f"no vehicle {vehicle!r}")
+        if member or ship:
+            # A ship's own slot list: ports of the items fitted in it included
+            # (the guns of a fitted turret). Readable by any principal, like
+            # the hangar read; `vehicle` is not needed (the ship's is used).
+            if not member or not ship or not slot:
+                raise _bad("'member' and 'ship' go together, with 'slot' (slot id)")
+            _check_member(member)
+            stored = await app.state.repository.get_ship(member, _check_ship_id(ship))
+            if stored is None:
+                raise _not_found(f"member {member} has no ship {ship}")
+            vehicle_slots = await catalog.slots(stored["vehicleUuid"])
+            if vehicle_slots is None:
+                raise _not_found(f"vehicle {stored.get('vehicleName')} ({stored['vehicleUuid']}) is no longer "
+                                 f"in the catalog")
+            slots = await resolve_slots(catalog, vehicle_slots, stored.get("fitted"))
+            where = f"ship {ship}"
+        else:
+            if not vehicle or not slot:
+                raise _bad("'vehicle' (uuid) and 'slot' (slot id) are required")
+            slots = await catalog.slots(vehicle) if len(vehicle) <= FREE_TEXT_MAX else None
+            if slots is None:
+                raise _not_found(f"no vehicle {vehicle!r}")
+            where = f"vehicle {vehicle}"
         target = next((s for s in slots if s.name == slot), None) if len(slot) <= SLOT_MAX else None
         if target is None:
-            raise _not_found(f"vehicle {vehicle} has no component slot {slot!r}")
+            raise _not_found(f"{where} has no component slot {slot!r}")
         return {"items": await slot_options(catalog, target)}
 
     # ----- spviewer import -----

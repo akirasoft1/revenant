@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Mapping
 from urllib.parse import urlsplit
 
-from .catalog import DEFAULT_WIKI_BASE
+from .catalog import DEFAULT_UEX_BASE, DEFAULT_WIKI_BASE
 
 DEFAULT_ALLOWED_CALLER = "hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com"
 STORAGE_BACKENDS = ("firestore", "memory")
@@ -85,6 +85,10 @@ class Config:
     rum_origins_raw: str = ""
     # Private GCS bucket holding wireframe bundles; empty = model routes answer 503.
     models_bucket: str = ""
+    # UEX (api.uexcorp.uk): tops up the Wiki item lists with items they omit.
+    # The bearer is optional (it only raises UEX's rate limit) and never logged.
+    uex_base: str = DEFAULT_UEX_BASE
+    uex_bearer: str = field(default="", repr=False)
 
     def _rum_entries(self) -> list[str]:
         return [x for x in re.split(r"[\s,]+", self.rum_origins_raw) if x]
@@ -172,6 +176,8 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         static_dir=(env.get("HANGAR_STATIC_DIR") or "").strip() or DEFAULT_STATIC_DIR,
         rum_origins_raw=(env.get("HANGAR_RUM_ORIGINS") or "").strip(),
         models_bucket=(env.get("HANGAR_MODELS_BUCKET") or "").strip(),
+        uex_base=(env.get("UEX_BASE") or "").strip() or DEFAULT_UEX_BASE,
+        uex_bearer=(env.get("UEXCORP_BEARER") or "").strip(),
         max_ships_per_member=_positive_int(env, "HANGAR_MAX_SHIPS_PER_MEMBER", DEFAULT_MAX_SHIPS_PER_MEMBER),
     )
 

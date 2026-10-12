@@ -13,6 +13,15 @@ the top (``hardpoint_gun_laser_top_left/hardpoint_class_2``). The child's OWN
 ``editable: true`` while the gimbal's ``editable_children`` is ``false`` (e.g.
 every Constellation Taurus S5 turret and the Harbinger's nose guns), so gating
 on the parent's ``editable_children`` would hide every swappable gun.
+
+An ITEM's own ``ports`` (``item_slots``) are parsed with the same rule: a
+turret's gun ports belong to the turret item, not to the vehicle, so a ship's
+actual slot list depends on what is fitted (``loadout.resolve_slots``).
+
+UEX supplement (see ``_supplement``): the Wiki's per-type item LIST omits some
+items it does know by uuid (e.g. the Hornet Mk II nose / ball turrets), so the
+list is topped up with the UEX item uuids of the matching category, fetched
+one by one from the Wiki.
 """
 import asyncio
 import copy
@@ -35,6 +44,15 @@ log = logging.getLogger(__name__)
 
 CATALOG_TTL_S = 12 * 3600
 NEGATIVE_TTL_S = 600  # not-found / empty results
+DEFAULT_UEX_BASE = "https://api.uexcorp.uk/2.0"
+# Wiki item type -> UEX ``id_category`` (types without one get no supplement).
+UEX_CATEGORIES = {"Turret": 35, "WeaponGun": 32, "MissileLauncher": 33, "Shield": 23, "Cooler": 19,
+                  "PowerPlant": 21, "QuantumDrive": 22, "WeaponMining": 29, "TractorBeam": 67}
+# Wiki detail fetches per type per refresh: they go through the Wiki rate
+# limiter every hangar read shares, so a UEX category that suddenly lists
+# hundreds of unknown uuids must not be able to queue them all.
+MAX_SUPPLEMENT_ITEMS = 40
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 MAX_LOOKUP_KEYS = 2000
 MAX_LOOKUP_KEY_LEN = 200
 DEFAULT_WIKI_BASE = "https://api.star-citizen.wiki/api"
@@ -58,9 +76,10 @@ class Slot:
     size_max: int | None
     compatible_types: list[dict] = field(default_factory=list)   # [{type, sub_types}]
     stock_item: dict | None = None  # {uuid, name, className, type, size} or None
+    dynamic: bool = False           # the slot is a port of a FITTED item (loadout.resolve_slots)
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "slot": self.name,
             "type": self.type,
             "subType": self.sub_type,
@@ -70,6 +89,9 @@ class Slot:
                                 for c in self.compatible_types],
             "stockItem": dict(self.stock_item) if self.stock_item else None,
         }
+        if self.dynamic:
+            out["dynamic"] = True
+        return out
 
 
 def _stock(equipped: Any) -> dict | None:
@@ -90,7 +112,8 @@ def _compat(raw: Any) -> list[dict]:
 
 def parse_slots(vehicle: dict) -> list[Slot]:
     """Flatten a Wiki vehicle payload's ``ports`` tree into component slots,
-    in payload order (depth-first, parent before child)."""
+    in payload order (depth-first, parent before child). Also used for a Wiki
+    ITEM payload (same ``ports`` shape); its slot ids are relative to the item."""
     slots: list[Slot] = []
 
     def walk(ports: Any, prefix: str) -> None:
@@ -327,8 +350,10 @@ class Catalog:
     def __init__(self, upstream: UpstreamClient, cache: TTLCache | None = None,
                  ttl_s: float = CATALOG_TTL_S, negative_ttl_s: float = NEGATIVE_TTL_S,
                  spawn: Callable[[Awaitable], "asyncio.Task"] | None = None,
-                 max_lookup_keys: int = MAX_LOOKUP_KEYS) -> None:
+                 max_lookup_keys: int = MAX_LOOKUP_KEYS,
+                 uex: UpstreamClient | None = None) -> None:
         self._u = upstream
+        self._uex = uex    # None = no UEX supplement (Wiki item lists only)
         self._cache = cache or TTLCache()
         self._ttl = ttl_s
         self._neg_ttl = negative_ttl_s
@@ -400,6 +425,8 @@ class Catalog:
         await self.drain_refreshes()
         self._refreshing.clear()
         await self._u.aclose()
+        if self._uex is not None:
+            await self._uex.aclose()
 
     def _touch_lookup(self, key: str) -> None:
         self._lookup_keys[key] = None
@@ -525,12 +552,9 @@ class Catalog:
 
     # ----- items -----
 
-    async def _item_records(self, type_: str, size: int | None) -> list[dict]:
-        """Cached ``item_option`` records of one type (+ optional size), by name."""
-        canonical = normalize_item_type(type_)
-        if size is not None:
-            size = int(size)
-
+    async def _wiki_items(self, canonical: str, size: int | None) -> list[dict]:
+        """Cached ``item_option`` records of the Wiki's own list for one type
+        (+ optional size), by name."""
         async def fetch():
             out: list[dict] = []
             page = 1
@@ -549,6 +573,78 @@ class Catalog:
 
         return await self._cached(f"items:{canonical}:{size}", fetch)
 
+    async def _fetch_supplement(self, canonical: str, category: int) -> list[dict]:
+        body = await self._uex.get_json("items", {"id_category": category})
+        rows = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(rows, list):
+            raise UpstreamError("uex", None, f"items?id_category={category}: 'data' is not a list")
+        seen = {(i.get("uuid") or "").casefold() for i in await self._wiki_items(canonical, None)}
+        missing: list[str] = []
+        for row in rows:
+            uuid = row.get("uuid") if isinstance(row, dict) else None
+            # Only well-formed uuids ever become a Wiki path segment.
+            if isinstance(uuid, str) and _UUID_RE.match(uuid) and uuid.casefold() not in seen:
+                seen.add(uuid.casefold())
+                missing.append(uuid)
+        if len(missing) > MAX_SUPPLEMENT_ITEMS:
+            log.warning("catalog: UEX lists %d %s items the Wiki list omits; only the first %d are looked up",
+                        len(missing), canonical, MAX_SUPPLEMENT_ITEMS)
+            missing = missing[:MAX_SUPPLEMENT_ITEMS]
+        out: list[dict] = []
+        for uuid in missing:
+            try:
+                detail = await self._u.get_json(f"v2/items/{quote(uuid, safe='')}")
+            except UpstreamError as e:
+                if e.status == 404:
+                    continue                       # UEX knows it, the Wiki does not
+                raise
+            data = detail.get("data") if isinstance(detail, dict) else None
+            if isinstance(data, dict) and data.get("uuid") and data.get("type") == canonical:
+                out.append(item_option(data))
+        return out
+
+    async def _supplement(self, canonical: str) -> list[dict]:
+        """``item_option`` records of items the Wiki list for this type omits
+        but UEX lists (same uuids) and the Wiki knows by uuid -- every size.
+
+        One UEX call + at most ``MAX_SUPPLEMENT_ITEMS`` Wiki detail calls per
+        type per 12h. Never raises: any UEX / detail failure is logged and
+        yields the last good supplement (or nothing), retried after the
+        negative TTL rather than cached for 12h."""
+        category = UEX_CATEGORIES.get(canonical)
+        if self._uex is None or category is None:
+            return []
+        key = f"items_supplement:{canonical}"
+        peeked = self._cache.peek(key)
+        previous = peeked.value["items"] if peeked is not None else []
+        ttl = self._neg_ttl if peeked is not None and not peeked.value["ok"] else self._ttl
+
+        async def fetch():
+            try:
+                return {"ok": True, "items": await self._fetch_supplement(canonical, category)}
+            except Exception as e:
+                log.warning("catalog: UEX supplement for %s items failed (%s: %s); serving the Wiki list%s "
+                            "and retrying in %.0fs", canonical, type(e).__name__, e,
+                            f" plus the last good supplement ({len(previous)} items)" if previous else " alone",
+                            self._neg_ttl)
+                return {"ok": False, "items": previous}
+
+        return (await self._cache.get_or_fetch(key, ttl, fetch)).value["items"]
+
+    async def _item_records(self, type_: str, size: int | None) -> list[dict]:
+        """Cached ``item_option`` records of one type (+ optional size), by
+        name: the Wiki list plus the UEX supplement (``_supplement``)."""
+        canonical = normalize_item_type(type_)
+        if size is not None:
+            size = int(size)
+        records = await self._wiki_items(canonical, size)
+        seen = {r.get("uuid") for r in records}
+        extra = [r for r in await self._supplement(canonical)
+                 if r.get("uuid") not in seen and (size is None or r.get("size") == size)]
+        if not extra:
+            return records
+        return sorted(records + extra, key=lambda i: (i["name"] or "").casefold())
+
     async def items(self, type_: str, size: int | None = None, q: str | None = None) -> list[dict]:
         """Items of a Wiki type (case-insensitive, must be in ``SLOT_TYPES``
         else ``UnknownItemType``), optionally one size, optionally filtered by
@@ -565,8 +661,9 @@ class Catalog:
         also carries ``keyStat`` and ``cheapestPrice`` for the web editor's picker."""
         return copy.deepcopy(await self._item_records(type_, size))
 
-    async def item(self, uuid_or_name: str) -> dict | None:
-        """One item summary by uuid (or exact Wiki name), None if unknown."""
+    async def _item_detail(self, uuid_or_name: str) -> dict | None:
+        """``{summary, slots}`` of one item (one cache entry per key, shared
+        by ``item`` and ``item_slots``), None if unknown."""
         ident = (uuid_or_name or "").strip()
         if not ident or len(ident) > MAX_LOOKUP_KEY_LEN:
             return None
@@ -579,12 +676,26 @@ class Catalog:
                     return None
                 raise
             data = body.get("data") if isinstance(body, dict) else None
-            return item_summary(data) if isinstance(data, dict) and data.get("uuid") else None
+            if not isinstance(data, dict) or not data.get("uuid"):
+                return None
+            return {"summary": item_summary(data), "slots": parse_slots(data)}
 
         key = f"item:{ident.casefold()}"
         self._touch_lookup(key)
-        res = await self._cached(key, fetch)
-        return dict(res) if res else None
+        return await self._cached(key, fetch)
+
+    async def item(self, uuid_or_name: str) -> dict | None:
+        """One item summary by uuid (or exact Wiki name), None if unknown."""
+        d = await self._item_detail(uuid_or_name)
+        return dict(d["summary"]) if d else None
+
+    async def item_slots(self, item_uuid: str) -> list[Slot] | None:
+        """Component slots an ITEM carries (its own ``ports``, same rule as
+        vehicle ports; slot ids relative to the item, ``stock_item`` = the
+        port's default item), None if the item is unknown. Deep copies. Shares
+        ``item``'s cache entry (12h, 10 min negative)."""
+        d = await self._item_detail(item_uuid)
+        return copy.deepcopy(d["slots"]) if d else None
 
 
 def build_catalog(wiki_base: str = DEFAULT_WIKI_BASE, version: str = "dev",
@@ -592,8 +703,19 @@ def build_catalog(wiki_base: str = DEFAULT_WIKI_BASE, version: str = "dev",
                   cache: TTLCache | None = None,
                   sleep: Callable[[float], Awaitable[None]] | None = None,
                   spawn: Callable[[Awaitable], "asyncio.Task"] | None = None,
-                  max_lookup_keys: int = MAX_LOOKUP_KEYS) -> Catalog:
+                  max_lookup_keys: int = MAX_LOOKUP_KEYS,
+                  uex_base: str | None = None, uex_bearer: str | None = None,
+                  uex_transport: httpx.AsyncBaseTransport | None = None) -> Catalog:
+    """``uex_base`` unset/empty = no UEX supplement (tests; the service passes
+    ``Config.uex_base``). ``uex_bearer`` is optional and only ever sent as the
+    UEX ``Authorization`` header -- never logged."""
     headers = {"User-Agent": f"revenant-hangar-service/{version}", "Accept": "application/json"}
     kw = {"sleep": sleep} if sleep is not None else {}
     upstream = UpstreamClient("wiki", wiki_base, headers, RateLimiter(60, 60.0), transport=transport, **kw)
-    return Catalog(upstream, cache=cache, spawn=spawn, max_lookup_keys=max_lookup_keys)
+    uex = None
+    if uex_base:
+        uex_headers = dict(headers)
+        if uex_bearer:
+            uex_headers["Authorization"] = f"Bearer {uex_bearer}"
+        uex = UpstreamClient("uex", uex_base, uex_headers, RateLimiter(60, 60.0), transport=uex_transport, **kw)
+    return Catalog(upstream, cache=cache, spawn=spawn, max_lookup_keys=max_lookup_keys, uex=uex)

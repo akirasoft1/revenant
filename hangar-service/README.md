@@ -39,17 +39,17 @@ Errors are always `{"error": <code>, "message": <text>, ...}`:
 | POST | `/v1/members/{discordId}/ships` | `{vehicle, nickname?}` | 201 `{ship: Ship}` |
 | PATCH | `/v1/members/{discordId}/ships/{shipId}` | `{nickname}` (null clears) | `{ship: Ship}` |
 | DELETE | `/v1/members/{discordId}/ships/{shipId}` | – | `{deleted: true, shipId}` |
-| PUT | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | `{item}` (uuid or exact Wiki name) | `{ship: Ship}` |
-| DELETE | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | – | `{ship: Ship}` (reset to stock) |
-| POST | `/v1/members/{discordId}/fit` | `{ship, item, slot?}` (free text) | `{member, ship: {shipId, label, vehicle}, item: {uuid, name, type, size, matchedBy: "exact" \| "fuzzy"}, changes: [Change], unchanged}` — see "Chat edits" |
-| POST | `/v1/members/{discordId}/ships/{shipRef}/reset` | `{slot?}` (body optional) | `{member, ship: {shipId, label, vehicle}, changes: [Change], unchanged}` — see "Chat edits" |
+| PUT | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | `{item}` (uuid or exact Wiki name) | `{ship: Ship, dropped: [Dropped]}` — `slot` is looked up in the ship's RESOLVED slots; `dropped` = child fittings removed with this change (see "Slots from fitted items") |
+| DELETE | `/v1/members/{discordId}/ships/{shipId}/slots/{slot}` | – | `{ship: Ship, dropped: [Dropped]}` (reset to stock) |
+| POST | `/v1/members/{discordId}/fit` | `{ship, item, slot?}` (free text) | `{member, ship: {shipId, label, vehicle}, item: {uuid, name, type, size, matchedBy: "exact" \| "fuzzy"}, changes: [Change], dropped: [Dropped], unchanged}` — see "Chat edits" |
+| POST | `/v1/members/{discordId}/ships/{shipRef}/reset` | `{slot?}` (body optional) | `{member, ship: {shipId, label, vehicle}, changes: [Change], dropped: [Dropped], unchanged}` — see "Chat edits" |
 | GET | `/v1/catalog/vehicles?q=&limit=` | – | `{vehicles: [VehicleSummary]}` (≤25) |
 | GET | `/v1/catalog/vehicles/{uuid}/slots` | – | `{vehicle: VehicleSummary + optional image, dimension {length,width,height}, mass, crew {min,max}, portCounts {<type>: n}, slots: [SlotDef]}` (absent Wiki fields omitted; `portCounts` counts the editable slots by type; `image` is the hero for the editor's Terminal ship panel: for a MediaWiki thumbnail (media.starcitizen.tools) the `<N>px-` segment is rewritten to `HERO_WIDTH` = 1280px (a ~130 KB WebP instead of a ~1 MB 3840px original; the original is used when it is narrower than that), elsewhere the best-host entry's `original_url` else its `thumbnail_url`, on an `IMAGE_HOSTS` https host only — item/option images stay `thumbnail_url` first) |
 | GET | `/v1/catalog/vehicles/{uuid}/positions` | – | hardpoint positions document, or `{}` when none (404 only for an unknown vehicle). Firestore `vehiclePositions/{vehicleUuid}`: `{views: {<name>: {imageUrl, width, height}}, slots: {<slotId>: {view, x, y} \| {xyz: [x,y,z]}}, source, gameVersion, updatedAt, updatedBy}`; `x`,`y` are 0-1 on the view image, `xyz` metres in ship space (stored, not drawn yet). Read-only: no write endpoint |
 | POST | `/api/v1/client-events/image-error` | `{url, context?}` | 204. Browser sessions only (service tokens: 403), same-origin check, 20 per member per minute per instance (429 `rate_limited`), body ≤ 4 KB (`Content-Length` checked first), rate limit applied before body validation, `url` http(s) ≤ 2048 chars, `context` optional, `^[a-z][a-z-]{0,39}$` (e.g. `card`, `positions-view`). Logs `WARNING hangar: image load failed host=… url=… context=… member=…` |
 | GET | `/v1/catalog/items?type=&size=&q=` | – | `{items: [ItemSummary]}` |
 | GET | `/v1/members` | – | `{members: [{discordId, shipCount, displayName?}]}` — members with ≥1 ship, sorted by name/ID; `displayName` only when known (see `ownerName`) |
-| GET | `/v1/catalog/slot-options?vehicle=<uuid>&slot=<slotId>` | – | `{items: [{uuid, name, type, size, grade, class, keyStat: {name, value, lowerIsBetter} \| null, cheapestPrice?: {price, shop, location}, stats: [{key, label, value, unit, lowerIsBetter}], image?, manufacturer?, description?}]}` — see "Item picker" |
+| GET | `/v1/catalog/slot-options?vehicle=<uuid>&slot=<slotId>` or `?member=<discordId>&ship=<shipId>&slot=<slotId>` | – | `{items: [{uuid, name, type, size, grade, class, keyStat: {name, value, lowerIsBetter} \| null, cheapestPrice?: {price, shop, location}, stats: [{key, label, value, unit, lowerIsBetter}], image?, manufacturer?, description?}]}` — see "Item picker" |
 | POST | `/v1/import/spviewer/preview[?member=]` | `{file: <spviewer export array>}` | `{rows: [{rowIndex, loadoutName, vehicle: {uuid, name} \| null, patch, changes: [{slot, from: {uuid, name} \| null, to: {uuid, name}}], skipped: [{slot?, reason, detail}], matchingShips: [{shipId, label}]}]}` — nothing stored |
 | POST | `/v1/import/spviewer/apply[?member=]` | `{rows: [{rowIndex, mode: "new"\|"existing", shipId?, nickname?}], file}` | `{ships: [Ship], errors: [{rowIndex, error, message}]}` — see "spviewer import" |
 | POST | `/v1/import/htf/preview[?member=]` | `{file: <HTF / HangarXPLOR array>}` | `{rows: [{index, kind: new\|existing\|link\|skipped, rsiKey, vehicle, nickname, pledge, existing, linkCandidates, reason, ...}], missing: [{shipId, label, rsiKey, hasFittings, defaultRemove}], partial, summary}` — nothing stored; see "HTF import" |
@@ -76,7 +76,10 @@ createdAt, updatedAt, updatedBy, ownerName, loadout, loadoutError}` where
 allowed server they logged in through, else username), stored when the
 owner edits that ship through a browser session (null otherwise — service
 writes and admins editing someone else's ship leave it unchanged), and `loadout` is
-`[{slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}], item: {uuid, name} | null, source: "stock"|"fitted"}]`,
+`[{slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}], item: {uuid, name} | null, source: "stock"|"fitted", dynamic?: true}]`
+(the ship's RESOLVED slots; `dynamic: true` — omitted otherwise — marks a slot
+that is a port of a FITTED item, e.g. the gun ports of a fitted turret; see
+"Slots from fitted items"),
 or `null` with `loadoutError` `"unavailable"` / `"not_found"` when the
 catalog can't supply that ship's slots (the rest of the response still works).
 Slot ids contain `/` for nested slots
@@ -168,6 +171,15 @@ else the session opener), and their tools have no member parameter — see
 - `Change` = `{slot, from: {name, uuid}, to: {name, uuid}}` (`from` is the
   previously effective item, `to` the new one — the stock item for a reset;
   `null` names for an empty slot or an orphaned slot's stock).
+- **Children of a changed parent** (see "Slots from fitted items"): a fit or
+  reset that changes a turret/mount also deletes, in the same single write, the
+  fittings under it that no longer have a port or no longer fit. Each is listed
+  in `changes` as `{slot, from: {name, uuid}, to: {name: null, uuid: null},
+  dropped: true, reason}` (after the real changes) AND in `dropped` as
+  `{slot, item: {uuid, name}, reason}` — the same `Dropped` shape the web
+  fit/reset routes return. `dropped` is always present (`[]` when nothing went).
+  Slot hints and the item's candidate slots are matched against the ship's
+  resolved slots, so the gun ports of a fitted turret are reachable.
 - One INFO log line per changed slot (`hangar: chat fit:` / `hangar: chat
   reset:` with member, ship, slot, from -> to, acting member) and one for a
   no-op.
@@ -184,8 +196,8 @@ else the session opener), and their tools have no member parameter — see
   ids join the port names with `/` at whatever depth the port sits (no depth
   cap; e.g. three levels deep on the Taurus's manned upper turret:
   `hardpoint_turret_base_upper/hardpoint_weapon_left/hardpoint_class_2`).
-- **Refitting a parent hides its stock children** in the effective loadout
-  (an explicitly fitted child stays).
+- **Refitting a parent replaces its children** — see "Slots from fitted
+  items" below (the stock children go; the fitted item's own ports appear).
 - **Missiles are not tracked** (`Missile` isn't a slot type; sc-knowledge's
   fit check answers `not_tracked`). A `MissileLauncher` rack is a slot only
   where the Wiki marks the port editable — on the Taurus and Harbinger the
@@ -195,7 +207,109 @@ else the session opener), and their tools have no member parameter — see
   `compatibleTypes`, sub-types only when the slot lists some and the item's
   isn't `UNDEFINED`, size within range) — change both together.
 
+## Slots from fitted items ("dynamic slots")
+
+Spec: `docs/superpowers/specs/2026-10-11-hangar-item-slots-design.md`. A ball
+turret's gun ports belong to the turret ITEM, not to the vehicle: the stock F7C
+Hornet Mk II carries a cargo module in `hardpoint_weapon_center` and nothing in
+`hardpoint_weapon_nose`, so the vehicle's `ports` have no gun ports there.
+
+- `Catalog.item_slots(itemUuid)` parses the item's own `ports`
+  (`GET v2/items/{uuid}`) with the SAME rule as vehicle ports; slot ids are
+  relative to the item, `stockItem` = the port's default item (usually none;
+  the TMSB-5's two ports default to its gimbal mounts, each with a gun port —
+  a two-level case). It shares `item()`'s cache entry (12h, 10 min negative),
+  so validating a fit and reading the item's slots is one Wiki call.
+- `loadout.resolve_slots(catalog, vehicleSlots, fitted)` = the ship's ACTUAL
+  slot list: fitted entries are walked parents first; for each one on a slot
+  in the list, every slot under it is removed and the fitted item's slots are
+  inserted right after it (ids prefixed `<slot>/`, marked `dynamic`). Deeper
+  entries are applied to the updated list, so an item in a port of a fitted
+  item works. A refitted slot has no children when the item is unknown, the
+  lookup fails or a bound is hit (`MAX_DYNAMIC_DEPTH` = 4 levels,
+  `MAX_DYNAMIC_LOOKUPS` = 16 distinct items per ship) — logged at WARNING,
+  never an error for a read.
+- **Only slots that accept a `Turret` cost a lookup** (`SLOT_BEARING_TYPES`
+  in `src/loadout.py`): on the live Wiki lists (2026-10-11) 88 of 242 Turret
+  items carry slots and none of the 681 items of the other nine slot types do,
+  so a fitted shield / cooler / gun is never looked up. Without this every
+  fitted item would cost a Wiki call on a cold hangar read, behind the 60/min
+  limiter all hangar reads share. If another item type ever carries component
+  slots, add it there.
+- Every place that pairs a vehicle's slots with a ship's `fitted` map uses the
+  resolved list: the hangar read (`loadout`), `PUT`/`DELETE .../slots/{slot}`,
+  the chat `fit` / `reset` routes (item candidates, slot hints, `to` names),
+  `/catalog/slot-options` with `member` + `ship`, and the spviewer import.
+  `/catalog/vehicles/{uuid}/slots` stays the STOCK list.
+- **Descendant rule.** When the item in slot `S` changes (fit or reset, web or
+  chat), the fitted entries under `S/` are re-checked against the re-resolved
+  list: an entry is kept only if its slot still exists AND `check_compatible`
+  still accepts its item; the others are deleted in the SAME write
+  (`update_slots`) and reported as `Dropped` =
+  `{slot, item: {uuid, name}, reason}` with `reason` ∈ `slot_removed` (the new
+  item has no such port), `incompatible` (the port no longer takes it),
+  `unknown_item` (the Wiki no longer knows the item, so it cannot be
+  checked). Parents are decided first, so a dropped mount takes the gun under
+  it along. Re-fitting the item a slot already holds drops nothing. If the
+  catalog cannot answer (Wiki down, nothing cached) the request fails with 503
+  BEFORE anything is written. One INFO line per dropped entry
+  (`hangar: member … ship … slot …: fitted … dropped with its parent's change
+  (<reason>)`).
+- `DELETE .../slots/{slot}` reads the catalog only when the slot is fitted and
+  the ship has entries under it; otherwise it is the plain clear it always was
+  (a slot renamed by a patch stays clearable). If the vehicle is gone from the
+  catalog the entries under it are left alone (WARNING).
+- Fitting a slot's stock item still clears the override; its children then
+  come from the vehicle again.
+- Existing `fitted` maps need no migration. A fitted entry whose slot is not
+  in the resolved list (a port of an item that is no longer fitted, or renamed
+  by a patch) is ignored in the loadout and logged.
+- Limits kept: missiles are not tracked; required tags are not modelled (a
+  Hornet-only turret is offered for any slot of the right type/sub-type/size);
+  a `Module` is not a pickable type (the F7C's cargo module comes back only
+  through "reset to stock").
+
+## Item lists: the UEX supplement
+
+The Wiki's per-type item LIST (`v2/items?filter[type]=Turret`, 242 items)
+omits items the Wiki does know by uuid — e.g. every Hornet Mk II nose and ball
+turret — so a slot that only takes those had an empty picker. UEX
+(`GET {UEX_BASE}/items?id_category=<n>`) lists them with the SAME uuids.
+
+- Per type, the UEX uuids of the mapped category that are absent from the
+  Wiki's full list for that type are fetched one by one from the Wiki
+  (`v2/items/{uuid}`), converted like listed items (key stat, price, image)
+  and merged into every list of that type (size-filtered like the rest).
+  Categories: Turret 35, WeaponGun 32, MissileLauncher 33, Shield 23,
+  Cooler 19, PowerPlant 21, QuantumDrive 22, WeaponMining 29, TractorBeam 67;
+  Radar has none and gets no supplement. An item whose Wiki `type` differs
+  from the requested type is dropped; a uuid the Wiki answers 404 for is
+  skipped; only well-formed uuids are ever sent to the Wiki.
+- Cost: one UEX call + at most `MAX_SUPPLEMENT_ITEMS` = 40 Wiki detail calls
+  per type per 12h (a WARNING names the count when UEX lists more), through
+  the Wiki rate limiter. The startup warm-up loads the supplements along with
+  the item lists; a cold list read pays for it inline.
+- **Never fails a list or the picker:** any UEX or detail error → the Wiki
+  list plus the last good supplement if there was one, else the Wiki list
+  alone; logged at WARNING and retried after the negative TTL (10 min), not
+  cached for 12h.
+- `UEX_BASE` (default `https://api.uexcorp.uk/2.0`) and the optional
+  `UEXCORP_BEARER` (raises UEX's rate limit; sent only as the UEX
+  `Authorization` header, never logged, not in the config repr).
+- `catalog.item(uuid)` resolves these items by uuid, so fitting one works once
+  it is offered — and chat edits can name them (the fuzzy item pool is the same
+  lists).
+
 ## Item picker (`/catalog/slot-options`)
+
+- `?vehicle=<uuid>&slot=<id>` looks the slot up in the vehicle's STOCK slots.
+  `?member=<discordId>&ship=<shipId>&slot=<id>` looks it up in that ship's
+  RESOLVED slots, which is the only way to reach a dynamic slot (the gun port
+  of a fitted turret); the ship's own vehicle is used and a `vehicle`
+  parameter sent along is ignored. Any authenticated principal may read any
+  member's ship this way, like the hangar read. `member` and `ship` go
+  together (one without the other, or without `slot` → 400); unknown ship →
+  404; slot not on that ship → 404. The response shape is the same.
 
 - Items = every Wiki item of the slot's compatible types (filtered to
   `SLOT_TYPES`) and sizes that `check_compatible` accepts (same rule as
@@ -234,15 +348,35 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   own `loadoutPerfs` match the `selected*` items (shield pool 20000 = 2 × 7MA
   'Lorica', pilot alpha 1166 = Deadbolt V + 4 × BRVS Repeater). A port with
   no `selected*` entry falls back to its `Loadout` (uuid or class name).
-- Slot ids = `PortName`s joined with `/` (identical to hangar slot ids). A
-  port is **changed** when its `selected*` item, or else its `Loadout`, matches
-  neither spviewer's stock (`BaseLoadout.ClassName`) nor the Wiki's stock item,
-  by class name or uuid (a uuid naming the stock item is not a change).
-  `Loadout` counts as stock only when it equals one of those, or is the
+- Slot ids = `PortName`s joined with `/` (identical to hangar slot ids).
+  **Stock means the Wiki's stock.** A port that is a tracked slot is unchanged
+  only when its `selected*` item, or else its `Loadout`, is that slot's stock
+  item in the ship's RESOLVED slot list (the vehicle's stock, or the default of
+  a fitted parent item's port), by class name or uuid (a uuid naming the stock
+  item is not a change). spviewer's `BaseLoadout` is never proof that a tracked
+  port is stock: on the F7C Hornet Mk II
+  (`tests/fixtures/spviewer_f7c_mk2.json`) it names the C5-173f ball turret for
+  the centre port and a nose turret for the nose port, where the game's stock
+  is a cargo module and nothing — the old rule missed both turrets and
+  reported their four guns as `untracked_slot`. An empty Wiki stock with a
+  current item is a change. (`BaseLoadout` still decides for ports the hangar
+  does not track, where nothing is written.)
+  `Loadout` counts as stock only when it equals that stock, or is the
   `reference` of a stock `selected*` entry; a `Loadout` that differs from stock
   is a change even next to a stock `selected*` entry (a non-stock `selected*`
   entry wins over it). Changed tracked slots resolve the item through the Wiki
   (`v2/items/{uuid|ClassName}`) and must pass `check_compatible`.
+- **The rewritten tree is followed.** spviewer rewrites a port's children to
+  the ports of the item fitted in it (same port names as the Wiki item's).
+  Ports are processed parents first; once a parent is a change, the slot list
+  is re-resolved with the fitted-so-far map, so its children are checked
+  against the slots of the item being fitted. Under a changed parent, a port
+  that names no item (`Loadout` null, no `selected*` entry) is unchanged — not
+  `empty_slot`. Expected result for the F7C fixture (pinned by
+  `tests/test_item_slots.py`): `fitted` = the AD4B in the right wing gun slot,
+  the C5-173f in the centre with a Mantis GT-220 in each of its two gun ports,
+  the S2 nose turret with an M4A in each of its two; the left wing gun is
+  stock; the eight missiles are `untracked_slot`; nothing else is skipped.
 - `skipped[].reason` codes: `untracked_slot` (changed port the hangar does not
   track — missiles/torpedoes, gimbal mounts, turrets, paint, flair, flight
   controller, life support, jump drive…), `unknown_item` (Wiki has no such
@@ -260,7 +394,10 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
 - Caps: body ≤ 2 MB (+64 KiB envelope; 413 `too_large`, checked on
   `Content-Length` and while streaming), ≤ 100 rows (413 `too_large`), ≤ 500
   ports and ≤ 2 MB decoded per row, 16 MB decoded per request, and **32
-  distinct Wiki item lookups per request** — the Wiki client's 60/min rate
+  distinct Wiki item lookups per request** (the slot lookup of a fitted parent
+  item counts too; it is free when the item was resolved by the same uuid, and
+  a parent whose slots could not be looked up is skipped `too_many_lookups`,
+  which blocks the row) — the Wiki client's 60/min rate
   limiter is shared with every hangar read (bot, sc-knowledge, editor), so an
   upload must not be able to queue thousands of lookups. Only a uuid or a
   `[A-Za-z0-9_]{1,100}` class name is ever sent to the Wiki (anything else →
@@ -464,6 +601,8 @@ Two layers:
 | `HANGAR_ALLOWED_CALLERS` | `hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com` | Comma-separated caller SA emails |
 | `HANGAR_ADMIN_IDS` | *(none)* | Comma-separated Discord IDs that may write any member's hangar (same as the bot's `BOT_ADMIN_USER_IDS`) |
 | `WIKI_BASE` | `https://api.star-citizen.wiki/api` | Star Citizen Wiki API base |
+| `UEX_BASE` | `https://api.uexcorp.uk/2.0` | UEX API base, for the item-list supplement (see "Item lists: the UEX supplement") |
+| `UEXCORP_BEARER` | *(none)* | Optional UEX bearer token (higher UEX rate limit). Not required; never logged. If set in production, pass it with `--set-secrets`, not `--set-env-vars` |
 | `GOOGLE_CLOUD_PROJECT` | *(ADC)* | Firestore project |
 | `PORT` | `8080` | Listen port (Cloud Run sets it) |
 | `HANGAR_VERSION` | image build arg `GIT_SHA` (else `$K_REVISION` or `dev`) | Reported by `/health` and `/version.txt`, sent in the Wiki User-Agent |
