@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
+import { stockBySlot as stockMap } from '../lib/stock';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fitSlot, getHangar, getVehiclePositions, getVehicleSlots, resetShip, resetSlot, slotOptionsScope, type SlotWrite } from '../api/client';
@@ -79,7 +80,7 @@ export function ShipDetailPage() {
     enabled: terminal && !!ship && !ship.loadoutError,
     staleTime: 60 * 60_000,
   });
-  const stockBySlot = new Map((stock.data?.slots ?? []).map((s) => [s.slot, s.stockItem]));
+  const stockBySlot = stockMap(stock.data?.slots, ship?.loadout);
 
   const putShip = (updated: Ship) =>
     qc.setQueryData<Hangar>(['hangar', memberId], (old) =>
