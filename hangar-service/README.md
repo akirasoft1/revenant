@@ -225,10 +225,22 @@ Hornet Mk II carries a cargo module in `hardpoint_weapon_center` and nothing in
   in the list, every slot under it is removed and the fitted item's slots are
   inserted right after it (ids prefixed `<slot>/`, marked `dynamic`). Deeper
   entries are applied to the updated list, so an item in a port of a fitted
-  item works. A refitted slot has no children when the item is unknown, the
-  lookup fails or a bound is hit (`MAX_DYNAMIC_DEPTH` = 4 levels,
-  `MAX_DYNAMIC_LOOKUPS` = 16 distinct items per ship) — logged at WARNING,
-  never an error for a read.
+  item works. A refitted slot has no children when the item is unknown. When
+  the lookup fails or a bound is hit (`MAX_DYNAMIC_DEPTH` = 4 levels,
+  `MAX_DYNAMIC_LOOKUPS` = 16 distinct items per ship) its children are
+  UNKNOWN: a read shows it without children and logs a WARNING — never an
+  error — while `strict=True` raises (`UpstreamError` / `SlotBoundExceeded`,
+  both 503).
+- **"Unknown" is never read as "gone".** Everything that decides from the
+  resolved list passes `strict=True`: the descendant rule, the slot a web or
+  chat fit targets, and the spviewer import. So a Wiki failure on a fitted
+  turret, or a ship past a bound, answers 503 `unavailable` with nothing
+  written — instead of "no component slot" for a gun port the member can see,
+  or the children under the unresolved parent being deleted as
+  `slot_removed`. Known consequence: a ship carrying more than 16 distinct
+  slot-bearing items cannot be fitted through the web or chat fit routes
+  (503) until some are reset; reads, `DELETE` of a childless slot and chat
+  reset of slots without children still work.
 - **Only slots that accept a `Turret` cost a lookup** (`SLOT_BEARING_TYPES`
   in `src/loadout.py`): on the live Wiki lists (2026-10-11) 88 of 242 Turret
   items carry slots and none of the 681 items of the other nine slot types do,
@@ -287,8 +299,19 @@ turret — so a slot that only takes those had an empty picker. UEX
   skipped; only well-formed uuids are ever sent to the Wiki.
 - Cost: one UEX call + at most `MAX_SUPPLEMENT_ITEMS` = 40 Wiki detail calls
   per type per 12h (a WARNING names the count when UEX lists more), through
-  the Wiki rate limiter. The startup warm-up loads the supplements along with
-  the item lists; a cold list read pays for it inline.
+  the Wiki rate limiter.
+- **No request ever waits for it.** A list read returns the Wiki list plus
+  whatever supplement is cached right now and, when that is missing or
+  expired, starts ONE background refresh per type (single-flight, the same
+  machinery as the vehicle stale-while-revalidate). The UEX call gets one
+  attempt and `UEX_TIMEOUT_S` = 4 s in total, so a UEX that accepts the
+  connection and goes silent cannot stall a picker or push a chat edit past
+  its 5–6 s bound. The startup warm-up does wait for each type's supplement,
+  up to `WARM_SUPPLEMENT_TIMEOUT_S` = 20 s, then moves on.
+  **Consequence:** right after a cold start (or if the warm-up has not
+  reached a type yet) the first picker for that type can lack the
+  supplemented items — e.g. an empty list for the F7C nose slot — until the
+  background fetch lands; reopening the picker shows them.
 - **Never fails a list or the picker:** any UEX or detail error → the Wiki
   list plus the last good supplement if there was one, else the Wiki list
   alone; logged at WARNING and retried after the negative TTL (10 min), not
@@ -396,8 +419,11 @@ The editor's snippet exports spviewer.eu's IndexedDB `SCSPVDatabase` →
   ports and ≤ 2 MB decoded per row, 16 MB decoded per request, and **32
   distinct Wiki item lookups per request** (the slot lookup of a fitted parent
   item counts too; it is free when the item was resolved by the same uuid, and
-  a parent whose slots could not be looked up is skipped `too_many_lookups`,
-  which blocks the row) — the Wiki client's 60/min rate
+  a parent whose slots could not be looked up — this budget, or the
+  resolver's own bound of 16 distinct slot-bearing items / 4 levels per ship —
+  is skipped `too_many_lookups`, which blocks the row, so it is never written
+  without its children; the slot list is only re-resolved after a change that
+  can alter it) — the Wiki client's 60/min rate
   limiter is shared with every hangar read (bot, sc-knowledge, editor), so an
   upload must not be able to queue thousands of lookups. Only a uuid or a
   `[A-Za-z0-9_]{1,100}` class name is ever sent to the Wiki (anything else →

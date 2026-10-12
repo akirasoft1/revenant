@@ -27,6 +27,17 @@ MAX_DYNAMIC_LOOKUPS = 16
 # Shield / TractorBeam / WeaponGun / WeaponMining items do.
 SLOT_BEARING_TYPES = frozenset({"Turret"})
 
+
+class SlotBoundExceeded(UpstreamError):
+    """``resolve_slots(strict=True)`` hit ``MAX_DYNAMIC_DEPTH`` or
+    ``MAX_DYNAMIC_LOOKUPS``: the children of ``slot`` are UNKNOWN (not absent).
+    An ``UpstreamError`` so a write that depends on them answers 503 and
+    writes nothing, like any other "the catalog cannot answer"."""
+
+    def __init__(self, slot: str, detail: str) -> None:
+        Exception.__init__(self, detail)
+        self.upstream, self.status, self.detail, self.slot = "loadout", None, detail, slot
+
 _FUZZY_MIN = 85.0       # a fuzzy candidate must score at least this
 _FUZZY_CLEAR_LEAD = 5.0  # ...and beat the runner-up by this much to be a match
 
@@ -35,7 +46,8 @@ def _descends_from(slot: str, parent: str) -> bool:
     return slot.startswith(parent + "/")
 
 
-def _accepts_slot_bearing(slot: Slot) -> bool:
+def accepts_slot_bearing(slot: Slot) -> bool:
+    """Whether ``slot`` can hold an item that carries slots of its own."""
     types = [c["type"] for c in slot.compatible_types] or [slot.type]
     return slot.type in SLOT_BEARING_TYPES or any(t in SLOT_BEARING_TYPES for t in types)
 
@@ -51,11 +63,15 @@ async def resolve_slots(catalog, vehicle_slots: list[Slot], fitted: dict | None,
     appended right after their parent, in the item's order, their ids prefixed
     with ``<parent>/`` and marked ``dynamic``.
 
-    A refitted slot has NO children when its item is unknown, its lookup
-    fails (logged; raised instead with ``strict=True``), the slot cannot hold
-    a slot-bearing item (``SLOT_BEARING_TYPES``, not looked up at all), or a
-    bound is hit (``MAX_DYNAMIC_DEPTH`` levels, ``MAX_DYNAMIC_LOOKUPS``
-    distinct items per ship; logged). Never an error for a read."""
+    A refitted slot has NO children when its item is unknown or the slot
+    cannot hold a slot-bearing item (``SLOT_BEARING_TYPES``, not looked up at
+    all). When its lookup fails or a bound is hit (``MAX_DYNAMIC_DEPTH``
+    levels, ``MAX_DYNAMIC_LOOKUPS`` distinct items per ship) its children are
+    UNKNOWN: a read (the default) logs and shows it without children -- never
+    an error -- while ``strict=True`` raises (``UpstreamError`` /
+    ``SlotBoundExceeded``). Anything that DECIDES from the list -- which
+    fittings to delete, which slot a fit targets, what an import writes --
+    must pass ``strict=True``: "unknown" must never be read as "gone"."""
     slots = list(vehicle_slots)
     fitted = fitted or {}
     depth: dict[str, int] = {}           # dynamic slot id -> nesting level (vehicle slots: 0)
@@ -68,14 +84,15 @@ async def resolve_slots(catalog, vehicle_slots: list[Slot], fitted: dict | None,
         uuid = entry.get("itemUuid") if isinstance(entry, dict) else None
         level = depth.get(name, 0)
         children: list[Slot] | None = None
-        if not isinstance(uuid, str) or not uuid or not _accepts_slot_bearing(slots[index]):
+        bound = None
+        if not isinstance(uuid, str) or not uuid or not accepts_slot_bearing(slots[index]):
             pass
         elif level >= MAX_DYNAMIC_DEPTH:
-            log.warning("loadout: slot %s is %d fitted items deep (limit %d); the slots of its item %s "
-                        "are not resolved", name, level, MAX_DYNAMIC_DEPTH, uuid)
+            bound = (f"slot {name} is {level} fitted items deep (limit {MAX_DYNAMIC_DEPTH}); the slots of "
+                     f"its item {uuid} are not resolved")
         elif uuid.casefold() not in looked_up and len(looked_up) >= MAX_DYNAMIC_LOOKUPS:
-            log.warning("loadout: more than %d distinct fitted items to look up on one ship; the slots of "
-                        "item %s in %s are not resolved", MAX_DYNAMIC_LOOKUPS, uuid, name)
+            bound = (f"more than {MAX_DYNAMIC_LOOKUPS} distinct fitted items to look up on one ship; the "
+                     f"slots of item {uuid} in {name} are not resolved")
         else:
             looked_up.add(uuid.casefold())
             try:
@@ -89,6 +106,10 @@ async def resolve_slots(catalog, vehicle_slots: list[Slot], fitted: dict | None,
                 if children is None:
                     log.warning("loadout: item %s fitted in %s is not in the catalog (shown without "
                                 "children)", uuid, name)
+        if bound is not None:
+            if strict:
+                raise SlotBoundExceeded(name, bound)
+            log.warning("loadout: %s", bound)
         slots = [s for s in slots if not _descends_from(s.name, name)]
         added = [dataclasses.replace(c, name=f"{name}/{c.name}", dynamic=True) for c in children or []]
         index = next(i for i, s in enumerate(slots) if s.name == name)
@@ -108,7 +129,8 @@ async def prune_descendants(catalog, vehicle_slots: list[Slot], fitted: dict,
     the rest are returned (parents first) as
     ``{slot, item: {uuid, name}, reason: "slot_removed"|"incompatible"|"unknown_item"}``
     for the caller to delete in the SAME write. Raises ``UpstreamError`` when
-    the catalog cannot answer -- before anything is written."""
+    the catalog cannot answer or a resolver bound leaves a parent's children
+    unknown (``SlotBoundExceeded``) -- before anything is written."""
     work = dict(fitted)
     under = sorted((k for k in work if any(_descends_from(k, p) for p in parents)),
                    key=lambda k: (k.count("/"), k))

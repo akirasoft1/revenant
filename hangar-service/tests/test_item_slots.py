@@ -3,6 +3,7 @@ supplement) and the spviewer import of a ship whose turrets carry the guns --
 pinned against recorded F7C Hornet Mk II payloads (vehicle, the Hornet turrets,
 the TMSB-5 and four guns; UEX category 35) and the real spviewer export
 ``spviewer_f7c_mk2.json``. Spec: 2026-10-11-hangar-item-slots-design.md."""
+import asyncio
 import copy
 import json
 import logging
@@ -15,8 +16,8 @@ from src.app import create_app
 from src.cache import TTLCache
 from src.catalog import MAX_SUPPLEMENT_ITEMS, NEGATIVE_TTL_S, Slot, build_catalog
 from src.http import UpstreamError
-from src.loadout import (MAX_DYNAMIC_DEPTH, MAX_DYNAMIC_LOOKUPS, effective_loadout, prune_descendants,
-                         resolve_slots)
+from src.loadout import (MAX_DYNAMIC_DEPTH, MAX_DYNAMIC_LOOKUPS, SlotBoundExceeded, effective_loadout,
+                         prune_descendants, resolve_slots)
 from src.lzstring import decompress_from_encoded_uri_component
 from src.repository import InMemoryShipRepository
 from src.spviewer import TOO_MANY_LOOKUPS, UNTRACKED_SLOT, DecodeBudget, analyze_row
@@ -58,13 +59,21 @@ async def _nosleep(_):
 
 
 def make_catalog(calls=None, fail=None, *, uex=False, uex_calls=None, uex_fail=None, uex_rows=None,
-                 clock=None, bearer=None, **wiki_kw):
+                 clock=None, bearer=None, uex_handler_fn=None, **wiki_kw):
     kw = {}
-    if uex:
+    if uex or uex_handler_fn is not None:
         kw = {"uex_base": UEX, "uex_bearer": bearer,
-              "uex_transport": httpx.MockTransport(uex_handler(uex_calls, uex_fail, uex_rows))}
+              "uex_transport": httpx.MockTransport(uex_handler_fn or uex_handler(uex_calls, uex_fail, uex_rows))}
     return build_catalog(WIKI, version="test", transport=httpx.MockTransport(wiki_handler(calls, fail, **wiki_kw)),
                          cache=TTLCache(clock=clock) if clock else None, sleep=_nosleep, **kw)
+
+
+async def refreshed(cat, type_="Turret", **kw):
+    """``items`` once the background supplement refresh the first read starts
+    has landed (a request never waits for UEX)."""
+    await cat.items(type_, **kw)
+    await cat.drain_refreshes()
+    return await cat.items(type_, **kw)
 
 
 def _item_calls(calls):
@@ -128,7 +137,7 @@ async def test_item_slots_share_the_item_cache_entry_and_return_copies():
 async def test_supplement_merges_items_the_wiki_list_omits():
     calls, uex_calls = [], []
     cat = make_catalog(calls, uex=True, uex_calls=uex_calls)
-    names = {i["name"] for i in await cat.items("Turret")}
+    names = {i["name"] for i in await refreshed(cat)}
     assert names == {"C5-173f S5 Hornet Mk II Ball Turret", "Anvil Hornet Mk II S2 Nose Turret", "TMSB-5 Ball Turret"}
     assert [(c.url.path, c.url.params["id_category"]) for c in uex_calls] == [("/2.0/items", "35")]
     # every UEX uuid the Wiki list lacks was looked up once (rows without a uuid never)
@@ -144,7 +153,7 @@ async def test_supplement_merges_items_the_wiki_list_omits():
 
 async def test_supplement_is_size_filtered_like_the_wiki_list():
     cat = make_catalog(uex=True)
-    assert {i["uuid"] for i in await cat.items("Turret", size=5)} == {C5, TMSB}
+    assert {i["uuid"] for i in await refreshed(cat, size=5)} == {C5, TMSB}
     assert {i["uuid"] for i in await cat.items("Turret", size=3)} == {NOSE_S2}
     assert await cat.items("Turret", size=1) == []
 
@@ -153,7 +162,7 @@ async def test_supplement_skips_items_already_in_the_wiki_list():
     calls = []
     listed = f7c_items()[C5]
     cat = make_catalog(calls, uex=True, extra_listed=[listed])
-    items = await cat.items("Turret")
+    items = await refreshed(cat)
     assert [i["uuid"] for i in items].count(C5) == 1
     assert C5 not in _item_calls(calls)
 
@@ -161,14 +170,14 @@ async def test_supplement_skips_items_already_in_the_wiki_list():
 async def test_supplement_drops_items_whose_wiki_type_differs():
     rows = {"35": [{"uuid": C5, "name": "turret"}, {"uuid": AD4B, "name": "a gun filed under turrets"}]}
     cat = make_catalog(uex=True, uex_rows=rows)
-    assert [i["uuid"] for i in await cat.items("Turret")] == [C5]
+    assert [i["uuid"] for i in await refreshed(cat)] == [C5]
 
 
 async def test_supplement_only_sends_well_formed_uuids_to_the_wiki():
     calls = []
     rows = {"35": [{"uuid": "../../vehicles"}, {"uuid": 7}, {"uuid": ""}, "junk", {"uuid": C5}, {"uuid": C5.upper()}]}
     cat = make_catalog(calls, uex=True, uex_rows=rows)
-    assert [i["uuid"] for i in await cat.items("Turret")] == [C5]
+    assert [i["uuid"] for i in await refreshed(cat)] == [C5]
     assert _item_calls(calls) == [C5]
 
 
@@ -177,7 +186,7 @@ async def test_supplement_is_capped_and_the_count_is_logged(caplog):
     rows = {"35": [{"uuid": f"00000000-0000-4000-8000-{i:012d}"} for i in range(MAX_SUPPLEMENT_ITEMS + 10)]}
     cat = make_catalog(calls, uex=True, uex_rows=rows)
     with caplog.at_level(logging.WARNING, logger="src.catalog"):
-        assert await cat.items("Turret") == []
+        assert await refreshed(cat) == []
     assert MAX_SUPPLEMENT_ITEMS == 40 and len(_item_calls(calls)) == 40
     assert any("50 Turret items" in r.getMessage() for r in caplog.records)
 
@@ -185,9 +194,9 @@ async def test_supplement_is_capped_and_the_count_is_logged(caplog):
 async def test_types_without_a_uex_category_get_no_supplement():
     uex_calls = []
     cat = make_catalog(uex=True, uex_calls=uex_calls)
-    await cat.items("Radar")
+    await refreshed(cat, "Radar")
     assert uex_calls == []
-    await cat.items("Shield")
+    await refreshed(cat, "Shield")
     assert [c.url.params["id_category"] for c in uex_calls] == ["23"]
 
 
@@ -197,32 +206,98 @@ async def test_uex_down_serves_the_wiki_list_alone_and_retries_after_the_negativ
     cat = make_catalog(uex=True, uex_calls=uex_calls, uex_fail=lambda r: down[0], clock=clock,
                        extra_listed=[listed])
     with caplog.at_level(logging.WARNING, logger="src.catalog"):
-        assert [i["name"] for i in await cat.items("Turret")] == ["Listed Turret"]
+        assert [i["name"] for i in await refreshed(cat)] == ["Listed Turret"]
     assert any("UEX supplement for Turret" in r.getMessage() for r in caplog.records)
-    attempts = len(uex_calls)
-    assert attempts == 3                      # one request, retried by the upstream client
+    assert len(uex_calls) == 1                # ONE attempt: UEX gets no retry budget
     clock.t += NEGATIVE_TTL_S - 1             # the failure is remembered for the negative TTL ...
     down[0] = False
-    assert [i["name"] for i in await cat.items("Turret")] == ["Listed Turret"]
-    assert len(uex_calls) == attempts
+    assert [i["name"] for i in await refreshed(cat)] == ["Listed Turret"]
+    assert len(uex_calls) == 1
     clock.t += 2                              # ... and not for 12h
-    assert {i["uuid"] for i in await cat.items("Turret")} >= {C5, NOSE_S2, TMSB}
-    assert len(uex_calls) == attempts + 1
+    assert {i["uuid"] for i in await refreshed(cat)} >= {C5, NOSE_S2, TMSB}
+    assert len(uex_calls) == 2
 
 
 async def test_a_failed_refresh_keeps_the_last_good_supplement():
     clock, down = Clock(), [False]
     cat = make_catalog(uex=True, uex_fail=lambda r: down[0], clock=clock)
-    assert {i["uuid"] for i in await cat.items("Turret")} == {C5, NOSE_S2, TMSB}
+    assert {i["uuid"] for i in await refreshed(cat)} == {C5, NOSE_S2, TMSB}
     down[0] = True
     clock.t += 12 * 3600 + 1
+    assert {i["uuid"] for i in await refreshed(cat)} == {C5, NOSE_S2, TMSB}
+
+
+async def test_a_request_never_waits_for_uex():
+    # A UEX that accepts the connection and never answers.
+    async def silent(_req):
+        await asyncio.Event().wait()
+    cat = make_catalog(uex_handler_fn=silent, extra_listed=[variant("11111111-1111-4111-8111-111111111111",
+                                                                    "Listed Turret")])
+    try:
+        for call in (cat.item_options("Turret"), cat.items("Turret", size=5), cat.item_options("Turret")):
+            assert [i["name"] for i in await asyncio.wait_for(call, 0.5)] == ["Listed Turret"]
+        assert cat.pending_refreshes() == 1
+    finally:
+        await cat.aclose()
+
+
+async def test_supplement_refresh_is_single_flight_and_its_items_appear_when_it_lands():
+    gate, uex_calls = asyncio.Event(), []
+    inner = uex_handler(uex_calls)
+
+    async def gated(req):
+        await gate.wait()
+        return inner(req)
+    cat = make_catalog(uex_handler_fn=gated)
+    for _ in range(5):                        # every read is served at once, without the supplement ...
+        assert await asyncio.wait_for(cat.items("Turret"), 0.5) == []
+        await asyncio.sleep(0)
+    assert cat.pending_refreshes() == 1       # ... while ONE refresh runs
+    gate.set()
+    await cat.drain_refreshes()
     assert {i["uuid"] for i in await cat.items("Turret")} == {C5, NOSE_S2, TMSB}
+    assert len(uex_calls) == 1
+    await cat.items("Turret", size=3)         # fresh: no further refresh
+    assert cat.pending_refreshes() == 0 and len(uex_calls) == 1
+
+
+async def test_a_silent_uex_is_given_up_on_after_its_own_short_budget(monkeypatch, caplog):
+    import src.catalog as catalog_module
+    assert catalog_module.UEX_TIMEOUT_S == 4.0
+    monkeypatch.setattr(catalog_module, "UEX_TIMEOUT_S", 0.05)
+
+    async def silent(_req):
+        await asyncio.Event().wait()
+    cat = make_catalog(uex_handler_fn=silent)
+    with caplog.at_level(logging.WARNING, logger="src.catalog"):
+        assert await asyncio.wait_for(refreshed(cat), 2) == []
+    assert any("UEX supplement for Turret" in r.getMessage() for r in caplog.records)
+    assert cat.pending_refreshes() == 0
+
+
+async def test_warm_waits_for_the_supplements_but_only_for_a_bounded_time(monkeypatch):
+    import src.catalog as catalog_module
+    cat = make_catalog(uex=True)
+    await cat.warm()                          # the supplement is there without any request-time wait
+    assert cat.pending_refreshes() == 0
+    assert {i["uuid"] for i in await cat.items("Turret")} == {C5, NOSE_S2, TMSB}
+
+    monkeypatch.setattr(catalog_module, "WARM_SUPPLEMENT_TIMEOUT_S", 0.02)
+
+    async def silent(_req):
+        await asyncio.Event().wait()
+    slow = make_catalog(uex_handler_fn=silent)
+    try:
+        await asyncio.wait_for(slow.warm(), 5)   # 9 UEX-backed types x 0.02s, not forever
+        assert slow.vehicle_index_cached()
+    finally:
+        await slow.aclose()
 
 
 async def test_wiki_detail_failure_fails_only_the_supplement():
     cat = make_catalog(fail=lambda r: r.url.path.endswith(C5), uex=True,
                        extra_listed=[variant("11111111-1111-4111-8111-111111111111", "Listed Turret")])
-    assert [i["name"] for i in await cat.items("Turret")] == ["Listed Turret"]
+    assert [i["name"] for i in await refreshed(cat)] == ["Listed Turret"]
 
 
 async def test_uex_bearer_is_sent_but_never_logged(caplog):
@@ -230,13 +305,13 @@ async def test_uex_bearer_is_sent_but_never_logged(caplog):
     uex_calls = []
     cat = make_catalog(uex=True, uex_calls=uex_calls, uex_fail=lambda r: True, bearer=secret)
     with caplog.at_level(logging.DEBUG):
-        assert await cat.items("Turret") == []
+        assert await refreshed(cat) == []
     assert uex_calls and all(c.headers["authorization"] == f"Bearer {secret}" for c in uex_calls)
     assert caplog.records and not any(secret in r.getMessage() or secret in str(r.exc_info or "")
                                       for r in caplog.records)
     # no bearer configured -> no Authorization header at all
     plain_calls = []
-    await make_catalog(uex=True, uex_calls=plain_calls).items("Turret")
+    await refreshed(make_catalog(uex=True, uex_calls=plain_calls))
     assert plain_calls and "authorization" not in plain_calls[0].headers
 
 
@@ -670,6 +745,91 @@ def test_a_parent_change_fails_before_writing_when_the_catalog_cannot_check_the_
     assert set(hangar_ship(client, ship)["fitted"]) == {CENTER, TL, f"{TR}/hardpoint_class_2"}
 
 
+# ----- a resolver bound is "unknown", never "the port is gone" -----
+
+BIG_UUID = "99999999-9999-4999-8999-999999999999"
+BIG_SLOTS = [f"t{i:02d}" for i in range(MAX_DYNAMIC_LOOKUPS + 2)]          # 18 ball-turret slots
+BIG_TURRETS = [f"aaaaaaaa-0000-4000-8000-{i:012d}" for i in range(len(BIG_SLOTS))]
+SPARE_TURRET = "aaaaaaaa-0000-4000-8000-000000000099"
+LAST = BIG_SLOTS[-1]
+LAST_GUN = f"{LAST}/hardpoint_weapon_S3_left"
+
+
+def big_vehicle() -> dict:
+    port = {"type": "", "sub_type": "", "editable": True, "sizes": {"min": 5, "max": 5}, "equipped_item": None,
+            "ports": [], "compatible_types": [{"type": "Turret", "sub_types": ["BallTurret"]}]}
+    return {"uuid": BIG_UUID, "name": "Turret Barge", "game_name": "Turret Barge", "slug": "test-turret-barge",
+            "class_name": "TEST_Turret_Barge", "ports": [{**port, "name": n} for n in BIG_SLOTS]}
+
+
+def big_app(repo):
+    """A ship with 18 distinct turrets -- still one more than the resolver
+    looks up per ship (16) after the last one is changed or reset; the last
+    turret has a gun fitted in one of its ports."""
+    turrets = [variant(u, f"Barge Turret {i}", base=C5) for i, u in enumerate([*BIG_TURRETS, SPARE_TURRET])]
+    app = _app(repo, extra_vehicles=[big_vehicle()], extra_items=turrets)
+    fitted = {slot: {"itemUuid": u, "itemName": f"Barge Turret {i}"}
+              for i, (slot, u) in enumerate(zip(BIG_SLOTS, BIG_TURRETS))}
+    fitted[LAST_GUN] = {"itemUuid": MANTIS, "itemName": "Mantis GT-220 Gatling"}
+
+    async def seed():
+        ship = await repo.create_ship(SELF, vehicle_uuid=BIG_UUID, vehicle_name="Turret Barge",
+                                      vehicle_class_name="TEST_Turret_Barge", nickname=None, updated_by=SELF)
+        return await repo.replace_fitted(SELF, ship["shipId"], fitted, updated_by=SELF)
+    return app, asyncio.run(seed()), fitted
+
+
+def test_a_parent_change_past_the_lookup_bound_is_503_and_nothing_is_deleted(repo):
+    app, ship, fitted = big_app(repo)
+    writes = []
+    for name in ("update_slots", "set_slot", "clear_slot", "replace_fitted"):
+        original = getattr(repo, name)
+
+        async def spy(*a, _original=original, _name=name, **kw):
+            writes.append(_name)
+            return await _original(*a, **kw)
+        setattr(repo, name, spy)
+    with TestClient(app) as c:
+        # reads still work: the unresolved turret is simply shown without children
+        lo = loadout_of(hangar_ship(c, ship))
+        assert f"{BIG_SLOTS[0]}/hardpoint_weapon_S3_left" in lo and LAST_GUN not in lo
+        for r in (put(c, ship, LAST, SPARE_TURRET), delete(c, ship, LAST),
+                  chat_fit(c, "barge", SPARE_TURRET, slot=LAST), chat_reset(c, "barge", slot=LAST)):
+            assert r.status_code == 503, r.text
+            assert r.json()["error"] == "unavailable" and str(MAX_DYNAMIC_LOOKUPS) in r.json()["message"]
+        assert writes == []
+        assert hangar_ship(c, ship)["fitted"] == fitted
+
+
+async def test_strict_resolve_raises_on_a_bound_and_plain_resolve_does_not():
+    items = FakeItems({f"I{i}": [] for i in range(MAX_DYNAMIC_LOOKUPS + 1)})
+    vehicle = [_slot(f"t{i:02d}") for i in range(MAX_DYNAMIC_LOOKUPS + 1)]
+    fitted = {f"t{i:02d}": _fit(f"I{i}") for i in range(MAX_DYNAMIC_LOOKUPS + 1)}
+    assert len(await resolve_slots(items, vehicle, fitted)) == len(vehicle)
+    with pytest.raises(SlotBoundExceeded) as e:
+        await resolve_slots(items, vehicle, fitted, strict=True)
+    assert isinstance(e.value, UpstreamError) and "t16" in str(e.value)
+    deep = FakeItems({"T": [_slot("p")]})
+    chain = {"/".join(["a"] + ["p"] * n): _fit("T") for n in range(MAX_DYNAMIC_DEPTH + 1)}
+    with pytest.raises(SlotBoundExceeded):
+        await resolve_slots(deep, [_slot("a")], chain, strict=True)
+    with pytest.raises(SlotBoundExceeded):
+        await prune_descendants(items, vehicle, {**fitted, "t16/gun": _fit("G")}, ["t16"])
+
+
+def test_fitting_into_a_turret_whose_slots_cannot_be_read_is_503_not_no_such_slot(repo):
+    down = [False]
+    with TestClient(_app(repo, fail=lambda r: down[0])) as c:
+        ship = hornet_with_c5(c)
+        # a fresh process: nothing cached, and the Wiki fails on the turret's record
+        c.app.state.catalog._cache.discard(f"item:{C5}")
+        down[0] = True
+        assert put(c, ship, S3L, MANTIS).status_code == 503
+        assert chat_fit(c, "hornet", MANTIS, slot="all").status_code == 503
+        # the read still answers, without the turret's children
+        assert S3L not in loadout_of(hangar_ship(c, ship))
+
+
 def chat_fit(c, ship_text, item, slot=None, member=SELF):
     body = {"ship": ship_text, "item": item, **({"slot": slot} if slot else {})}
     return c.post(f"/v1/members/{member}/fit", json=body, headers=H(member))
@@ -797,6 +957,10 @@ def test_slot_options_unknown_slot_on_a_ship_is_404_and_auth_is_required(client)
 def test_the_nose_slot_picker_offers_the_turrets_the_wiki_list_omits(repo):
     with TestClient(_app(repo, uex=True)) as c:
         ship = add_ship(c, vehicle=F7C_UUID)
+        # Cold: the first picker is served without waiting for UEX ...
+        assert options(c, vehicle=F7C_UUID, slot=NOSE).json() == {"items": []}
+        c.portal.call(c.app.state.catalog.drain_refreshes)
+        # ... and has the supplemented turrets once the background refresh landed.
         r = options(c, vehicle=F7C_UUID, slot=NOSE)
         assert r.status_code == 200, r.text
         assert [(i["uuid"], i["name"], i["size"]) for i in r.json()["items"]] == [
@@ -946,3 +1110,40 @@ def test_f7c_export_previews_and_applies_through_the_api():
         lo = loadout_of(ship)
         assert lo[S1L]["item"] == {"uuid": M4A, "name": "M4A Cannon"} and lo[S1L]["dynamic"] is True
         assert lo[S3R]["item"]["name"] == "Mantis GT-220 Gatling" and lo[LEFT_WING]["source"] == "stock"
+
+
+async def test_an_import_past_the_resolver_bound_is_refused_not_written_without_the_children():
+    n = MAX_DYNAMIC_LOOKUPS + 1
+    turrets = [variant(u, f"Barge Turret {i}", base=C5) for i, u in enumerate(BIG_TURRETS[:n])]
+    ports = [{"PortName": slot, "Loadout": u,
+              "Ports": [{"PortName": "hardpoint_weapon_S3_left", "Loadout": MANTIS}]}
+             for slot, u in zip(BIG_SLOTS[:n], BIG_TURRETS[:n])]
+    row = {"vehicleClassName": "TEST_Turret_Barge", "vehicleName": "Turret Barge", "loadoutName": "barge",
+           "loadoutData": lz(json.dumps({"pilotWeaponsPorts": ports}))}
+    cat = make_catalog(extra_vehicles=[big_vehicle()], extra_items=turrets)
+    res = await analyze_row(cat, 0, row, budget=DecodeBudget())
+    last = BIG_SLOTS[n - 1]
+    assert (last, TOO_MANY_LOOKUPS) in [(s.get("slot"), s["reason"]) for s in res.skipped]
+    assert str(MAX_DYNAMIC_LOOKUPS) in next(s["detail"] for s in res.skipped if s.get("slot") == last)
+    assert res.blocking() is not None and res.blocking()[0] == TOO_MANY_LOOKUPS
+    # one turret fewer: the same shape imports completely
+    row["loadoutData"] = lz(json.dumps({"pilotWeaponsPorts": ports[:-1]}))
+    res = await analyze_row(make_catalog(extra_vehicles=[big_vehicle()], extra_items=turrets), 0, row,
+                            budget=DecodeBudget())
+    assert res.blocking() is None and len(res.fitted) == 2 * MAX_DYNAMIC_LOOKUPS
+
+
+async def test_the_importer_re_resolves_only_for_changes_that_can_alter_the_slot_list(monkeypatch):
+    import src.spviewer as spviewer_module
+    seen = []
+    real = spviewer_module.resolve_slots
+
+    async def counting(catalog, slots, fitted, **kw):
+        seen.append(sorted(fitted))
+        return await real(catalog, slots, fitted, **kw)
+    monkeypatch.setattr(spviewer_module, "resolve_slots", counting)
+    res = await analyze_row(make_catalog(), 0, f7c_row(), budget=DecodeBudget())
+    assert res.fitted == F7C_FITTED
+    # seven changes, two on slots that take a turret: the wing gun and the four turret guns cost nothing
+    assert len(seen) == 2
+    assert CENTER in seen[0] and NOSE not in seen[0] and NOSE in seen[1]

@@ -49,7 +49,8 @@ def uex_handler(calls: list | None = None, fail: Callable[[httpx.Request], bool]
 
 def wiki_handler(calls: list | None = None, fail: Callable[[httpx.Request], bool] | None = None,
                  page_size: int = 50, mutate_item: Callable[[dict], None] | None = None,
-                 extra_items: list[dict] | None = None, extra_listed: list[dict] | None = None):
+                 extra_items: list[dict] | None = None, extra_listed: list[dict] | None = None,
+                 extra_vehicles: list[dict] | None = None):
     """A fake Star Citizen Wiki API backed by the recorded fixtures.
 
     - GET /api/vehicles?page=N        -> the recorded 299-vehicle index, paged
@@ -65,11 +66,13 @@ def wiki_handler(calls: list | None = None, fail: Callable[[httpx.Request], bool
       guns) by uuid or class name on /api/v2/items/<key> ONLY -- like the live
       Wiki, whose Turret list omits the Hornet turrets. ``extra_items`` adds
       more by-key-only records; ``extra_listed`` adds records to the by-key
-      lookups AND the /api/v2/items lists (by type + size).
+      lookups AND the /api/v2/items lists (by type + size). ``extra_vehicles``
+      (full vehicle payloads) are added to the index and served by uuid / slug.
     `fail(req)` returning True turns that request into a 503. `mutate_item(rec)`
     may edit a deep copy of each listed item record (e.g. add ``uex_prices``).
     """
-    index = load_fixture("wiki_vehicles_index.json")["data"]
+    index = load_fixture("wiki_vehicles_index.json")["data"] + list(extra_vehicles or [])
+    extra_vehicle_by_key = {k: v for v in extra_vehicles or [] for k in (v["uuid"], v["slug"])}
     vehicles = {
         TAURUS_UUID: "wiki_vehicle_constellation_taurus.json",
         TAURUS_SLUG: "wiki_vehicle_constellation_taurus.json",
@@ -108,6 +111,8 @@ def wiki_handler(calls: list | None = None, fail: Callable[[httpx.Request], bool
             key = path.rsplit("/", 1)[1]
             if key in vehicles:
                 return httpx.Response(200, json=load_fixture(vehicles[key]))
+            if key in extra_vehicle_by_key:
+                return httpx.Response(200, json={"data": extra_vehicle_by_key[key]})
             return httpx.Response(404, json={"message": "No query results"})
         if path == "/api/v2/items":
             p = req.url.params

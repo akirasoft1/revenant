@@ -52,6 +52,12 @@ UEX_CATEGORIES = {"Turret": 35, "WeaponGun": 32, "MissileLauncher": 33, "Shield"
 # limiter every hangar read shares, so a UEX category that suddenly lists
 # hundreds of unknown uuids must not be able to queue them all.
 MAX_SUPPLEMENT_ITEMS = 40
+# UEX is optional garnish: ONE attempt, bounded in total (connect + read), and
+# never awaited by a request (see ``_supplement``).
+UEX_TIMEOUT_S = 4.0
+# How long ``warm`` waits for one type's supplement before moving on (the
+# refresh keeps running in the background).
+WARM_SUPPLEMENT_TIMEOUT_S = 20.0
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 MAX_LOOKUP_KEYS = 2000
 MAX_LOOKUP_KEY_LEN = 200
@@ -446,7 +452,7 @@ class Catalog:
     async def warm(self) -> None:
         """Startup prefetch of the vehicle index, then the per-type item lists
         (``items:<type>:None``, the keys chat-edit fuzzy item resolution reads
-        via ``items(type)``) one type at a time so the Wiki's rate limit isn't
+        via ``items(type)``) and their UEX supplements, one type at a time so the Wiki's rate limit isn't
         hit with a burst. Best effort: each step is isolated and logged; never
         raises."""
         try:
@@ -456,6 +462,14 @@ class Catalog:
         for type_ in sorted(SLOT_TYPES):
             try:
                 await self._item_records(type_, None)
+                # Requests never wait for the UEX supplement; warm-up does,
+                # for a bounded time, so the first picker usually has it.
+                task = self._refreshing.get(f"items_supplement:{type_}")
+                if isinstance(task, asyncio.Future) and not task.done():
+                    await asyncio.wait_for(asyncio.shield(task), WARM_SUPPLEMENT_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                log.warning("catalog: the UEX supplement for %s items is still loading after %.0fs; "
+                            "continuing in the background", type_, WARM_SUPPLEMENT_TIMEOUT_S)
             except Exception:
                 log.warning("catalog: warm-up of the %s item list failed", type_, exc_info=True)
 
@@ -574,7 +588,7 @@ class Catalog:
         return await self._cached(f"items:{canonical}:{size}", fetch)
 
     async def _fetch_supplement(self, canonical: str, category: int) -> list[dict]:
-        body = await self._uex.get_json("items", {"id_category": category})
+        body = await asyncio.wait_for(self._uex.get_json("items", {"id_category": category}), UEX_TIMEOUT_S)
         rows = body.get("data") if isinstance(body, dict) else None
         if not isinstance(rows, list):
             raise UpstreamError("uex", None, f"items?id_category={category}: 'data' is not a list")
@@ -603,14 +617,20 @@ class Catalog:
                 out.append(item_option(data))
         return out
 
-    async def _supplement(self, canonical: str) -> list[dict]:
+    def _supplement(self, canonical: str) -> list[dict]:
         """``item_option`` records of items the Wiki list for this type omits
         but UEX lists (same uuids) and the Wiki knows by uuid -- every size.
 
-        One UEX call + at most ``MAX_SUPPLEMENT_ITEMS`` Wiki detail calls per
-        type per 12h. Never raises: any UEX / detail failure is logged and
-        yields the last good supplement (or nothing), retried after the
-        negative TTL rather than cached for 12h."""
+        NEVER awaited by a request: returns what is cached right now (the last
+        good supplement, or ``[]`` before the first one lands) and, when that
+        is missing or expired, starts ONE background refresh per type
+        (``_spawn``, tracked like ``_swr`` refreshes). So a UEX that accepts
+        the connection and goes silent cannot stall a picker or a chat edit.
+
+        A refresh is one UEX call + at most ``MAX_SUPPLEMENT_ITEMS`` Wiki
+        detail calls, good for 12h. Any UEX / detail failure is logged, keeps
+        the last good supplement and is retried after the negative TTL (10
+        min) rather than cached for 12h."""
         category = UEX_CATEGORIES.get(canonical)
         if self._uex is None or category is None:
             return []
@@ -618,28 +638,37 @@ class Catalog:
         peeked = self._cache.peek(key)
         previous = peeked.value["items"] if peeked is not None else []
         ttl = self._neg_ttl if peeked is not None and not peeked.value["ok"] else self._ttl
+        if peeked is not None and peeked.age_s < ttl:
+            return previous
+        task = self._refreshing.get(key)
+        if task is None or task.done():
+            async def fetch():
+                try:
+                    return {"ok": True, "items": await self._fetch_supplement(canonical, category)}
+                except Exception as e:
+                    log.warning("catalog: UEX supplement for %s items failed (%s: %s); serving the Wiki list%s "
+                                "and retrying in %.0fs", canonical, type(e).__name__, e,
+                                f" plus the last good supplement ({len(previous)} items)" if previous else " alone",
+                                self._neg_ttl)
+                    return {"ok": False, "items": previous}
 
-        async def fetch():
-            try:
-                return {"ok": True, "items": await self._fetch_supplement(canonical, category)}
-            except Exception as e:
-                log.warning("catalog: UEX supplement for %s items failed (%s: %s); serving the Wiki list%s "
-                            "and retrying in %.0fs", canonical, type(e).__name__, e,
-                            f" plus the last good supplement ({len(previous)} items)" if previous else " alone",
-                            self._neg_ttl)
-                return {"ok": False, "items": previous}
-
-        return (await self._cache.get_or_fetch(key, ttl, fetch)).value["items"]
+            task = self._spawn(self._refresh(key, ttl, fetch))
+            self._refreshing[key] = task
+            add_cb = getattr(task, "add_done_callback", None)
+            if add_cb is not None:
+                add_cb(lambda t, k=key: self._forget_refresh(k, t))
+        return previous
 
     async def _item_records(self, type_: str, size: int | None) -> list[dict]:
         """Cached ``item_option`` records of one type (+ optional size), by
-        name: the Wiki list plus the UEX supplement (``_supplement``)."""
+        name: the Wiki list plus whatever UEX supplement is cached right now
+        (``_supplement`` -- never waited for)."""
         canonical = normalize_item_type(type_)
         if size is not None:
             size = int(size)
         records = await self._wiki_items(canonical, size)
         seen = {r.get("uuid") for r in records}
-        extra = [r for r in await self._supplement(canonical)
+        extra = [r for r in self._supplement(canonical)
                  if r.get("uuid") not in seen and (size is None or r.get("size") == size)]
         if not extra:
             return records
@@ -717,5 +746,6 @@ def build_catalog(wiki_base: str = DEFAULT_WIKI_BASE, version: str = "dev",
         uex_headers = dict(headers)
         if uex_bearer:
             uex_headers["Authorization"] = f"Bearer {uex_bearer}"
-        uex = UpstreamClient("uex", uex_base, uex_headers, RateLimiter(60, 60.0), transport=uex_transport, **kw)
+        uex = UpstreamClient("uex", uex_base, uex_headers, RateLimiter(60, 60.0), transport=uex_transport,
+                             timeout=httpx.Timeout(UEX_TIMEOUT_S, connect=2.0), max_attempts=1, **kw)
     return Catalog(upstream, cache=cache, spawn=spawn, max_lookup_keys=max_lookup_keys, uex=uex)

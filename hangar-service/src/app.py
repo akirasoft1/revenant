@@ -573,7 +573,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
 
     @app.exception_handler(UpstreamError)
     async def _upstream(request: Request, e: UpstreamError):
-        log.error("hangar: 503 %s %s: Wiki unavailable: %s", request.method, request.url.path, e)
+        log.error("hangar: 503 %s %s: game catalog unavailable (%s): %s", request.method, request.url.path,
+                  e.upstream, e)
         return _err(503, "unavailable", f"game catalog unavailable: {e}")
 
     @app.exception_handler(RepositoryError)
@@ -707,7 +708,9 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if vehicle_slots is None:
             raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
         fitted = ship.get("fitted") or {}
-        slots = await resolve_slots(catalog, vehicle_slots, fitted)
+        # strict: a turret whose slots cannot be read right now is a 503, not
+        # "no such slot" for the gun ports the member can see.
+        slots = await resolve_slots(catalog, vehicle_slots, fitted, strict=True)
         target = next((s for s in slots if s.name == slot), None) if len(slot) <= SLOT_MAX else None
         if target is None:
             raise _not_found(f"{ship['vehicleName']} has no component slot {slot!r}")
@@ -866,7 +869,8 @@ def create_app(config: Config, *, catalog: Any = None, repository: ShipRepositor
         if vehicle_slots is None:
             raise _not_found(f"vehicle {ship['vehicleName']} ({ship['vehicleUuid']}) is no longer in the catalog")
         fitted = ship.get("fitted") or {}
-        slots = await resolve_slots(catalog, vehicle_slots, fitted)
+        # strict: unreadable turret slots are a 503, not "that doesn't fit".
+        slots = await resolve_slots(catalog, vehicle_slots, fitted, strict=True)
         loadout = {e["slot"]: e for e in effective_loadout(slots, fitted)}
         visible = [s for s in slots if s.name in loadout]
         res = await resolve_item(catalog, item_text, visible)

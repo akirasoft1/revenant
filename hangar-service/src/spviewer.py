@@ -59,7 +59,10 @@ changed parent, a port that names no item is unchanged.
 >500 ports fail it (``too_large``), and a request may make at most
 ``MAX_ITEM_LOOKUPS`` DISTINCT Wiki item lookups -- only for tracked slots, only
 for well-formed keys, and including the slot lookups of fitted parent items --
-because the Wiki rate limiter is shared with every hangar read.
+because the Wiki rate limiter is shared with every hangar read. A parent whose
+slots hit the resolver's own per-ship bound (``loadout.MAX_DYNAMIC_LOOKUPS`` /
+``MAX_DYNAMIC_DEPTH``) is skipped ``too_many_lookups`` as well: both block the
+row, because its children are unknown and apply is authoritative.
 A changed port that is a tracked hangar slot becomes a ``fitted`` override if
 the Wiki knows the item and ``check_compatible`` accepts it; anything else is
 reported in ``skipped`` with a reason code (``SKIP_REASONS``) -- never dropped
@@ -76,6 +79,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .catalog import Slot
+from .loadout import MAX_DYNAMIC_DEPTH, MAX_DYNAMIC_LOOKUPS, SlotBoundExceeded, accepts_slot_bearing
 from .loadout import check_compatible, resolve_slots
 from .lzstring import LZStringError, decompress_from_encoded_uri_component
 
@@ -474,8 +478,18 @@ async def analyze_row(catalog, row_index: int, row: Any, *, budget: DecodeBudget
                             "from": {"uuid": stock["uuid"], "name": stock.get("name")} if stock else None,
                             "to": {"uuid": item["uuid"], "name": item.get("name")}})
         res.fitted[port.slot] = {"itemUuid": item["uuid"], "itemName": item.get("name")}
+        if not accepts_slot_bearing(slot) and not any(k.startswith(port.slot + "/") for k in by_slot):
+            continue                                   # cannot change the slot list
         try:
             resolved = await resolve_slots(item_slots, slots, res.fitted, strict=True)
+        except SlotBoundExceeded:
+            # The resolver's per-ship bound: the children are unknown, so the
+            # row is incomplete (blocks apply) -- never "not tracked".
+            res.skipped.append({"slot": port.slot, "reason": TOO_MANY_LOOKUPS,
+                                "detail": f"the slots of {item.get('name') or label} were not resolved: a ship "
+                                          f"may carry at most {MAX_DYNAMIC_LOOKUPS} different turrets or mounts "
+                                          f"with slots of their own, nested at most {MAX_DYNAMIC_DEPTH} deep"})
+            resolved = [s for s in by_slot.values() if not s.name.startswith(port.slot + "/")]
         except _LookupBudgetSpent:
             # The row is incomplete (blocks apply): its children stay unknown.
             res.skipped.append({"slot": port.slot, "reason": TOO_MANY_LOOKUPS,
