@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, fitSlot, getSlotOptions, getWireframe, importApply, getVehiclePositions, importPreview, loginUrl, resetShip, resetSlot } from './client';
+import { ApiError, fitSlot, getSlotOptions, slotOptionsKey, slotOptionsScope, getWireframe, importApply, getVehiclePositions, importPreview, loginUrl, resetShip, resetSlot } from './client';
 import { mockFetch } from '../test/utils';
 
 describe('api client', () => {
@@ -50,6 +50,27 @@ describe('api client', () => {
     expect(await getSlotOptions('v', 'a')).toEqual([{ uuid: 'x' }]);
     mockFetch({ 'GET /api/v1/catalog/slot-options?vehicle=v&slot=a': { body: [{ uuid: 'y' }] } });
     expect(await getSlotOptions('v', 'a')).toEqual([{ uuid: 'y' }]);
+  });
+
+  it('slot-options adds member + ship when given a ship, and keys the cache by them', async () => {
+    const { calls } = mockFetch({ 'GET /api/v1/catalog/slot-options': { body: { items: [] } } });
+    await getSlotOptions('v', 'turret/gun_left', { memberId: '42', shipId: 's/1' });
+    expect(calls[0].url).toBe('/api/v1/catalog/slot-options?vehicle=v&slot=turret%2Fgun_left&member=42&ship=s%2F1');
+    const a = slotOptionsKey('v', 'gun', { memberId: '42', shipId: 'a' });
+    const b = slotOptionsKey('v', 'gun', { memberId: '42', shipId: 'b' });
+    expect(a).not.toEqual(b);
+    // Every slot of a ship sits under that ship's scope, so one invalidation covers them.
+    expect(a.slice(0, 3)).toEqual([...slotOptionsScope({ memberId: '42', shipId: 'a' })]);
+    expect(slotOptionsKey('v', 'gun')).toEqual(['slot-options', null, null, 'v', 'gun']);
+  });
+
+  it('fit and reset return the ship plus the child fittings the server dropped', async () => {
+    mockFetch({
+      'PUT /api/v1/members': { body: { ship: { shipId: 's' }, dropped: [{ slot: 't/gun', item: { uuid: 'g', name: 'Mantis' } }] } },
+      'DELETE /api/v1/members': { body: { ship: { shipId: 's' } } },
+    });
+    expect(await fitSlot('1', 's', 't', 'uuid-1')).toEqual({ ship: { shipId: 's' }, dropped: [{ slot: 't/gun', name: 'Mantis' }] });
+    expect(await resetSlot('1', 's', 't')).toEqual({ ship: { shipId: 's' }, dropped: [] });
   });
 
   it('normalises preview rows and apply results', async () => {

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getSlotOptions } from '../../api/client';
+import { getSlotOptions, slotOptionsKey } from '../../api/client';
 import type { LoadoutSlot, Me, ShipViewProps, SlotOption, VehiclePositions } from '../../api/types';
 import { slotLabel, typeLabel } from '../../lib/labels';
 import { sizeLabel } from '../../lib/picker';
-import { READONLY_TYPES, portsForTab, sortOptions, stepPort, type TabId } from '../../lib/terminal';
+import { READONLY_TYPES, portsForTab, sortOptions, stepPort, survivingSlot, type TabId } from '../../lib/terminal';
 import { errorText } from '../Status';
 import { ActionBar } from './ActionBar';
 import { CategoryTabs } from './CategoryTabs';
@@ -44,6 +44,7 @@ function currentOption(port: LoadoutSlot, options: SlotOption[]): SlotOption {
  * Reset port and Reset ship write.
  */
 export function TerminalShipView({
+  memberId,
   ship,
   loadout,
   stockBySlot,
@@ -53,6 +54,7 @@ export function TerminalShipView({
   onReset,
   onResetShip,
   busy,
+  notice: writeNotice,
   onDismissError,
   positions,
   me,
@@ -61,7 +63,17 @@ export function TerminalShipView({
   const [tab, setTab] = useState<TabId>('all');
   const ports = useMemo(() => portsForTab(loadout, tab), [loadout, tab]);
   const [selected, setSelected] = useState<string | null>(() => ports[0]?.slot ?? null);
-  const port = loadout.find((s) => s.slot === selected) ?? ports[0] ?? null;
+  // A refitted or reset parent takes its child slots with it: the selection then
+  // moves to the nearest surviving ancestor (the turret), not to the first port.
+  const surviving = survivingSlot(loadout, selected);
+  const port = loadout.find((s) => s.slot === surviving) ?? ports[0] ?? null;
+  useEffect(() => {
+    if (selected == null || surviving === selected) return;
+    setSelected(surviving);
+    setCandidate(null);
+    // The ancestor may be of another type than the open tab (a turret, from Weapons).
+    if (surviving != null && !ports.some((p) => p.slot === surviving)) setTab('all');
+  }, [selected, surviving, ports]);
   const [candidate, setCandidate] = useState<SlotOption | null>(null);
   const [working, setWorking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -81,9 +93,10 @@ export function TerminalShipView({
   }, [savedAt]);
 
   const readOnlyPort = port != null && READONLY_TYPES.has(port.type);
+  const shipRef = useMemo(() => ({ memberId, shipId: ship.shipId }), [memberId, ship.shipId]);
   const options = useQuery({
-    queryKey: ['slot-options', ship.vehicleUuid, port?.slot],
-    queryFn: () => getSlotOptions(ship.vehicleUuid, port!.slot),
+    queryKey: slotOptionsKey(ship.vehicleUuid, port?.slot, shipRef),
+    queryFn: () => getSlotOptions(ship.vehicleUuid, port!.slot, shipRef),
     enabled: port != null && !readOnlyPort,
     staleTime: 10 * 60_000,
   });
@@ -186,6 +199,12 @@ export function TerminalShipView({
             ✕
           </button>
         </div>
+      )}
+
+      {writeNotice && (
+        <p className="t-alert t-alert-note" role="status" data-testid="terminal-notice">
+          {writeNotice}
+        </p>
       )}
 
       <div className="t-body">

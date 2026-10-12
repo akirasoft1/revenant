@@ -1,5 +1,6 @@
 # Copied from sc-knowledge/src/http.py (2026-10-09) -- keep in sync by hand; hangar-service is a
 # separate image so it cannot import sc-knowledge's package.
+# hangar-only addition: UpstreamClient(timeout=, max_attempts=) for the UEX client.
 """Shared async HTTP client for upstream APIs: timeouts, bounded jittered retry
 on 429/5xx and network errors, rate limiting, honest identification."""
 import asyncio
@@ -25,20 +26,23 @@ class UpstreamError(Exception):
 class UpstreamClient:
     def __init__(self, name: str, base_url: str, headers: dict, limiter: RateLimiter,
                  transport: httpx.AsyncBaseTransport | None = None,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 timeout: httpx.Timeout | None = None, max_attempts: int = _MAX_ATTEMPTS) -> None:
+        # hangar-only: `timeout` / `max_attempts` (the UEX client gets one short attempt).
         self.name = name
         self._limiter = limiter
         self._sleep = sleep
+        self._max_attempts = max_attempts
         self._http = httpx.AsyncClient(
             base_url=base_url.rstrip("/") + "/",
             headers=headers,
-            timeout=httpx.Timeout(8.0, connect=3.0),
+            timeout=timeout or httpx.Timeout(8.0, connect=3.0),
             transport=transport,
         )
 
     async def _request(self, method: str, path: str, **kw) -> Any:
         last: UpstreamError | None = None
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(self._max_attempts):
             await self._limiter.acquire()
             try:
                 resp = await self._http.request(method, path.lstrip("/"), **kw)
@@ -58,7 +62,7 @@ class UpstreamClient:
                 last = UpstreamError(self.name, resp.status_code, resp.text)
                 if resp.status_code not in _RETRY_STATUS:
                     raise last
-            if attempt < _MAX_ATTEMPTS - 1:
+            if attempt < self._max_attempts - 1:
                 await self._sleep(0.4 * (2 ** attempt) + random.uniform(0, 0.3))
         raise last  # type: ignore[misc]
 

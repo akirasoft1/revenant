@@ -1,4 +1,7 @@
-"""Pure loadout logic: effective loadout, slot compatibility, vehicle resolution."""
+"""Loadout logic: effective loadout, slot compatibility, vehicle resolution
+(pure), plus the async ``resolve_slots`` / ``prune_descendants`` that read the
+slots a fitted item carries from the catalog."""
+import dataclasses
 import logging
 import re
 from dataclasses import dataclass, field
@@ -7,8 +10,33 @@ from typing import Literal
 from rapidfuzz import fuzz
 
 from .catalog import Slot
+from .http import UpstreamError
 
 log = logging.getLogger(__name__)
+
+# Bounds on slots that come from fitted items, per ship: nesting levels (an
+# item fitted in a port of a fitted item ...) and distinct Wiki item lookups.
+MAX_DYNAMIC_DEPTH = 4
+MAX_DYNAMIC_LOOKUPS = 16
+# Item types whose own ports can be component slots. Only a slot that accepts
+# one of these has its fitted item looked up -- otherwise every fitted shield,
+# cooler or gun would cost a Wiki item lookup on each cold hangar read, behind
+# the rate limiter all hangar reads share. Measured on the live Wiki item lists
+# 2026-10-11 with the ``parse_slots`` rule: 88 of 242 Turret items carry slots;
+# 0 of the 681 Cooler / MissileLauncher / PowerPlant / QuantumDrive / Radar /
+# Shield / TractorBeam / WeaponGun / WeaponMining items do.
+SLOT_BEARING_TYPES = frozenset({"Turret"})
+
+
+class SlotBoundExceeded(UpstreamError):
+    """``resolve_slots(strict=True)`` hit ``MAX_DYNAMIC_DEPTH`` or
+    ``MAX_DYNAMIC_LOOKUPS``: the children of ``slot`` are UNKNOWN (not absent).
+    An ``UpstreamError`` so a write that depends on them answers 503 and
+    writes nothing, like any other "the catalog cannot answer"."""
+
+    def __init__(self, slot: str, detail: str) -> None:
+        Exception.__init__(self, detail)
+        self.upstream, self.status, self.detail, self.slot = "loadout", None, detail, slot
 
 _FUZZY_MIN = 85.0       # a fuzzy candidate must score at least this
 _FUZZY_CLEAR_LEAD = 5.0  # ...and beat the runner-up by this much to be a match
@@ -18,33 +46,148 @@ def _descends_from(slot: str, parent: str) -> bool:
     return slot.startswith(parent + "/")
 
 
+def accepts_slot_bearing(slot: Slot) -> bool:
+    """Whether ``slot`` can hold an item that carries slots of its own."""
+    types = [c["type"] for c in slot.compatible_types] or [slot.type]
+    return slot.type in SLOT_BEARING_TYPES or any(t in SLOT_BEARING_TYPES for t in types)
+
+
+async def resolve_slots(catalog, vehicle_slots: list[Slot], fitted: dict | None, *,
+                        strict: bool = False) -> list[Slot]:
+    """The ship's ACTUAL slot list: the vehicle's slots, with the children of
+    every refitted slot replaced by the slots the FITTED item carries
+    (``catalog.item_slots``; a turret's gun ports belong to the turret item).
+
+    Fitted entries are walked parents first, each against the list as updated
+    so far, so an item fitted in a port of a fitted item works. Item slots are
+    appended right after their parent, in the item's order, their ids prefixed
+    with ``<parent>/`` and marked ``dynamic``.
+
+    A refitted slot has NO children when its item is unknown or the slot
+    cannot hold a slot-bearing item (``SLOT_BEARING_TYPES``, not looked up at
+    all). When its lookup fails or a bound is hit (``MAX_DYNAMIC_DEPTH``
+    levels, ``MAX_DYNAMIC_LOOKUPS`` distinct items per ship) its children are
+    UNKNOWN: a read (the default) logs and shows it without children -- never
+    an error -- while ``strict=True`` raises (``UpstreamError`` /
+    ``SlotBoundExceeded``). Anything that DECIDES from the list -- which
+    fittings to delete, which slot a fit targets, what an import writes --
+    must pass ``strict=True``: "unknown" must never be read as "gone"."""
+    slots = list(vehicle_slots)
+    fitted = fitted or {}
+    depth: dict[str, int] = {}           # dynamic slot id -> nesting level (vehicle slots: 0)
+    looked_up: set[str] = set()
+    for name in sorted(fitted, key=lambda k: (k.count("/"), k)):
+        index = next((i for i, s in enumerate(slots) if s.name == name), None)
+        if index is None:
+            continue
+        entry = fitted[name]
+        uuid = entry.get("itemUuid") if isinstance(entry, dict) else None
+        level = depth.get(name, 0)
+        children: list[Slot] | None = None
+        bound = None
+        if not isinstance(uuid, str) or not uuid or not accepts_slot_bearing(slots[index]):
+            pass
+        elif level >= MAX_DYNAMIC_DEPTH:
+            bound = (f"slot {name} is {level} fitted items deep (limit {MAX_DYNAMIC_DEPTH}); the slots of "
+                     f"its item {uuid} are not resolved")
+        elif uuid.casefold() not in looked_up and len(looked_up) >= MAX_DYNAMIC_LOOKUPS:
+            bound = (f"more than {MAX_DYNAMIC_LOOKUPS} distinct fitted items to look up on one ship; the "
+                     f"slots of item {uuid} in {name} are not resolved")
+        else:
+            looked_up.add(uuid.casefold())
+            try:
+                children = await catalog.item_slots(uuid)
+            except UpstreamError as e:
+                if strict:
+                    raise
+                log.warning("loadout: could not read the slots of item %s fitted in %s (shown without "
+                            "children): %s", uuid, name, e)
+            else:
+                if children is None:
+                    log.warning("loadout: item %s fitted in %s is not in the catalog (shown without "
+                                "children)", uuid, name)
+        if bound is not None:
+            if strict:
+                raise SlotBoundExceeded(name, bound)
+            log.warning("loadout: %s", bound)
+        slots = [s for s in slots if not _descends_from(s.name, name)]
+        added = [dataclasses.replace(c, name=f"{name}/{c.name}", dynamic=True) for c in children or []]
+        index = next(i for i, s in enumerate(slots) if s.name == name)
+        slots[index + 1:index + 1] = added
+        for c in added:
+            depth[c.name] = level + 1
+    return slots
+
+
+async def prune_descendants(catalog, vehicle_slots: list[Slot], fitted: dict,
+                            parents: list[str]) -> list[dict]:
+    """After the item in each of ``parents`` changed (``fitted`` is the map
+    AFTER that change): which fitted entries under them must go.
+
+    An entry under a changed parent is kept only if its slot still exists in
+    the re-resolved slot list AND ``check_compatible`` still accepts its item;
+    the rest are returned (parents first) as
+    ``{slot, item: {uuid, name}, reason: "slot_removed"|"incompatible"|"unknown_item"}``
+    for the caller to delete in the SAME write. Raises ``UpstreamError`` when
+    the catalog cannot answer or a resolver bound leaves a parent's children
+    unknown (``SlotBoundExceeded``) -- before anything is written."""
+    work = dict(fitted)
+    under = sorted((k for k in work if any(_descends_from(k, p) for p in parents)),
+                   key=lambda k: (k.count("/"), k))
+    dropped: list[dict] = []
+    resolved: list[Slot] | None = None
+    for name in under:
+        if resolved is None:
+            resolved = await resolve_slots(catalog, vehicle_slots, work, strict=True)
+        entry = work[name] if isinstance(work[name], dict) else {}
+        slot = next((s for s in resolved if s.name == name), None)
+        reason = None
+        if slot is None:
+            reason = "slot_removed"
+        else:
+            item = await catalog.item(entry.get("itemUuid") or "")
+            if item is None:
+                reason = "unknown_item"
+            elif check_compatible(slot, item) is not None:
+                reason = "incompatible"
+        if reason is not None:
+            del work[name]
+            resolved = None              # deeper entries see the list without it
+            dropped.append({"slot": name, "item": {"uuid": entry.get("itemUuid"), "name": entry.get("itemName")},
+                            "reason": reason})
+    return dropped
+
+
 def effective_loadout(slots: list[Slot], fitted: dict | None) -> list[dict]:
-    """Stock slots with the ship's ``fitted`` overrides applied.
+    """Slots with the ship's ``fitted`` overrides applied. Pass the ship's
+    RESOLVED slots (``resolve_slots``) so a fitted item's own slots show.
 
     ``fitted`` is the Firestore map ``{slotName: {itemUuid, itemName}}`` (only
-    changes from stock). Returns one entry per slot, in catalog order::
+    changes from stock). Returns one entry per slot, in slot order::
 
         {slot, type, sizeMin, sizeMax, compatibleTypes: [{type, subTypes}],
-         item: {uuid, name} | None, source: "stock"|"fitted"}
+         item: {uuid, name} | None, source: "stock"|"fitted", dynamic?: true}
 
     ``compatibleTypes`` lets callers apply the same rule as ``check_compatible``
-    without a second catalog call (sc-knowledge's fit-check does).
+    without a second catalog call (sc-knowledge's fit-check does). ``dynamic``
+    is present (true) only on slots that are ports of a fitted item.
 
     A refitted slot's STOCK descendants are dropped (the stock gun belonged to
-    the stock gimbal; what the new item carries is unknown); descendants the
-    member fitted explicitly are kept. Fitted entries for slots the catalog no
-    longer has (e.g. renamed in a patch) are ignored and logged.
+    the stock gimbal) -- with resolved slots they are already gone, replaced by
+    the fitted item's own (``dynamic``) slots, which are kept. Fitted entries
+    for slots not in ``slots`` (renamed in a patch, or ports of an item that is
+    no longer fitted) are ignored and logged.
     """
     fitted = fitted or {}
     known = {s.name for s in slots}
     orphaned = sorted(k for k in fitted if k not in known)
     if orphaned:
-        log.warning("loadout: ignoring fitted entries for slots not in the catalog: %s", orphaned)
+        log.warning("loadout: ignoring fitted entries for slots the ship does not have: %s", orphaned)
     refitted = [s.name for s in slots if s.name in fitted]
     out: list[dict] = []
     for s in slots:
         override = fitted.get(s.name)
-        if override is None and any(_descends_from(s.name, p) for p in refitted):
+        if override is None and not s.dynamic and any(_descends_from(s.name, p) for p in refitted):
             continue
         if override is not None:
             item = {"uuid": override.get("itemUuid"), "name": override.get("itemName")}
@@ -53,10 +196,13 @@ def effective_loadout(slots: list[Slot], fitted: dict | None) -> list[dict]:
             item = ({"uuid": s.stock_item["uuid"], "name": s.stock_item["name"]}
                     if s.stock_item else None)
             source = "stock"
-        out.append({"slot": s.name, "type": s.type, "sizeMin": s.size_min, "sizeMax": s.size_max,
-                    "compatibleTypes": [{"type": c["type"], "subTypes": list(c.get("sub_types") or [])}
-                                        for c in s.compatible_types],
-                    "item": item, "source": source})
+        entry = {"slot": s.name, "type": s.type, "sizeMin": s.size_min, "sizeMax": s.size_max,
+                 "compatibleTypes": [{"type": c["type"], "subTypes": list(c.get("sub_types") or [])}
+                                     for c in s.compatible_types],
+                 "item": item, "source": source}
+        if s.dynamic:
+            entry["dynamic"] = True
+        out.append(entry)
     return out
 
 

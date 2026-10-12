@@ -20,6 +20,7 @@ import type {
   VehicleSlots,
   VehicleSummary,
 } from './types';
+import { parseDropped, type DroppedFitting } from '../lib/dropped';
 
 export const API_PREFIX = '/api/v1';
 /** Server-side upload cap (spec: <= 2 MB); checked client-side for a fast, clear error. */
@@ -142,20 +143,30 @@ export async function renameShip(memberId: string, shipId: string, nickname: str
 export const deleteShip = (memberId: string, shipId: string) =>
   request<{ deleted: true; shipId: string }>(`${member(memberId)}/ships/${enc(shipId)}`, { method: 'DELETE' });
 
+/**
+ * Result of fitting or resetting one slot: the updated ship plus the child
+ * fittings the server removed because the parent changed (`lib/dropped.ts`
+ * knows that list's wire shape; empty when the server reports none).
+ */
+export interface SlotWrite {
+  ship: Ship;
+  dropped: DroppedFitting[];
+}
+
 /** Slot ids contain `/` for nested slots; `%2F`-encoded routes fine (README). */
-export async function fitSlot(memberId: string, shipId: string, slot: string, item: string): Promise<Ship> {
+export async function fitSlot(memberId: string, shipId: string, slot: string, item: string): Promise<SlotWrite> {
   const r = await request<{ ship: Ship }>(`${member(memberId)}/ships/${enc(shipId)}/slots/${enc(slot)}`, {
     method: 'PUT',
     json: { item },
   });
-  return r.ship;
+  return { ship: r.ship, dropped: parseDropped(r) };
 }
 
-export async function resetSlot(memberId: string, shipId: string, slot: string): Promise<Ship> {
+export async function resetSlot(memberId: string, shipId: string, slot: string): Promise<SlotWrite> {
   const r = await request<{ ship: Ship }>(`${member(memberId)}/ships/${enc(shipId)}/slots/${enc(slot)}`, {
     method: 'DELETE',
   });
-  return r.ship;
+  return { ship: r.ship, dropped: parseDropped(r) };
 }
 
 // ----- catalog -----
@@ -233,17 +244,42 @@ export function reportImageError(url: string, context: string): void {
   }
 }
 
+/** The member's ship a slot is being edited on. */
+export interface ShipRef {
+  memberId: string;
+  shipId: string;
+}
+
 /**
  * [Task 2] Compatible items for one slot. ASSUMPTION: response is
  * `{items: SlotOption[]}` (the spec gives the item shape, not the envelope);
  * a bare array is accepted too.
+ *
+ * With `ship` the request adds `member` + `ship`, and the server looks the slot
+ * up in THAT ship's resolved slots — the only way to find a slot that belongs
+ * to a fitted item (a turret's gun mounts are not ports of the stock vehicle).
+ * Every picker opened from a ship page passes it; without it the lookup is the
+ * stock vehicle's.
  */
-export async function getSlotOptions(vehicleUuid: string, slot: string): Promise<SlotOption[]> {
+export async function getSlotOptions(vehicleUuid: string, slot: string, ship?: ShipRef): Promise<SlotOption[]> {
+  const scope = ship ? `&member=${enc(ship.memberId)}&ship=${enc(ship.shipId)}` : '';
   const r = await request<{ items: SlotOption[] } | SlotOption[]>(
-    `${API_PREFIX}/catalog/slot-options?vehicle=${enc(vehicleUuid)}&slot=${enc(slot)}`,
+    `${API_PREFIX}/catalog/slot-options?vehicle=${enc(vehicleUuid)}&slot=${enc(slot)}${scope}`,
   );
   return Array.isArray(r) ? r : (r.items ?? []);
 }
+
+/**
+ * Query key for one slot's options. Member + ship come first so two ships of
+ * one model never share an entry, and so `slotOptionsScope` can invalidate
+ * every slot of a ship when its loadout changes (a refitted parent changes
+ * what its children accept).
+ */
+export const slotOptionsKey = (vehicleUuid: string, slot: string | undefined, ship?: ShipRef) =>
+  [...slotOptionsScope(ship), vehicleUuid, slot] as const;
+
+export const slotOptionsScope = (ship?: ShipRef) =>
+  ['slot-options', ship?.memberId ?? null, ship?.shipId ?? null] as const;
 
 // ----- [Task 2] spviewer import -----
 

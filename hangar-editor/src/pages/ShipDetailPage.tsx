@@ -1,9 +1,11 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
+import { stockBySlot as stockMap } from '../lib/stock';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fitSlot, getHangar, getVehiclePositions, getVehicleSlots, resetShip, resetSlot } from '../api/client';
+import { fitSlot, getHangar, getVehiclePositions, getVehicleSlots, resetShip, resetSlot, slotOptionsScope, type SlotWrite } from '../api/client';
 import type { Hangar, Ship, SlotOption } from '../api/types';
 import { canEdit, useMe } from '../auth/AuthGate';
+import { droppedNotice } from '../lib/dropped';
 import { rsiBadgeText } from '../lib/pledge';
 import { shipTitle } from '../components/HangarView';
 import { ClassicShipView, groupSlots } from '../components/ClassicShipView';
@@ -78,25 +80,44 @@ export function ShipDetailPage() {
     enabled: terminal && !!ship && !ship.loadoutError,
     staleTime: 60 * 60_000,
   });
-  const stockBySlot = new Map((stock.data?.slots ?? []).map((s) => [s.slot, s.stockItem]));
+  const stockBySlot = stockMap(stock.data?.slots, ship?.loadout);
 
   const putShip = (updated: Ship) =>
     qc.setQueryData<Hangar>(['hangar', memberId], (old) =>
       old ? { ...old, ships: old.ships.map((s) => (s.shipId === updated.shipId ? updated : s)) } : old,
     );
+  // Child fittings the last fit/reset removed along with their parent, as one sentence.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => setNotice(null), [memberId, shipId]);
+  // Any loadout change can add or remove slots (a fitted turret brings its own gun
+  // mounts) and changes what child slots accept, so the hangar is re-read and this
+  // ship's cached slot options are dropped. Not awaited: the write is already done.
+  const loadoutChanged = () => {
+    void qc.invalidateQueries({ queryKey: ['hangar', memberId] });
+    void qc.invalidateQueries({ queryKey: slotOptionsScope({ memberId, shipId }) });
+  };
+  // The response's ship is shown at once; the refetch then confirms it.
+  const written = (result: SlotWrite) => {
+    if (result.ship) putShip(result.ship);
+    setNotice(droppedNotice(result.dropped));
+    loadoutChanged();
+  };
 
   const fit = useMutation({
     mutationFn: ({ slot, item }: { slot: string; item: SlotOption }) => fitSlot(memberId, shipId, slot, item.uuid),
-    onSuccess: putShip,
+    onSuccess: written,
   });
   const reset = useMutation({
     mutationFn: (slot: string) => resetSlot(memberId, shipId, slot),
-    onSuccess: putShip,
+    onSuccess: written,
   });
   // The whole-ship reset answers with the chat-edit shape, not a Ship: refetch the hangar.
   const resetAll = useMutation({
     mutationFn: () => resetShip(memberId, shipId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hangar', memberId] }),
+    onSuccess: () => {
+      setNotice(null);
+      loadoutChanged();
+    },
   });
 
   if (hangar.isPending) return <Loading label="Loading ship…" />;
@@ -127,6 +148,7 @@ export function ShipDetailPage() {
     onResetShip: () => resetAll.mutateAsync(),
     busy: fit.isPending || reset.isPending || resetAll.isPending,
     error: fit.isError ? errorText(fit.error) : resetAll.isError ? errorText(resetAll.error) : null,
+    notice,
     onDismissError: () => {
       fit.reset();
       resetAll.reset();

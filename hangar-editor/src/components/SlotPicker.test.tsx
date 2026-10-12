@@ -117,6 +117,15 @@ describe('SlotPicker', () => {
     expect(screen.getByRole('dialog', { name: /cooler left/i })).toBeInTheDocument();
   });
 
+  it('names the member and ship when opened from a ship page', async () => {
+    const { calls } = mockFetch({ 'GET /api/v1/catalog/slot-options': { body: { items: COOLERS } } });
+    renderWithProviders(
+      <SlotPicker vehicleUuid="veh-1" shipRef={{ memberId: '111', shipId: 'ship 1' }} slot={slot} onPick={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getAllByTestId('slot-option')).toHaveLength(3));
+    expect(calls[0].url).toBe('/api/v1/catalog/slot-options?vehicle=veh-1&slot=hardpoint_cooler_left&member=111&ship=ship%201');
+  });
+
   it('shows the API error when options cannot be loaded', async () => {
     mockFetch({
       'GET /api/v1/catalog/slot-options': { status: 404, body: { error: 'not_found', message: 'no slot x' } },

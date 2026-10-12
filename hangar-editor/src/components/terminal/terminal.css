@@ -260,6 +260,14 @@
   border-left-width: 4px;
 }
 
+/* Not an error: what else a write changed (child fittings removed with their parent). */
+.terminal .t-alert.t-alert-note {
+  margin-bottom: 0;
+  color: #ffe9c2;
+  background: rgb(255 184 77 / 0.1);
+  border-color: rgb(255 184 77 / 0.55);
+}
+
 /* ---------- body: three columns ---------- */
 .terminal .t-body {
   display: grid;

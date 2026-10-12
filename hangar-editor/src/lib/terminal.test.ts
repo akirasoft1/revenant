@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LoadoutSlot, SlotOption, StatValue } from '../api/types';
-import { badges, loadViewPref, portsForTab, saveViewPref, sortOptions, statRows, stepPort, TABS } from './terminal';
+import { badges, loadViewPref, portsForTab, saveViewPref, sortOptions, statRows, stepPort, survivingSlot, TABS } from './terminal';
 
 const st = (key: string, value: number, lowerIsBetter = false): StatValue => ({
   key, label: key, value, unit: null, lowerIsBetter,
@@ -114,5 +114,22 @@ describe('view preference', () => {
     saveViewPref('terminal', storage);
     expect(m.get('hangar.shipView')).toBe('terminal');
     expect(loadViewPref(storage)).toBe('terminal');
+  });
+});
+
+describe('survivingSlot', () => {
+  const loadout = [slot('turret', 'Turret'), slot('turret/gimbal', 'Turret'), slot('qd', 'QuantumDrive')];
+  it('keeps a slot that is still in the loadout', () => {
+    expect(survivingSlot(loadout, 'turret/gimbal')).toBe('turret/gimbal');
+    expect(survivingSlot(loadout, 'qd')).toBe('qd');
+  });
+  it('falls back to the nearest surviving ancestor', () => {
+    expect(survivingSlot(loadout, 'turret/gimbal/gun_left')).toBe('turret/gimbal');
+    expect(survivingSlot(loadout, 'turret/other/gun_left')).toBe('turret');
+  });
+  it('is null when nothing on the path survives, or nothing was selected', () => {
+    expect(survivingSlot(loadout, 'gone/gun')).toBeNull();
+    expect(survivingSlot(loadout, 'gone')).toBeNull();
+    expect(survivingSlot(loadout, null)).toBeNull();
   });
 });

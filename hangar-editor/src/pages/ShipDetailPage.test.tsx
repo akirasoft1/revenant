@@ -72,12 +72,17 @@ describe('ShipDetailPage', () => {
         s.slot === 'hardpoint_quantum_drive' ? { ...s, item: { uuid: 'q1', name: 'Atlas' }, source: 'stock' } : s,
       ),
     };
+    // The hangar is re-read after a write, so the mock answers with the server's current state.
+    let current = SHIP;
     const { calls } = mockFetch({
       'GET /api/me': { body: ME },
-      'GET /api/v1/members/111/hangar': { body: { member: '111', ships: [SHIP] } },
+      'GET /api/v1/members/111/hangar': () => ({ body: { member: '111', ships: [current] } }),
       'GET /api/v1/members': { body: { members: [] } },
       'GET /api/v1/catalog/vehicles/v-harb/slots': { body: STOCK_SLOTS },
-      'DELETE /api/v1/members/111/ships/ship-1/slots/hardpoint_quantum_drive': { body: { ship: reset } },
+      'DELETE /api/v1/members/111/ships/ship-1/slots/hardpoint_quantum_drive': () => {
+        current = reset;
+        return { body: { ship: reset } };
+      },
     });
     const user = userEvent.setup();
     renderShip('111');
@@ -132,9 +137,10 @@ describe('ShipDetailPage', () => {
         s.slot === 'hardpoint_quantum_drive' ? { ...s, item: { uuid: 'q3', name: 'Crossfield' } } : s,
       ),
     };
+    let current = SHIP;
     const { calls } = mockFetch({
       'GET /api/me': { body: ME },
-      'GET /api/v1/members/111/hangar': { body: { member: '111', ships: [SHIP] } },
+      'GET /api/v1/members/111/hangar': () => ({ body: { member: '111', ships: [current] } }),
       'GET /api/v1/members': { body: { members: [] } },
       'GET /api/v1/catalog/vehicles/v-harb/slots': { body: STOCK_SLOTS },
       'GET /api/v1/catalog/slot-options': {
@@ -145,7 +151,10 @@ describe('ShipDetailPage', () => {
           ],
         },
       },
-      'PUT /api/v1/members/111/ships/ship-1/slots/hardpoint_quantum_drive': { body: { ship: fitted } },
+      'PUT /api/v1/members/111/ships/ship-1/slots/hardpoint_quantum_drive': () => {
+        current = fitted;
+        return { body: { ship: fitted } };
+      },
     });
     const user = userEvent.setup();
     renderShip('111');
@@ -155,6 +164,138 @@ describe('ShipDetailPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByText('Crossfield')).toBeInTheDocument();
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ item: 'q3' });
+    // The picker names the member's ship, so slots owned by fitted items can be found.
+    expect(calls.find((c) => c.url.includes('/catalog/slot-options'))!.url).toBe(
+      '/api/v1/catalog/slot-options?vehicle=v-harb&slot=hardpoint_quantum_drive&member=111&ship=ship-1',
+    );
+  });
+
+  describe('slots that come from a fitted item', () => {
+    const TURRET = 'hardpoint_weapon_center';
+    const LEFT = `${TURRET}/hardpoint_weapon_S3_left`;
+    const RIGHT = `${TURRET}/hardpoint_weapon_S3_right`;
+    const turretSlot = (item: { uuid: string; name: string }, source: 'stock' | 'fitted') => ({
+      slot: TURRET,
+      type: 'Turret',
+      sizeMin: 5,
+      sizeMax: 5,
+      compatibleTypes: [{ type: 'Turret', subTypes: [] }],
+      item,
+      source,
+    });
+    const gunSlot = (slot: string, item: { uuid: string; name: string } | null) => ({
+      slot,
+      type: 'WeaponGun',
+      sizeMin: 3,
+      sizeMax: 3,
+      compatibleTypes: [{ type: 'WeaponGun', subTypes: [] }],
+      item,
+      source: item ? ('fitted' as const) : ('stock' as const),
+      dynamic: true,
+    });
+    const CARGO = { uuid: 'cargo', name: 'Cargo Module' };
+    const BALL = { uuid: 'ball', name: 'C5-173f Ball Turret' };
+    const MANTIS = { uuid: 'mantis', name: 'Mantis GT-220' };
+    // Stock: a cargo module in the centre mount, so no gun slots at all.
+    const BARE: Ship = { ...SHIP, fitted: {}, loadout: [turretSlot(CARGO, 'stock')] };
+    // With the ball turret fitted, its two gun mounts are slots of the ship.
+    const TURRETED: Ship = {
+      ...SHIP,
+      fitted: { [TURRET]: BALL, [LEFT]: MANTIS },
+      loadout: [turretSlot(BALL, 'fitted'), gunSlot(LEFT, MANTIS), gunSlot(RIGHT, null)],
+    };
+    const TURRET_OPTIONS = { items: [{ uuid: 'ball', name: BALL.name, type: 'Turret', size: 5, grade: null, class: null, keyStat: null }] };
+    const slotPath = `/api/v1/members/111/ships/ship-1/slots/${TURRET}`;
+
+    it('fitting a parent re-reads the hangar and shows the child slots it brought', async () => {
+      let current = BARE;
+      const { calls } = mockFetch({
+        'GET /api/me': { body: ME },
+        'GET /api/v1/members/111/hangar': () => ({ body: { member: '111', ships: [current] } }),
+        'GET /api/v1/members': { body: { members: [] } },
+        'GET /api/v1/catalog/vehicles/v-harb/slots': { body: STOCK_SLOTS },
+        'GET /api/v1/catalog/slot-options': { body: TURRET_OPTIONS },
+        // The write's own ship is stale on purpose: the child rows must come from the re-read.
+        [`PUT ${slotPath}`]: () => {
+          current = TURRETED;
+          return { body: { ship: { ...TURRETED, loadout: [turretSlot(BALL, 'fitted')] } } };
+        },
+      });
+      const user = userEvent.setup();
+      renderShip('111');
+      const row = (await screen.findByText('Cargo Module')).closest('tr')!;
+      await user.click(within(row).getByRole('button', { name: 'Change' }));
+      await user.click(await screen.findByRole('button', { name: `Fit ${BALL.name}` }));
+      // Child rows read as nested slots do: parent › child.
+      expect(await screen.findByText('weapon center › weapon S3 left')).toBeInTheDocument();
+      expect(screen.getByText('weapon center › weapon S3 right')).toBeInTheDocument();
+      expect(screen.getByText('Mantis GT-220')).toBeInTheDocument();
+      expect(calls.filter((c) => c.url === '/api/v1/members/111/hangar')).toHaveLength(2);
+      // No fittings were dropped: nothing to announce.
+      expect(screen.queryByRole('status')).toBeNull();
+    });
+
+    it('resetting a parent removes its child slots and names the fittings dropped with it', async () => {
+      let current = TURRETED;
+      mockFetch({
+        'GET /api/me': { body: ME },
+        'GET /api/v1/members/111/hangar': () => ({ body: { member: '111', ships: [current] } }),
+        'GET /api/v1/members': { body: { members: [] } },
+        'GET /api/v1/catalog/vehicles/v-harb/slots': { body: STOCK_SLOTS },
+        [`DELETE ${slotPath}`]: () => {
+          current = BARE;
+          return { body: { ship: BARE, dropped: [{ slot: LEFT, item: MANTIS }] } };
+        },
+      });
+      const user = userEvent.setup();
+      renderShip('111');
+      const row = (await screen.findByText(BALL.name)).closest('tr')!;
+      expect(screen.getByText('weapon center › weapon S3 left')).toBeInTheDocument();
+      await user.click(within(row).getByRole('button', { name: 'Reset to stock' }));
+      expect(await screen.findByRole('status')).toHaveTextContent(
+        'Also removed 1 fitting that no longer fits: Mantis GT-220 (weapon center › weapon S3 left).',
+      );
+      expect(screen.queryByText('weapon center › weapon S3 left')).toBeNull();
+      expect(screen.getByText('Cargo Module')).toBeInTheDocument();
+    });
+
+    it('a loadout change drops the ship’s cached slot options (a refit parent changes what children accept)', async () => {
+      let current = TURRETED;
+      const { calls } = mockFetch({
+        'GET /api/me': { body: ME },
+        'GET /api/v1/members/111/hangar': () => ({ body: { member: '111', ships: [current] } }),
+        'GET /api/v1/members': { body: { members: [] } },
+        'GET /api/v1/catalog/vehicles/v-harb/slots': { body: STOCK_SLOTS },
+        'GET /api/v1/catalog/slot-options': { body: { items: [] } },
+        [`DELETE /api/v1/members/111/ships/ship-1/slots/${encodeURIComponent(LEFT)}`]: () => {
+          current = { ...TURRETED, fitted: { [TURRET]: BALL }, loadout: [turretSlot(BALL, 'fitted'), gunSlot(LEFT, null), gunSlot(RIGHT, null)] };
+          return { body: { ship: current } };
+        },
+      });
+      const optionCalls = () => calls.filter((c) => c.url.includes('/catalog/slot-options'));
+      const user = userEvent.setup();
+      renderShip('111');
+      const rightRow = () => screen.getByText('weapon center › weapon S3 right').closest('tr')!;
+      await screen.findByText(BALL.name);
+      await user.click(within(rightRow()).getByRole('button', { name: 'Change' }));
+      await screen.findByText('No compatible items found for this slot.');
+      expect(optionCalls()).toHaveLength(1);
+      // A dynamic slot is only known through the ship.
+      expect(optionCalls()[0].url).toBe(
+        `/api/v1/catalog/slot-options?vehicle=v-harb&slot=${encodeURIComponent(RIGHT)}&member=111&ship=ship-1`,
+      );
+      await user.click(screen.getByRole('button', { name: 'Close' }));
+      // Reopening straight away is served from the cache…
+      await user.click(within(rightRow()).getByRole('button', { name: 'Change' }));
+      await user.click(screen.getByRole('button', { name: 'Close' }));
+      expect(optionCalls()).toHaveLength(1);
+      // …but not after the loadout changed.
+      const leftRow = screen.getByText('weapon center › weapon S3 left').closest('tr')!;
+      await user.click(within(leftRow).getByRole('button', { name: 'Reset to stock' }));
+      await waitFor(() => expect(screen.queryByText('Mantis GT-220')).toBeNull());
+      await user.click(within(rightRow()).getByRole('button', { name: 'Change' }));
+      await waitFor(() => expect(optionCalls()).toHaveLength(2));
+    });
   });
 
   it('explains when the ship has no catalog loadout', async () => {

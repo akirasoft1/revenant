@@ -14,8 +14,9 @@ The decoded ``loadoutData`` object holds
   ...) of ports ``{PortName, MinSize, MaxSize, Loadout, BaseLoadout:{ClassName,
   Name, Type, Size, Grade, Class}, Types, Uneditable, Ports:[children]}``. A
   slot id is the ``/``-joined ``PortName`` path, identical to hangar slot ids.
-  ``BaseLoadout`` is the stock item. ``Loadout`` is a Wiki item uuid OR a game
-  class name.
+  ``BaseLoadout`` is SPVIEWER's idea of the stock item -- not always the
+  game's (see the diff rule). ``Loadout`` is a Wiki item uuid OR a game class
+  name.
 - ``selected*`` maps (``selectedShields``, ``selectedPilotWeapons``, ...) keyed
   ``"<index in its *Ports array>-<PortName><childPortName>..."`` (names
   concatenated WITHOUT a separator) -> ``{className, reference: <Wiki uuid>, ...}``.
@@ -32,19 +33,36 @@ else its ``Loadout`` when that is not stock (older/other exports).
 Each ``selectedX`` map is paired with its ``xPorts`` array (``_category``);
 an entry is used only at its own index, except in a one-port array.
 
-**Diff rule.** A port is changed when its current item is not stock --
-compared by class name AND uuid against both spviewer's stock
-(``BaseLoadout.ClassName``) and the Wiki's stock item, resolving a uuid/class
+**Diff rule: stock means the WIKI's stock.** A port that is a tracked hangar
+slot is unchanged only when its current item is that slot's stock item in the
+ship's RESOLVED slot list (the vehicle's stock, or the default of a fitted
+parent item's port) -- compared by class name AND uuid, resolving a uuid/class
 name through the Wiki catalog when the strings alone cannot tell (a uuid
-``Loadout`` naming the stock item is NOT a change). ``Loadout`` is a stock
-spelling only when it matches that stock or is the ``reference`` of a stock
-``selected*`` entry; otherwise it is a change (``_current``).
+``Loadout`` naming the stock item is NOT a change). spviewer's ``BaseLoadout``
+is never proof that a tracked port is stock: on the F7C Hornet Mk II
+(``tests/fixtures/spviewer_f7c_mk2.json``) it names the C5-173f ball turret
+for the centre port and a nose turret for the nose port, where the game's
+stock is a cargo module and nothing. An empty Wiki stock with a current item
+is a change. ``BaseLoadout`` still decides for ports the hangar does not
+track (nothing is written for those). ``Loadout`` is a stock spelling only
+when it matches that stock or is the ``reference`` of a stock ``selected*``
+entry; otherwise it is a change (``_current``).
+
+**Following the rewritten tree.** spviewer rewrites a port's children to the
+ports of the item fitted in it (same port names as the Wiki item's). Ports
+are processed parents first; once a parent is a change, the slot list is
+re-resolved with the fitted-so-far map (``loadout.resolve_slots``), so its
+children are checked against the slots of the item being fitted. Under a
+changed parent, a port that names no item is unchanged.
 
 **Abuse bounds.** A duplicate slot path fails the row (``unrecognized_format``),
 >500 ports fail it (``too_large``), and a request may make at most
 ``MAX_ITEM_LOOKUPS`` DISTINCT Wiki item lookups -- only for tracked slots, only
-for well-formed keys -- because the Wiki rate limiter is shared with every
-hangar read.
+for well-formed keys, and including the slot lookups of fitted parent items --
+because the Wiki rate limiter is shared with every hangar read. A parent whose
+slots hit the resolver's own per-ship bound (``loadout.MAX_DYNAMIC_LOOKUPS`` /
+``MAX_DYNAMIC_DEPTH``) is skipped ``too_many_lookups`` as well: both block the
+row, because its children are unknown and apply is authoritative.
 A changed port that is a tracked hangar slot becomes a ``fitted`` override if
 the Wiki knows the item and ``check_compatible`` accepts it; anything else is
 reported in ``skipped`` with a reason code (``SKIP_REASONS``) -- never dropped
@@ -61,7 +79,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .catalog import Slot
-from .loadout import check_compatible
+from .loadout import MAX_DYNAMIC_DEPTH, MAX_DYNAMIC_LOOKUPS, SlotBoundExceeded, accepts_slot_bearing
+from .loadout import check_compatible, resolve_slots
 from .lzstring import LZStringError, decompress_from_encoded_uri_component
 
 log = logging.getLogger(__name__)
@@ -331,12 +350,26 @@ async def _resolve_item(catalog, ref: str | None, class_name: str | None, budget
     return None
 
 
+class _BudgetedItemSlots:
+    """``catalog.item_slots`` charged to the request's lookup budget (what
+    ``resolve_slots`` calls for each fitted parent item)."""
+
+    def __init__(self, catalog, budget: DecodeBudget) -> None:
+        self._catalog, self._budget = catalog, budget
+
+    async def item_slots(self, item_uuid: str):
+        if not self._budget.admit_lookup(item_uuid):
+            raise _LookupBudgetSpent()
+        return await self._catalog.item_slots(item_uuid)
+
+
 def _current(port: Port, stock_refs: set[str]) -> tuple[str | None, str | None] | None:
     """The port's current item as (uuid?, class?) when it is NOT stock, ``()``
     -- falsy -- when it is stock, or None when the port is empty while stock is not.
 
-    ``Loadout`` counts as stock only when it equals spviewer's or the Wiki's
-    stock (by uuid or class), or is the ``reference`` of a selected entry
+    ``stock_refs``: the Wiki stock's uuid + class name for a tracked slot,
+    spviewer's ``BaseLoadout`` class for an untracked port. ``Loadout`` counts
+    as stock only when it is one of them, or is the ``reference`` of a selected entry
     whose class IS stock (spviewer spelling the same item two ways). A
     ``Loadout`` that differs from stock is a change even next to a selected
     entry; a non-stock selected entry wins over it."""
@@ -380,11 +413,22 @@ async def analyze_row(catalog, row_index: int, row: Any, *, budget: DecodeBudget
                     res.loadout_name, name)
         res.skipped.append({"reason": UNRECOGNIZED_FORMAT, "detail": f"unknown selection category {name}"})
 
+    # ``ports`` is depth-first (parents before children): ``by_slot`` always
+    # reflects the items fitted so far, so a changed turret's children are
+    # looked up among the slots of the turret being fitted.
+    item_slots = _BudgetedItemSlots(catalog, budget)
     by_slot: dict[str, Slot] = {s.name: s for s in slots}
     for port in ports:
         slot = by_slot.get(port.slot)
         stock = slot.stock_item if slot is not None else None
-        stock_refs = _fold(port.base_class) | (_fold(stock.get("uuid"), stock.get("className")) if stock else set())
+        if slot is not None:
+            # Tracked: only the Wiki's stock counts (never spviewer's BaseLoadout).
+            stock_refs = _fold(stock.get("uuid"), stock.get("className")) if stock else set()
+            if (not port.has_selected and not port.loadout_ref
+                    and any(port.slot.startswith(parent + "/") for parent in res.fitted)):
+                continue                               # names no item under a changed parent
+        else:
+            stock_refs = _fold(port.base_class)
         current = _current(port, stock_refs)
         if current == ():
             continue                                   # stock (or empty and empty in stock)
@@ -434,4 +478,24 @@ async def analyze_row(catalog, row_index: int, row: Any, *, budget: DecodeBudget
                             "from": {"uuid": stock["uuid"], "name": stock.get("name")} if stock else None,
                             "to": {"uuid": item["uuid"], "name": item.get("name")}})
         res.fitted[port.slot] = {"itemUuid": item["uuid"], "itemName": item.get("name")}
+        if not accepts_slot_bearing(slot) and not any(k.startswith(port.slot + "/") for k in by_slot):
+            continue                                   # cannot change the slot list
+        try:
+            resolved = await resolve_slots(item_slots, slots, res.fitted, strict=True)
+        except SlotBoundExceeded:
+            # The resolver's per-ship bound: the children are unknown, so the
+            # row is incomplete (blocks apply) -- never "not tracked".
+            res.skipped.append({"slot": port.slot, "reason": TOO_MANY_LOOKUPS,
+                                "detail": f"the slots of {item.get('name') or label} were not resolved: a ship "
+                                          f"may carry at most {MAX_DYNAMIC_LOOKUPS} different turrets or mounts "
+                                          f"with slots of their own, nested at most {MAX_DYNAMIC_DEPTH} deep"})
+            resolved = [s for s in by_slot.values() if not s.name.startswith(port.slot + "/")]
+        except _LookupBudgetSpent:
+            # The row is incomplete (blocks apply): its children stay unknown.
+            res.skipped.append({"slot": port.slot, "reason": TOO_MANY_LOOKUPS,
+                                "detail": f"the slots of {item.get('name') or label} were not looked up: this "
+                                          f"import already looked up {budget.max_lookups} different items "
+                                          f"(import fewer loadouts at once)"})
+            resolved = [s for s in by_slot.values() if not s.name.startswith(port.slot + "/")]
+        by_slot = {s.name: s for s in resolved}
     return res

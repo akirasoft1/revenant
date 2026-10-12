@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import type { LoadoutSlot, Ship, SlotOption, StockItem, VehiclePositions, VehicleSummary } from '../../api/types';
 import { ME, renderWithProviders } from '../../test/utils';
 
@@ -180,7 +182,7 @@ describe('TerminalShipView', () => {
     expect(cards()[0]).toHaveTextContent('STOCK');
     expect(cards()[1]).not.toHaveTextContent('IN USE');
     for (const c of cards()) expect(c).toHaveTextContent('SIZE 2');
-    expect(getSlotOptions).toHaveBeenCalledWith('v-harb', GUN);
+    expect(getSlotOptions).toHaveBeenCalledWith('v-harb', GUN, { memberId: '111', shipId: 'ship-1' });
   });
 
   it('marks the fitted option IN USE and the stock option STOCK on a refitted port', async () => {
@@ -470,7 +472,7 @@ describe('TerminalShipView', () => {
     expect(screen.getByText(/Missiles aren.t tracked/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Install' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Reset port/ })).toBeNull();
-    expect(getSlotOptions).not.toHaveBeenCalledWith('v-harb', MISSILE);
+    expect(getSlotOptions.mock.calls.map((c) => c[1])).not.toContain(MISSILE);
   });
 
   it('stats sidebar shows present vehicle fields and omits absent ones', () => {
@@ -487,6 +489,49 @@ describe('TerminalShipView', () => {
     expect(side2).not.toHaveTextContent('Mass');
     expect(side2).not.toHaveTextContent('Dimensions');
     expect(side2).toHaveTextContent('Crew');
+  });
+
+  describe('slots that come from a fitted item', () => {
+    const CHILD = `${TURRET}/hardpoint_weapon_S3_left`;
+    const child = { ...slot(CHILD, 'WeaponGun', 3, { uuid: 'g9', name: 'Mantis GT-220' }, 'fitted'), dynamic: true };
+    const WITH_CHILD = [...LOADOUT, child];
+    // `rerender` replaces the whole tree, so the providers are repeated around the new props.
+    const view = (props: Props, client: QueryClient) => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <TerminalShipView {...props} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    it('lists a dynamic child slot in the rail with a parent › child label and asks for its options by ship', async () => {
+      const { user } = setup({ loadout: WITH_CHILD });
+      await selectPort(user, /turret top › weapon S3 left/);
+      expect(selectedPort()).toHaveTextContent('Mantis GT-220');
+      await waitFor(() => expect(getSlotOptions).toHaveBeenCalledWith('v-harb', CHILD, { memberId: '111', shipId: 'ship-1' }));
+    });
+
+    it('when the selected slot disappears, its nearest surviving ancestor is selected', async () => {
+      const { user, props, rerender, client } = setup({ loadout: WITH_CHILD });
+      // From the Weapons tab, where the turret itself is not listed.
+      await user.click(screen.getByRole('tab', { name: /Weapons/ }));
+      await selectPort(user, /turret top › weapon S3 left/);
+      rerender(view({ ...props, loadout: LOADOUT }, client));
+      await waitFor(() => expect(selectedPort()).toHaveTextContent('Manned Turret'));
+      expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('falls back to the first port when no ancestor survives', async () => {
+      const { user, props, rerender, client } = setup({ loadout: WITH_CHILD });
+      await selectPort(user, /turret top › weapon S3 left/);
+      rerender(view({ ...props, loadout: LOADOUT.filter((s) => s.slot !== TURRET) }, client));
+      await waitFor(() => expect(selectedPort()).toHaveTextContent('CF-337 Panther'));
+    });
+
+    it('shows the notice about fittings removed with their parent', () => {
+      setup({ notice: 'Also removed 1 fitting that no longer fits: Mantis GT-220 (turret top › weapon S3 left).' });
+      expect(screen.getByTestId('terminal-notice')).toHaveTextContent('Mantis GT-220 (turret top › weapon S3 left)');
+    });
   });
 
   it('the saved notice disappears after 2.5s', async () => {
