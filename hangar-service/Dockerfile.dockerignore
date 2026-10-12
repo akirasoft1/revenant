@@ -25,3 +25,6 @@ hangar-editor/coverage
 **/credentials.json
 OrgGuides
 **/OrgGuides
+**/*.swf.gz
+**/*.glb
+**/shiplist.json

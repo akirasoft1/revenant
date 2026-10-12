@@ -13,6 +13,7 @@ import type {
   ImportPreviewRow,
   Me,
   MemberSummary,
+  ModelInfo,
   Ship,
   SlotOption,
   VehiclePositions,
@@ -55,6 +56,8 @@ export function loginUrl(nextPath: string): string {
 interface RequestOptions {
   method?: string;
   json?: unknown;
+  /** Raw body sent as `application/octet-stream` (wireframe upload). */
+  raw?: BodyInit;
   signal?: AbortSignal;
 }
 
@@ -64,6 +67,9 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   if (opts.json !== undefined) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(opts.json);
+  } else if (opts.raw !== undefined) {
+    headers['Content-Type'] = 'application/octet-stream';
+    body = opts.raw;
   }
   let res: Response;
   try {
@@ -168,6 +174,42 @@ export const getVehicleSlots = (uuid: string) =>
 export const getVehiclePositions = (uuid: string) =>
   request<VehiclePositions>(`${API_PREFIX}/catalog/vehicles/${enc(uuid)}/positions`);
 
+/**
+ * A vehicle's wireframe bundle: the stored gzip bytes, served WITHOUT
+ * `Content-Encoding` (decode with `lib/swf`). `null` when none is stored (404).
+ * `cache: 'no-cache'` revalidates the browser's copy against the server's ETag
+ * on every fetch, so a re-uploaded model never sits beside fresh positions.
+ */
+export async function getWireframe(uuid: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_PREFIX}/models/vehicle/${enc(uuid)}/wireframe`, {
+      headers: { Accept: 'application/octet-stream' },
+      credentials: 'same-origin',
+      cache: 'no-cache',
+      signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new ApiError(0, 'network', `Network error: ${(e as Error).message ?? e}`);
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    let obj: Record<string, unknown> = {};
+    try {
+      const data: unknown = JSON.parse(await res.text());
+      if (data && typeof data === 'object') obj = data as Record<string, unknown>;
+    } catch {
+      /* not JSON (e.g. a gateway error page) */
+    }
+    const code = typeof obj.error === 'string' ? obj.error : `http_${res.status}`;
+    const message =
+      typeof obj.message === 'string' && obj.message ? obj.message : `${res.status} ${res.statusText || 'request failed'}`;
+    throw new ApiError(res.status, code, message, obj);
+  }
+  return res.arrayBuffer();
+}
+
 /** Whole-ship reset. Response is the chat-edit shape (`{ship:{shipId,label}, changes}`), NOT a Ship. */
 export const resetShip = (memberId: string, shipId: string) =>
   request<unknown>(`${member(memberId)}/ships/${enc(shipId)}/reset`, { method: 'POST', json: { slot: 'all' } });
@@ -266,3 +308,19 @@ export async function htfApply(file: unknown, choices: HtfChoices, memberId?: st
 }
 
 export const getPledgeLeaderboard = () => request<PledgeLeaderboard>(`${API_PREFIX}/pledges/leaderboard`);
+
+// ----- admin: wireframe models -----
+
+/** Server-side cap for one wireframe bundle (checked client-side too). */
+export const MAX_MODEL_BYTES = 2 * 1024 * 1024;
+
+export const uploadModel = (file: Blob) =>
+  request<ModelInfo>(`${API_PREFIX}/models`, { method: 'POST', raw: file });
+
+export async function listModels(): Promise<ModelInfo[]> {
+  const r = await request<{ models: ModelInfo[] }>(`${API_PREFIX}/models`);
+  return r.models ?? [];
+}
+
+export const deleteModel = (kind: string, className: string) =>
+  request<void>(`${API_PREFIX}/models/${enc(kind)}/${enc(className)}`, { method: 'DELETE' });

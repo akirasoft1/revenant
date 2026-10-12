@@ -83,7 +83,122 @@ our own CSS and inline SVG icons, no game assets). Spec:
   With several views, the selected port's view is shown; a view chip always
   switches, and that choice is kept until you select a port whose marker is in a
   different view (a port with no marker keeps the current view). No positions → no
-  markers; there is no write endpoint yet.
+  markers. `xyz` points (written by a wireframe upload, `source: "extracted"`) are
+  drawn only in the wireframe, below.
+- **Wireframe ship panel** (spec
+  `docs/superpowers/specs/2026-10-11-ship-wireframes-design.md`): when the catalog
+  says `vehicle.hasWireframe`, the ship panel shows a rotatable wireframe instead
+  of the render, with a `Wireframe | Render` switch (top-left) remembered per
+  browser in `localStorage` `hangar.shipVisual` (`"wireframe" | "render"`, default
+  wireframe, unreadable storage → wireframe). Ships without a wireframe show the
+  render panel exactly as before (no switch).
+  - **Layout:** in wireframe mode the panel is taller
+    (`clamp(340px, 46vh, 560px)`; render mode stays 230px), the ship column
+    becomes the widest of the three (`.t-body:has(.t-shippanel.has-wire)`), and
+    an **Expand** button beside the switch lets the wireframe cover the whole
+    terminal body (`is-expanded`; `Collapse` or Esc puts it back — while
+    expanded, Esc is consumed in the capture phase so it does not also leave the
+    Terminal view). Nothing covers the
+    wireframe except the ship name (bottom-left) and the switch: the ship stats
+    move out of the panel into a compact wrapping strip directly under it
+    (`ShipStatsSidebar variant="strip"` — same fields and omission rules, real
+    selectable text, scrolls inside itself past ~4 lines, focusable). Render mode
+    keeps the top-right stats overlay. The port rail below keeps a minimum height
+    (`6.5rem`) and scrolls.
+  - **Hidden-line removal (what makes it read as a drawing):** a bundle built by
+    tool ≥ 1.1.0 carries, per line, which of 26 baked views can see it. Before
+    each draw `stage.ts` blends the baked views near the camera direction
+    (`blendViews`: full weight within `VIEW_FULL_DEG` 18°, none past
+    `VIEW_NONE_DEG` 38°, best view always 1) and writes each line's alpha
+    (`writeLineAlpha`; unseen lines keep `HIDDEN_LINE_ALPHA` 10/255 as a faint
+    ghost) into a per-vertex RGBA attribute, only when the camera direction
+    moved. So the far side and the underside fade out as the ship turns. Without
+    it (older bundles) every line shows through every other and a dense ship is
+    a glowing blob — that is what the first deployed version looked like. The
+    canvas is also **supersampled** (2× the device pixel ratio, capped at 3) so
+    1-pixel GL lines come out finer and smoother.
+  - **Level of detail (older bundles; with hidden-line data only the length rule applies):** bundles are
+    ordered longest line first, so the viewer draws a prefix
+    (`lodLineCount` in `lib/wireframe.ts`, applied by `stage.ts` before every
+    draw): only lines at least `MIN_LINE_PX` (2) CSS pixels long on screen, at
+    most `MAX_LINES_PER_PX` (40) lines per pixel of the ship's on-screen size,
+    never fewer than `MIN_LOD_LINES` (1,500). Line opacity rises a little as
+    lines are thinned. A 60,000-line capital ship in a 250 px panel was drawing
+    ~240 additive lines per pixel — a glow, not a drawing. Zooming in or
+    expanding brings the detail back. A bundle that is not ordered longest
+    first is never thinned.
+  - **Data:** `getWireframe(uuid)` → `GET /api/v1/models/vehicle/{uuid}/wireframe`,
+    the stored `.swf.gz` bytes (served without `Content-Encoding`; 404 → `null`).
+    The query is keyed `['wireframe', uuid]` and the request uses
+    `cache: 'no-cache'` so the browser revalidates its copy against the server's
+    ETag. It is fetched only while the wireframe is the chosen visual. A stored
+    bundle is fresh for a day, a 404 (`null`) for 30 s (`wireframeStaleTime`); one
+    retry for network/5xx errors, none for 4xx.
+  - **No reload needed after an upload:** `ShipPanel` invalidates the query when
+    the vehicle's positions object changes identity (an upload rewrites the
+    positions) or `hasWireframe` changes, so a replaced model, or one uploaded
+    after a cached 404, appears as soon as the page's catalog/positions queries
+    refresh. The first positions to arrive on page load are not treated as a
+    change. A refetch that returns byte-identical data keeps the old buffer
+    (`sameBytes` as `structuralSharing`), so the live viewer and its camera are
+    not rebuilt. A viewer failure is remembered per bundle, so a new bundle gets a
+    fresh try.
+  - **Decode (`src/lib/swf.ts`, no three.js):** gunzip with `DecompressionStream`
+    (8 MB ceiling), then `SWF1` + uint32 LE header length + header JSON + int16 LE
+    × `lines * 6`; a coordinate is `center + int16 / 32767 × halfExtent` (glTF
+    Y-up, metres — the same space as the positions' `xyz`). When the header has
+    `views`, one uint32 per line follows and decodes to
+    `visibility: {views, masks}`. Malformed input
+    rejects with `SwfError`.
+  - **Viewer (`src/components/wireframe/`):** `WireframeViewer` (props `bundle`,
+    `markers`, `selected`, `onSelect`, plus `onError`, `label`) and
+    its scene in `stage.ts`. Additive cyan `LineSegments` at 0.32 opacity on the
+    terminal background, `OrbitControls` with damping (drag rotate, wheel zoom,
+    right-drag pan), a gentle auto-rotate that stops at the first press, wheel or
+    port selection, and double-click on empty space to return to the opening
+    view. The opening camera is a three-quarter front view whose distance is
+    computed so the ship stays in frame at every angle of the auto-rotation for
+    the panel's shape (`orbitFitDistance`), using the full panel.
+    Markers (`buildMarkers`: loadout slots with a finite `xyz`, labelled with
+    `slotLabel`) are green spheres sized relative to the ship (`markerRadius`);
+    the selected one is white, larger and pulsing inside a cyan halo. Hover shows
+    the slot label; a click (a press that moves less than 5 px) selects the port.
+    Selecting a port — on a marker or in the rail — pans the view (angle and zoom
+    kept) 80% of the way from the ship's centre toward it (`FOCUS_BLEND` in
+    `stage.ts`, the one constant; 1 would put the port dead centre), so a nose or
+    tail port on a long ship comes near the middle with most of the hull still in
+    frame. The port
+    already selected when the ship opens is highlighted but not panned to. A port
+    with no position has no marker. `prefers-reduced-motion` turns off
+    auto-rotate, the pulse and the pan easing. GL resources are disposed on
+    unmount.
+  - **Render on demand:** a still wireframe draws nothing. A frame is requested
+    only when `needsFrame` (`lib/wireframe.ts`, unit-tested) says so: something
+    changed (camera via the controls' `change` event, markers, selection, hover,
+    resize), or auto-rotate, the pan easing or the selected marker's pulse is
+    running — and never while the canvas is off-screen (`IntersectionObserver`)
+    or the document is hidden (`visibilitychange`). Damping keeps requesting
+    frames until the camera settles. Note the pulse means frames keep coming
+    while a port with a marker is selected and reduced motion is off.
+  - **three.js stays out of the main bundle:** `three` is imported only by
+    `WireframeViewer.tsx` and `stage.ts`, which `ShipPanel` loads with
+    `React.lazy`. `npm run build` emits it as its own `WireframeViewer-*.js` chunk
+    (~560 kB, ~140 kB gzip), fetched the first time a wireframe is shown. Keep any
+    new three.js code inside `src/components/wireframe/` and never import those
+    two modules statically.
+  - **Fallbacks — the viewer never blocks the panel:** no `WebGLRenderingContext`
+    or no `DecompressionStream`, a bundle that 404s or fails to load, a decode
+    error, a WebGL context that cannot be created or is lost, or a viewer chunk
+    that fails to load (stale deploy) → the render panel with a short note in
+    place of the switch. If `hasWireframe` turns false (model deleted), the panel
+    is the plain render panel again with no note.
+  - **Tests:** jsdom has no WebGL, so panel tests mock the viewer module
+    (`ShipPanel.test.tsx`, `ShipPanel.chunkFail.test.tsx`); decode, markers,
+    camera fit and preference helpers are unit-tested (`lib/swf.test.ts`,
+    `lib/wireframe.test.ts`, `wireframe/markers.test.ts`) against bundles built in
+    the test. The three.js scene itself has no unit test. No real bundle or model
+    file may be added to the repo.
+| `/admin/models` (admins only; others get the not-found page, nav link hidden) | Ship models: upload wireframe bundles (`.swf.gz`, ≤ 2 MB, picker with `multiple` or drag-and-drop; others rejected in the browser) sent raw as `application/octet-stream` to `POST /api/v1/models`, up to 3 in flight and paced to at least 2 s between starts (~30/min, half the shared Wiki limiter, so the bot's hangar lookups keep working; ~220 ships take about 8 minutes; the page shows an ETA), with a running `N / M uploaded, K failed` line, per-file compact rows (expand for missing/ambiguous slot lists), a summary (matched ships / no matching ship / failures with the server message) and **Retry failed** (continues past failures). Below, the stored-models table (`GET /api/v1/models`): click-to-sort by ship / lines / uploaded, text filter, counts of matched/missing/ambiguous slots, **Preview** (lazy three.js viewer in a dialog, models with a ship only) and **Delete** (confirm; `DELETE /api/v1/models/vehicle/{className}`). After a drained upload batch or a delete the `models`, `vehicle-slots`, `vehicle-positions` and `wireframe` query caches are invalidated so an open ship page updates without a reload |
 
 ## API
 
@@ -96,7 +211,8 @@ re-checks `/api/me` and drops back to the sign-in page.
 Uses: `GET /api/me`, `POST /api/auth/logout` (same-origin, 204), `GET /api/v1/members`,
 `/api/v1/members/{id}/hangar|ships|ships/{shipId}|…/slots/{slot}` (slot ids are
 `%2F`-encoded), `GET /api/v1/catalog/vehicles`, `…/vehicles/{uuid}/slots`,
-`GET /api/v1/catalog/slot-options?vehicle=&slot=`, and
+`GET /api/v1/catalog/slot-options?vehicle=&slot=`,
+`GET /api/v1/models/vehicle/{uuid}/wireframe` (binary), and
 `POST /api/v1/import/spviewer/preview|apply`. The import requests send the
 uploaded file parsed, as JSON `{file: [...]}` / `{rows, file}`; the server
 re-decodes it and never trusts client-side changes. Uploads over 2 MB are refused
@@ -137,6 +253,9 @@ npm run build      # tsc --noEmit + vite build -> dist/
 ```
 
 `dist/` holds `index.html`, `favicon.svg` and content-hashed `assets/*.js|css`.
+The three.js wireframe viewer is a separate lazy chunk (`WireframeViewer-*.js`);
+the chunk-size warning limit in `vite.config.ts` is raised for that chunk only
+because it is never part of the initial load.
 
 **Dynatrace RUM:** set `VITE_DT_RUM_SRC` at build time to the RUM JavaScript tag's
 `src` URL, and a `<script>` is prepended to `<head>`. Unset or empty means no tag.

@@ -42,6 +42,9 @@ export default defineConfig(({ mode }) => {
       // index.html is served no-cache by hangar-service.
       assetsDir: 'assets',
       sourcemap: false,
+      // The lazily loaded three.js wireframe viewer chunk is ~560 kB (140 kB gzip);
+      // it is fetched only when a wireframe is shown, never on first load.
+      chunkSizeWarningLimit: 650,
     },
     test: {
       environment: 'jsdom',

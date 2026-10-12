@@ -96,6 +96,8 @@ export interface VehicleSummary {
   mass?: number;
   crew?: { min?: number; max?: number };
   portCounts?: Record<string, number>;
+  /** A wireframe bundle is stored for this vehicle (`GET /api/v1/models/vehicle/{uuid}/wireframe`). */
+  hasWireframe?: boolean;
 }
 
 export interface StockItem {
@@ -173,6 +175,9 @@ export interface PositionPoint {
 export interface VehiclePositions {
   views?: Record<string, { imageUrl: string; width: number; height: number }>;
   slots?: Record<string, PositionPoint>;
+  /** `"gltf-y-up-m"` for `xyz` extracted from a wireframe bundle (same space as its lines). */
+  space?: string;
+  /** `"extracted"` when written by a wireframe upload. */
   source?: string;
   gameVersion?: string;
 }
@@ -323,4 +328,19 @@ export interface LeaderboardEntry {
 export interface PledgeLeaderboard {
   entries: LeaderboardEntry[];
   caveat: string;
+}
+
+/** A stored wireframe bundle (`/api/v1/models`). `vehicleUuid` is null when the class name is not in the catalog. */
+export interface ModelInfo {
+  kind: string;
+  className: string;
+  vehicleUuid: string | null;
+  vehicleName: string | null;
+  lines: number;
+  bytes: number;
+  sha256?: string;
+  build?: unknown;
+  slots: { matched: number; missing: string[]; ambiguous: string[] };
+  uploadedBy?: string;
+  uploadedAt?: string;
 }

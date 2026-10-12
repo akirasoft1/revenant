@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { ApiError, fitSlot, getSlotOptions, importApply, getVehiclePositions, importPreview, loginUrl, resetShip, resetSlot } from './client';
+import { describe, expect, it, vi } from 'vitest';
+import { ApiError, fitSlot, getSlotOptions, getWireframe, importApply, getVehiclePositions, importPreview, loginUrl, resetShip, resetSlot } from './client';
 import { mockFetch } from '../test/utils';
 
 describe('api client', () => {
@@ -66,5 +66,43 @@ describe('api client', () => {
   it('builds the login URL with an encoded next path', () => {
     expect(loginUrl('/members/1?x=y')).toBe('/api/auth/login?next=%2Fmembers%2F1%3Fx%3Dy');
     expect(loginUrl('')).toBe('/api/auth/login?next=%2F');
+  });
+
+  describe('getWireframe', () => {
+    const stub = (res: Response | Error) => {
+      const fn = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+        if (res instanceof Error) throw res;
+        return res;
+      });
+      vi.stubGlobal('fetch', fn);
+      return fn;
+    };
+
+    it('returns the raw bytes, revalidating with the server (no-cache) on the same origin', async () => {
+      const bytes = new Uint8Array([0x1f, 0x8b, 8, 0, 1, 2, 3]);
+      const fn = stub(new Response(bytes, { status: 200, headers: { 'Content-Type': 'application/octet-stream' } }));
+      const buf = await getWireframe('v/1');
+      expect(buf).toBeInstanceOf(ArrayBuffer);
+      expect([...new Uint8Array(buf!)]).toEqual([...bytes]);
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(fn.mock.calls[0][0]).toBe('/api/v1/models/vehicle/v%2F1/wireframe');
+      expect(fn.mock.calls[0][1]).toMatchObject({ cache: 'no-cache', credentials: 'same-origin' });
+    });
+
+    it('answers null for 404 (no model stored)', async () => {
+      stub(new Response(JSON.stringify({ error: 'not_found', message: 'no wireframe' }), { status: 404 }));
+      expect(await getWireframe('v1')).toBeNull();
+    });
+
+    it('throws ApiError for other failures', async () => {
+      stub(new Response(JSON.stringify({ error: 'unavailable', message: 'model store is not configured' }), { status: 503 }));
+      await expect(getWireframe('v1')).rejects.toMatchObject({ status: 503, code: 'unavailable', message: 'model store is not configured' });
+      stub(new Response('<html>bad gateway</html>', { status: 502 }));
+      await expect(getWireframe('v1')).rejects.toMatchObject({ status: 502, code: 'http_502' });
+      stub(new TypeError('Failed to fetch'));
+      const err = await getWireframe('v1').catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({ status: 0, code: 'network' });
+    });
   });
 });

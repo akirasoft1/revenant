@@ -60,3 +60,15 @@ OrgGuides/
 # Local secret files of any .env variant (e.g. .env_sc_hanger) — never commit.
 .env_*
 .env-*
+
+# Extracted game geometry and wireframe bundles (never commit -- this repo is public)
+*.swf.gz
+*.glb
+tools/wireframes/out/
+# Local tooling for the wireframe pipeline (virtualenv, Python caches)
+tools/.venv/
+tools/.pytest_cache/
+tools/**/__pycache__/
+
+# HangarXPLOR exports hold personal pledge data (never commit)
+shiplist.json

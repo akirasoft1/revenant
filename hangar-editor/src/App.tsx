@@ -10,6 +10,7 @@ import { MemberHangarPage } from './pages/MemberHangarPage';
 import { MembersPage } from './pages/MembersPage';
 import { ShipDetailPage } from './pages/ShipDetailPage';
 import { ImportPage } from './pages/ImportPage';
+import { AdminModelsPage } from './pages/AdminModelsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 function Header() {
@@ -42,6 +43,7 @@ function Header() {
         </NavLink>
         <NavLink to="/members">Members</NavLink>
         <NavLink to="/import">Import</NavLink>
+        {me.isAdmin && <NavLink to="/admin/models">Ship models</NavLink>}
       </nav>
       <div className="user">
         {me.avatarUrl && <img className="avatar" src={me.avatarUrl} alt="" width={28} height={28} />}
@@ -71,6 +73,7 @@ export function App() {
           <Route path="/members/:memberId" element={<MemberHangarPage />} />
           <Route path="/members/:memberId/ships/:shipId" element={<ShipDetailPage />} />
           <Route path="/import" element={<ImportPage />} />
+          <Route path="/admin/models" element={<AdminModelsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>

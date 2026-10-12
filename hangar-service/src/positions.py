@@ -8,8 +8,8 @@ Firestore ``vehiclePositions/{vehicleUuid}``::
 
 ``x``/``y`` are normalised 0-1 on the view image; ``xyz`` is metres in ship
 space (stored, not drawn yet). Slot ids are hangar-service's own (port names
-joined with ``/``). There is no write endpoint; documents are placed by hand
-or imported by future tooling. Storage failures raise ``RepositoryError`` so
+joined with ``/``). Documents are placed by hand or written by the wireframe
+upload (``source: "extracted"``, ``xyz`` + ``space``). Storage failures raise ``RepositoryError`` so
 the API maps them to ``unavailable``.
 """
 import abc
@@ -27,6 +27,14 @@ class PositionsStore(abc.ABC):
     async def get(self, vehicle_uuid: str) -> dict | None:
         """The positions document for a vehicle uuid, or None."""
 
+    @abc.abstractmethod
+    async def put(self, vehicle_uuid: str, doc: dict) -> None:
+        """Replace the whole positions document."""
+
+    @abc.abstractmethod
+    async def delete(self, vehicle_uuid: str) -> None:
+        """Remove the positions document (no error if absent)."""
+
 
 class InMemoryPositionsStore(PositionsStore):
     def __init__(self, docs: dict | None = None) -> None:
@@ -35,6 +43,12 @@ class InMemoryPositionsStore(PositionsStore):
     async def get(self, vehicle_uuid: str) -> dict | None:
         doc = self._docs.get(vehicle_uuid)
         return copy.deepcopy(doc) if doc is not None else None
+
+    async def put(self, vehicle_uuid: str, doc: dict) -> None:
+        self._docs[vehicle_uuid] = copy.deepcopy(doc)
+
+    async def delete(self, vehicle_uuid: str) -> None:
+        self._docs.pop(vehicle_uuid, None)
 
 
 class FirestorePositionsStore(PositionsStore):
@@ -49,3 +63,19 @@ class FirestorePositionsStore(PositionsStore):
         except (gexc.GoogleAPIError, gauth.GoogleAuthError, OSError, TimeoutError) as e:
             raise RepositoryError(f"firestore {type(e).__name__}: {e}") from e
         return (snap.to_dict() or None) if snap.exists else None
+
+    async def put(self, vehicle_uuid: str, doc: dict) -> None:
+        from google.api_core import exceptions as gexc
+        from google.auth import exceptions as gauth
+        try:
+            await self._client.collection(COLLECTION).document(vehicle_uuid).set(doc, timeout=_TIMEOUT_S)
+        except (gexc.GoogleAPIError, gauth.GoogleAuthError, OSError, TimeoutError) as e:
+            raise RepositoryError(f"firestore {type(e).__name__}: {e}") from e
+
+    async def delete(self, vehicle_uuid: str) -> None:
+        from google.api_core import exceptions as gexc
+        from google.auth import exceptions as gauth
+        try:
+            await self._client.collection(COLLECTION).document(vehicle_uuid).delete(timeout=_TIMEOUT_S)
+        except (gexc.GoogleAPIError, gauth.GoogleAuthError, OSError, TimeoutError) as e:
+            raise RepositoryError(f"firestore {type(e).__name__}: {e}") from e
