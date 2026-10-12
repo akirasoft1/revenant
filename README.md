@@ -389,7 +389,7 @@ Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWa
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_WEB_SEARCH_ENABLED` | `true` | Attach ADK's native `google_search` tool to the text agent (Gemini-native models only) alongside `run_in_sandbox`, so current/external facts are answered via search instead of sandbox scraping; see `CLAUDE.md`'s "Agentic Sandbox" section for full details |
+| `AGENT_WEB_SEARCH_ENABLED` | `true` | Attach ADK's native `google_search` tool to the text agent (Gemini-native models only) alongside `run_in_sandbox`, so current/external facts are answered via search instead of sandbox scraping; see `agent-sidecar/CLAUDE.md` "Sandbox disposition and web search" for full details |
 
 ### Star Citizen Knowledge Configuration
 

@@ -60,7 +60,7 @@ How the sidecar emits the `[SPEAKER: …]` markers (per-turn re-announce, neutra
 
 ## Deferred follow-ups
 
-**Deferred follow-ups (not yet implemented):** idle auto-leave (channel currently requires `/voice leave`), dynamic (session-time, non-static) voice-profile injection into the Live system prompt, playback jitter smoothing (occasional; likely a jitter buffer + proper 24k→48k resampler), and self-service speaker names via `/voice name @user <spoken name>` command (Phase 4 — move the override table from the configmap to MongoDB so users set their own preferred spoken names; the configmap seed layer remains as the default).
+**Deferred follow-ups (not yet implemented):** idle auto-leave (channel currently requires `/voice leave`), dynamic (session-time, non-static) voice-profile injection into the Live system prompt, and playback jitter smoothing (occasional; likely a jitter buffer + proper 24k→48k resampler). Self-service speaker names are no longer a follow-up: they shipped as `/whois` (see "Member identity registry" in the root `CLAUDE.md`).
 
 ## Real-model smoke tests
 

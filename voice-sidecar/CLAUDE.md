@@ -31,3 +31,11 @@ The sidecar emits markers via `send_client_content(..., turn_complete=False)` im
 ## Hangar chat edits
 
 **Hangar chat edits (since 2026-10-09):** with `HANGAR_EDITS_ENABLED` on (default when `HANGAR_API_URL` is set) the sidecar declares `hangar_fit` / `hangar_add_ship` / `hangar_reset` as local tools that edit the CURRENT SPEAKER's own hangar — the acting member is `SetSpeaker.user_id` (else the opener), never a tool argument. See `docs/hangar.md` "Chat edits" for the binding rule, fallback and logs.
+
+## Star Citizen tool calls
+
+Moved from the root `CLAUDE.md` "Star Citizen Knowledge" section, which keeps the rest (tools, isolation, sandbox avoidance, the dispute rule).
+
+**Voice tool-call plumbing:** the voice sidecar's `ScToolExecutor` reads each tool's MCP 2.x `input_schema` at startup and sanitises it (`_sanitize_schema` drops `title`/`default`/`$schema`/`additionalProperties` and collapses `anyOf`-with-null) before handing it to Gemini Live as a `FunctionDeclaration` — Live's documented schema subset is stricter than raw MCP JSON Schema, so sanitising is a defensive measure — whether Live actually rejects (or silently drops) a raw MCP schema has NOT been verified; the sanitiser exists so we never have to find out mid-conversation. Each call is bounded to **6s total, including opening the fresh MCP session**, runs as a task off the audio pump (never blocking it), and is cancelled both on an explicit `tool_call_cancellation` and when the pump itself exits — a cancelled or late result is dropped, never replayed into a session it no longer belongs to, and never sent to any session but the CURRENT one (a stale response landing in a resumed/new session would look like an answer to a question that was never asked in it). If a Live session fails to open WITH SC declarations attached, the sidecar makes one immediate search-only retry and the conversation stays search-only for its duration (counted as `sc_fallbacks` in the session END log) rather than looping on a broken attach.
+
+**Sandbox/voice declaration reload:** SC tool declarations are loaded once at startup on the voice sidecar; a newly added/changed sc-knowledge tool needs a sidecar restart to be picked up (this is a known, accepted limitation, not a bug).
