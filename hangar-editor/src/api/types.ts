@@ -35,6 +35,12 @@ export interface LoadoutSlot {
   compatibleTypes: CompatibleType[];
   item: ItemRef | null;
   source: 'stock' | 'fitted';
+  /**
+   * The slot is a port of a FITTED item (a turret's gun mount), not of the stock
+   * vehicle: it is absent from `/catalog/vehicles/{uuid}/slots` and its options
+   * can only be looked up with `member` + `ship`.
+   */
+  dynamic?: boolean;
 }
 
 export interface Ship {
@@ -146,7 +152,7 @@ export interface StatValue {
   lowerIsBetter: boolean;
 }
 
-/** `GET /api/v1/catalog/slot-options?vehicle=&slot=` -> `items[]` (spec shape). */
+/** `GET /api/v1/catalog/slot-options?vehicle=&slot=[&member=&ship=]` -> `items[]` (spec shape). */
 export interface SlotOption {
   uuid: string;
   name: string;
@@ -190,6 +196,8 @@ export interface ShipViewProps {
   stockBySlot: Map<string, StockItem | null>;
   vehicle?: VehicleSummary;
   editable: boolean;
+  /** Shown above the items after a write (e.g. child fittings the server removed). */
+  notice?: string | null;
   onFit(slot: string, item: SlotOption): Promise<unknown>;
   onReset(slot: string): Promise<unknown>;
   onResetShip(): Promise<unknown>;

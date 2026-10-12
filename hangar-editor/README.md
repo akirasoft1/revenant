@@ -21,9 +21,45 @@ theme, mobile-friendly). Tests: Vitest + Testing Library (jsdom).
 | `/` | My hangar: ship cards, add ship (catalog search), rename, remove (with confirm) |
 | `/members` | Directory of members with at least one ship |
 | `/members/:id` | A member's hangar (display names always shown with the Discord ID, since names are user-controlled). Read-only unless it is yours or you are an admin (`/api/me` `isAdmin`) |
-| `/members/:id/ships/:shipId` | Ship detail: slot table grouped by type (slot, size, current item, stock/fitted badge). **Change** opens the compatible-item picker (sorted by the type's key stat, respecting lower-is-better; filter by text/size; cheapest UEX price when known). **Reset to stock**. On screens ≥ 900px wide a **Classic / Terminal** toggle switches to the Terminal view (see below) |
+| `/members/:id/ships/:shipId` | Ship detail: slot table grouped by type (slot, size, current item, stock/fitted badge). **Change** opens the compatible-item picker (sorted by the type's key stat, respecting lower-is-better; filter by text/size; cheapest UEX price when known). **Reset to stock**. Slots that belong to a fitted item (see "Slots from fitted items" below) are listed like any nested slot, labelled `parent › child`. On screens ≥ 900px wide a **Classic / Terminal** toggle switches to the Terminal view (see below) |
 | `/import` (`?member=<id>` for admins) | spviewer import: export snippet + copy button, upload, per-row preview (changes and skipped reasons), new/existing ship choice, apply, summary. "Update existing" is pre-selected only for a matching ship with no fitted changes (the import is authoritative and resets every other slot to stock); otherwise "New ship" — also when the target hangar can't be fetched (the preview still works, counts are just unknown). A row with a `too_many_lookups` skip is marked "won't be applied — import fewer at once" and any row-level skip "cannot be imported"; both are left out of apply, matching the server, which refuses such rows. Admins reach `?member=<id>` from that member's hangar; the summary names the member with their ID |
 | `/import` (same page, second section) | HangarXPLOR (HTF) import: install steps, upload `shiplist.json`, per-row preview with kind badges (New ship / Already imported / Matches a ship you have / Skipped), skipped reasons (unmatched concept ships are "counted in pledge total, not added to hangar"), a link select per `link` row (defaults to the server's first candidate; a ship another row explicitly chose is not offered again), a "not in this file" list with removal checkboxes defaulted from `defaultRemove`, and a banner when the export looks like a partial selection. Apply sends `{file, choices: {links, remove}}` with only the link choices the user changed; the summary shows created/linked/updated/unchanged/removed counts and warns if `ledgerSynced` is false. Hangar cards show an `RSI · LTI · <pledge> · $350.00` badge (or "Added manually"; when the pledge title names a different ship than the one you have -- a CCU, since RSI never renames the pledge, or a package title -- it reads `pledged as <title>`), the hangar shows "$X pledged on ships across N pledges" (currencies joined with " + "), and the ship page header carries the same badge |
+
+## Slots from fitted items
+
+Spec: `docs/superpowers/specs/2026-10-11-hangar-item-slots-design.md`. A ship's
+`loadout` (from the hangar read) is its RESOLVED slot list: the vehicle's slots,
+plus the ports of whatever is fitted — a ball turret fitted in
+`hardpoint_weapon_center` adds `hardpoint_weapon_center/hardpoint_weapon_S3_left`
+and `…_right`. Those entries carry `dynamic: true` (`LoadoutSlot.dynamic`); they
+are not in the stock vehicle's slot list, so they have no "stock:" note and no
+`STOCK` badge. Both views treat them as ordinary nested slots (`slotLabel` →
+`weapon center › weapon S3 left`); nothing in the editor depends on depth.
+
+- **Picker:** every slot-options request made from a ship page adds
+  `&member=<id>&ship=<shipId>` (`getSlotOptions(vehicle, slot, {memberId, shipId})`),
+  so the server looks the slot up in that ship's resolved slots — the only way to
+  find a dynamic slot. The query key is `slotOptionsKey` =
+  `['slot-options', memberId, shipId, vehicleUuid, slot]`: two ships of one model
+  never share an entry.
+- **After a fit, a slot reset or a whole-ship reset** (`ShipDetailPage`): the
+  ship from the response is shown at once, then the hangar query is invalidated
+  (child slots appear or disappear with their parent) and so is every cached
+  slot-options entry of that ship (`slotOptionsScope`) — a refitted parent changes
+  what its children accept.
+- **Dropped child fittings:** when a parent changes, the server deletes the child
+  fittings whose slot is gone or whose item no longer fits. The fit/reset response
+  is read for an optional `dropped` array (`lib/dropped.ts` `parseDropped`, the one
+  place that knows its shape: `{slot, item: {name}}` or `{slot, itemName}`; absent
+  → nothing) and the page shows one sentence naming them — "Also removed 2 fittings
+  that no longer fit: Mantis GT-220 (weapon center › weapon S3 left), …" — above the
+  slot tables in Classic and under the top bar in Terminal, until the next write.
+- **Terminal selection:** if the selected port no longer exists after a change,
+  its nearest surviving ancestor is selected (`survivingSlot` in `lib/terminal.ts`;
+  the tab switches to All when that ancestor is not in the open tab); with no
+  surviving ancestor, the first port.
+- **Wireframe markers:** see `buildMarkers` below — a slot with no position of
+  its own sits on its nearest positioned ancestor's marker.
 
 ## Terminal view
 
@@ -160,7 +196,10 @@ our own CSS and inline SVG icons, no game assets). Spec:
     computed so the ship stays in frame at every angle of the auto-rotation for
     the panel's shape (`orbitFitDistance`), using the full panel.
     Markers (`buildMarkers`: loadout slots with a finite `xyz`, labelled with
-    `slotLabel`) are green spheres sized relative to the ship (`markerRadius`);
+    `slotLabel`; a slot with none of its own uses its nearest ancestor's, walking
+    the `/`-separated id upward, so the gun slots of a fitted turret share the
+    turret's point with distinct ids — the stage picks the closest — and a slot
+    with no positioned ancestor gets no marker) are green spheres sized relative to the ship (`markerRadius`);
     the selected one is white, larger and pulsing inside a cyan halo. Hover shows
     the slot label; a click (a press that moves less than 5 px) selects the port.
     Selecting a port — on a marker or in the rail — pans the view (angle and zoom
@@ -169,7 +208,7 @@ our own CSS and inline SVG icons, no game assets). Spec:
     tail port on a long ship comes near the middle with most of the hull still in
     frame. The port
     already selected when the ship opens is highlighted but not panned to. A port
-    with no position has no marker. `prefers-reduced-motion` turns off
+    with no position (its own or an ancestor's) has no marker. `prefers-reduced-motion` turns off
     auto-rotate, the pulse and the pan easing. GL resources are disposed on
     unmount.
   - **Render on demand:** a still wireframe draws nothing. A frame is requested
@@ -211,7 +250,8 @@ re-checks `/api/me` and drops back to the sign-in page.
 Uses: `GET /api/me`, `POST /api/auth/logout` (same-origin, 204), `GET /api/v1/members`,
 `/api/v1/members/{id}/hangar|ships|ships/{shipId}|…/slots/{slot}` (slot ids are
 `%2F`-encoded), `GET /api/v1/catalog/vehicles`, `…/vehicles/{uuid}/slots`,
-`GET /api/v1/catalog/slot-options?vehicle=&slot=`,
+`GET /api/v1/catalog/slot-options?vehicle=&slot=&member=&ship=` (`member` and
+`ship` always sent from a ship page),
 `GET /api/v1/models/vehicle/{uuid}/wireframe` (binary), and
 `POST /api/v1/import/spviewer/preview|apply`. The import requests send the
 uploaded file parsed, as JSON `{file: [...]}` / `{rows, file}`; the server

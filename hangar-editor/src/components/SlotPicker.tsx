@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getSlotOptions } from '../api/client';
+import { getSlotOptions, slotOptionsKey, type ShipRef } from '../api/client';
 import type { LoadoutSlot, SlotOption } from '../api/types';
 import { filterAndSortOptions, formatPrice, formatStat, sizeLabel, type PickerSort } from '../lib/picker';
 import { slotLabel } from '../lib/labels';
@@ -129,6 +129,8 @@ function focusables(root: HTMLElement): HTMLElement[] {
 
 interface PickerProps {
   vehicleUuid: string;
+  /** The ship being edited: its fitted items decide which slots exist and what they accept. */
+  shipRef?: ShipRef;
   slot: LoadoutSlot;
   stockUuid?: string | null;
   busy?: boolean;
@@ -138,10 +140,10 @@ interface PickerProps {
 }
 
 /** Modal: fetches the compatible items for one slot and lets the user fit one. */
-export function SlotPicker({ vehicleUuid, slot, stockUuid, busy, error, onPick, onClose }: PickerProps) {
+export function SlotPicker({ vehicleUuid, shipRef, slot, stockUuid, busy, error, onPick, onClose }: PickerProps) {
   const options = useQuery({
-    queryKey: ['slot-options', vehicleUuid, slot.slot],
-    queryFn: () => getSlotOptions(vehicleUuid, slot.slot),
+    queryKey: slotOptionsKey(vehicleUuid, slot.slot, shipRef),
+    queryFn: () => getSlotOptions(vehicleUuid, slot.slot, shipRef),
     staleTime: 10 * 60_000,
   });
   const dialog = useRef<HTMLDivElement>(null);

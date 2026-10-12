@@ -22,6 +22,7 @@ export function groupSlots(loadout: LoadoutSlot[]): [string, LoadoutSlot[]][] {
 
 /** Today's grouped slot tables + picker, fed by the same props as the Terminal view. */
 export function ClassicShipView({
+  memberId,
   ship,
   loadout,
   stockBySlot,
@@ -30,6 +31,7 @@ export function ClassicShipView({
   onReset,
   busy,
   error,
+  notice,
   onDismissError,
 }: ShipViewProps) {
   const [picking, setPicking] = useState<LoadoutSlot | null>(null);
@@ -51,6 +53,11 @@ export function ClassicShipView({
   return (
     <>
       {resetError && <p className="alert alert-error">{resetError}</p>}
+      {notice && (
+        <p className="alert alert-warn" role="status">
+          {notice}
+        </p>
+      )}
       {groupSlots(loadout).map(([type, slots]) => (
         <section key={type} className="slot-group">
           <h2>{typeLabel(type)}</h2>
@@ -112,6 +119,7 @@ export function ClassicShipView({
       {picking && (
         <SlotPicker
           vehicleUuid={ship.vehicleUuid}
+          shipRef={{ memberId, shipId: ship.shipId }}
           slot={picking}
           stockUuid={stockBySlot.get(picking.slot)?.uuid ?? null}
           busy={busy}

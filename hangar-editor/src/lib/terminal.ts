@@ -42,6 +42,20 @@ export function stepPort(ports: LoadoutSlot[], current: string | null, dir: 1 | 
   return ports[(i + dir + ports.length) % ports.length].slot;
 }
 
+/**
+ * The slot to select when `slot` may be gone (a parent refit removes its child
+ * slots): the slot itself if still in the loadout, else its nearest surviving
+ * ancestor on the `/`-separated path, else `null`.
+ */
+export function survivingSlot(loadout: LoadoutSlot[], slot: string | null): string | null {
+  if (slot == null) return null;
+  const known = new Set(loadout.map((s) => s.slot));
+  for (let id = slot; ; id = id.slice(0, id.lastIndexOf('/'))) {
+    if (known.has(id)) return id;
+    if (!id.includes('/')) return null;
+  }
+}
+
 export interface StatRow {
   key: string;
   label: string;
