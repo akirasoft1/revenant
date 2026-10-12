@@ -403,7 +403,7 @@ Backs channel-voice text chat and voice sessions with live Star Citizen data (it
 
 ### Member Hangar Configuration
 
-Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `CLAUDE.md`'s "Member hangar" section and `hangar-service/README.md`.
+Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `CLAUDE.md`'s "Member hangar" section, `docs/hangar.md` and `hangar-service/README.md`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
