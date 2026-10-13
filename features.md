@@ -258,7 +258,7 @@ The "planned" section below reflects items that have NOT yet shipped. Anything p
 - [x] **Chat edits** (project 3): "I put the Hemera in my Connie" / "I just bought a Cutlass Black" / "…back to stock" in text and voice via hangar-service `POST /fit` and `POST /ships/{shipRef}/reset` (+ `POST /ships`), bound to the real speaker.
 - [x] **Terminal ship view**: second ship layout (images, stats, keyboard nav) with Classic fallback; positions storage/read route in place.
 - [x] **Ship wireframes**: rotatable wireframe with real hardpoint markers in the Terminal view; `tools/wireframes` pipeline, `/admin/models` upload page.
-- [ ] **Terminal follow-ups** (in order): weapon/item wireframes, per-ship camera presets, deployable parts (gear up), mobile Terminal layout, loose inventory (see `CLAUDE.md`).
+- [ ] **Terminal follow-ups** (in order): weapon/item wireframes, per-ship camera presets, deployable parts (gear up), mobile Terminal layout, loose inventory (see `hangar-editor/CLAUDE.md`).
 - [ ] **Loose inventory**, **org-wide queries**. (spviewer import shipped with the web editor.)
 
 ### Digests

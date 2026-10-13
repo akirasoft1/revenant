@@ -106,7 +106,7 @@ written set (logged only after the write succeeds).
 The callers bind `X-Acting-Member` from trusted plumbing, never from a tool
 argument (agent: `ChatRequest.user_id`; voice: the current `SetSpeaker.user_id`,
 else the session opener), and their tools have no member parameter — see
-`CLAUDE.md` "Member hangar" → "Chat edits".
+`docs/hangar.md` "Chat edits".
 
 - **Ship** (`ship`, `shipRef`): an exact `shipId`, else free text resolved
   within the member's own hangar by `src/ship_resolve.py` — exact nickname →
