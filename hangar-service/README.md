@@ -768,8 +768,14 @@ gcloud run deploy hangar-service --project revenant-discord-bot-2 \
   --service-account hangar-runtime@revenant-discord-bot-2.iam.gserviceaccount.com \
   --min-instances 1 --memory 1Gi \
   --set-secrets DISCORD_CLIENT_SECRET=hangar-discord-client-secret:latest,HANGAR_SESSION_KEY=hangar-session-key:latest \
-  --set-env-vars "^;^GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2;HANGAR_ALLOWED_CALLERS=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com;HANGAR_ADMIN_IDS=<id1>,<id2>;HANGAR_VERSION=$SHA;HANGAR_AUDIENCE=https://hangar-service-hvmf2jpuca-uc.a.run.app;DISCORD_CLIENT_ID=1558216042151419935;HANGAR_ALLOWED_GUILD_IDS=323349603976216577;HANGAR_PUBLIC_ORIGIN=https://hangar.aklabs.io"
-# --set-env-vars replaces the whole set: always pass every var above.
+  --set-env-vars "^;^GOOGLE_CLOUD_PROJECT=revenant-discord-bot-2;HANGAR_ALLOWED_CALLERS=hangar-api@revenant-discord-bot-2.iam.gserviceaccount.com;HANGAR_ADMIN_IDS=<id1>,<id2>;HANGAR_VERSION=$SHA;HANGAR_AUDIENCE=https://hangar-service-hvmf2jpuca-uc.a.run.app;DISCORD_CLIENT_ID=1558216042151419935;HANGAR_ALLOWED_GUILD_IDS=323349603976216577;HANGAR_PUBLIC_ORIGIN=https://hangar.aklabs.io;HANGAR_MODELS_BUCKET=revenant-discord-bot-2-hangar-models"
+# --set-env-vars replaces the whole set: always pass every var above (dropping
+# HANGAR_MODELS_BUCKET turns every wireframe route into 503 `unavailable`). Add
+# HANGAR_RUM_ORIGINS too if the image was built with VITE_DT_RUM_SRC.
+# Image-only rollout (no other config change): omit --set-env-vars AND
+# --set-secrets so gcloud keeps the revision's existing env, but pass
+# --update-env-vars HANGAR_VERSION=$SHA — the env var overrides the image's
+# GIT_SHA, so a stale value would make /health report the old version.
 # Callers' HANGAR_API_URL must equal HANGAR_AUDIENCE (the -uc.a.run.app URL).
 ```
 
