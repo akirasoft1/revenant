@@ -4,7 +4,7 @@
 
 A Discord bot centered on AI chat in a dynamically learned channel voice, long-term and ranked memory, IRC history recall, an agentic code-execution sandbox, and image/video/music generation — with article summarization retained as a legacy capability.
 
-For the system-level overview (software architecture + Kubernetes deployment topology, both with Mermaid diagrams), see [`docs/architecture.md`](docs/architecture.md). For deploy and operational details, see [`kubernetes.md`](kubernetes.md).
+For the system-level overview (software architecture, text chat and voice flows, Star Citizen knowledge + member hangar, and the Kubernetes/Cloud Run deployment topology, all with Mermaid diagrams), see [`docs/architecture.md`](docs/architecture.md). For deploy and operational details, see [`kubernetes.md`](kubernetes.md).
 
 ## Features
 
