@@ -12,7 +12,7 @@ from src.app import create_app
 from src.catalog import build_catalog
 from src.repository import InMemoryShipRepository
 from src.spviewer import MAX_ROWS, MAX_UPLOAD_BYTES
-from tests.conftest import HARBINGER_UUID, HEMERA_UUID, TAURUS_UUID, load_fixture, wiki_handler
+from tests.conftest import F7C_UUID, HARBINGER_UUID, HEMERA_UUID, TAURUS_UUID, load_fixture, wiki_handler
 from tests.test_app import ADMIN, OTHER, SELF, H, cfg, fake_verifier
 from tests.test_browser_auth import ADMIN_USER, BROWSER_ENV, ORIGIN, Clock, as_user
 from tests.test_spviewer import BRVS, LORICA, NOSE_S2, QD, V801, YEAGER, _port, row_with, stock_loadout
@@ -184,6 +184,23 @@ def test_preview_mixed_rows(client):
     assert rows[2]["vehicle"] is None and [s["reason"] for s in rows[2]["skipped"]] == ["unknown_vehicle"]
     assert rows[2]["matchingShips"] == []
     assert rows[3]["vehicle"] is None and rows[3]["skipped"][0]["reason"] == "unrecognized_format"
+
+
+def test_preview_real_two_loadout_export(client):
+    """A real spviewer export holding two loadouts (Harbinger + F7C Mk II) previews as two
+    rows, in file order, each resolved to its own vehicle; nothing is stored."""
+    as_user(client)
+    r = client.post("/api/v1/import/spviewer/preview",
+                    json={"file": copy.deepcopy(load_fixture("spviewer_two_loadouts.json"))})
+    assert r.status_code == 200, r.text
+    rows = r.json()["rows"]
+    assert [row["rowIndex"] for row in rows] == [0, 1]
+    assert [row["loadoutName"] for row in rows] == ["akira-harbinger", "my_f7c"]
+    assert [row["vehicle"]["uuid"] for row in rows] == [HARBINGER_UUID, F7C_UUID]
+    assert {c["slot"] for c in rows[0]["changes"]} == REAL_CHANGES
+    assert rows[1]["changes"], "the F7C loadout carries fitted changes"
+    assert all(row["matchingShips"] == [] for row in rows)
+    assert client.get(f"/v1/members/{SELF}/hangar", headers=H()).json()["ships"] == []
 
 
 def test_preview_admin_member_param_and_service_caller(client):

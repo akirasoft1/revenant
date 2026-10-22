@@ -106,9 +106,9 @@ default `hey jarvis`), `VOICE_WAKE_MODEL` / `VOICE_MEL_MODEL` /
 `VOICE_EMBEDDING_MODEL` (model paths), `VOICE_WAKE_THRESHOLD` (default `0.5`).
 Available pretrained phrases: hey jarvis, alexa, hey mycroft, hey rhasspy.
 
-> **Bot image base:** the bot `Dockerfile` must be `node:22-slim` (Debian/glibc),
-> NOT `node:22-alpine` — `onnxruntime-node` ships glibc-only prebuilt binaries and
-> will not load on musl/Alpine.
+> **Bot image base:** the bot `Dockerfile` must stay on Debian/glibc — today
+> `node:24-trixie` (build) / `node:24-trixie-slim` (runtime) — NOT Alpine:
+> `onnxruntime-node` ships glibc-only prebuilt binaries and will not load on musl.
 
 ### `networkpolicy.yaml` (bot)
 
