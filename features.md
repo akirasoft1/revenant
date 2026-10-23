@@ -10,6 +10,7 @@
 - **Prompt Display**: Responses show the user's original prompt before the AI reply
 - **Image Vision**: Attach images to chat messages for analysis and discussion
 - **Web Search**: Bot can search the web for current information when needed
+- **Slow-turn progress**: a reply that runs long (grounded web search can take minutes) never looks abandoned. `/chat` edits its "is thinking…" placeholder after ~30s to "⏳ Still working on your reply (45s so far)… No need to resend.", updated every 15s, then replaces it with the answer. @mentions and replies keep the typing indicator alive for the whole turn (it used to expire after ~10s) and add a ⏳ reaction to the user's message after ~30s, removed once the answer posts (`utils/chatProgress.js`)
 - **Per-user Token Tracking**: Usage recorded per user
 - **Catch Me Up**: `/tldr` sends a DM summarizing what happened while you were away — articles, trends, and chat highlights from channels you've been active in, styled in the group's voice
 

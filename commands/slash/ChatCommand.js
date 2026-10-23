@@ -6,6 +6,7 @@ const BaseSlashCommand = require('../base/BaseSlashCommand');
 const TextUtils = require('../../utils/textUtils');
 const logger = require('../../logger');
 const { recordUserMessage, recordBotReply } = require('../../utils/channelMessageRecorder');
+const { startSlowTurnNotice, slowChatStatusText } = require('../../utils/chatProgress');
 
 class ChatSlashCommand extends BaseSlashCommand {
   /**
@@ -82,15 +83,30 @@ class ChatSlashCommand extends BaseSlashCommand {
       content: userMessage,
     });
 
+    // A turn that runs a grounded web search can take minutes, and the
+    // deferred "is thinking…" placeholder never changes, so past ~30s the
+    // placeholder is edited to say the bot is still working (with elapsed
+    // time) — otherwise users assume it gave up and resend. stop() waits for
+    // any in-flight status edit, so it can never land on top of the answer.
+    const progress = startSlowTurnNotice({
+      onSlow: (elapsedMs) => interaction.editReply({ content: slowChatStatusText(elapsedMs) }),
+      onTick: (elapsedMs) => interaction.editReply({ content: slowChatStatusText(elapsedMs) }),
+    });
+
     // Call chat service with channel-voice personality
-    const result = await this.chatService.chat(
-      personalityId,
-      userMessage,
-      interaction.user,
-      channelId,
-      guildId,
-      imageUrl
-    );
+    let result;
+    try {
+      result = await this.chatService.chat(
+        personalityId,
+        userMessage,
+        interaction.user,
+        channelId,
+        guildId,
+        imageUrl
+      );
+    } finally {
+      await progress.stop();
+    }
 
     if (!result.success) {
       // Handle specific error reasons with helpful messages (without "Error: " prefix)

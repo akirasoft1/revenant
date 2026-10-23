@@ -190,4 +190,69 @@ describe('ChatSlashCommand', () => {
       expect(response).not.toContain('**Prompt:**');
     });
   });
+
+  // A turn that runs a grounded web search can take minutes. The deferred
+  // "is thinking…" placeholder never changes, so after ~30s the user is told
+  // the bot is still working (and not to resend), updated with elapsed time.
+  describe('slow-turn progress', () => {
+    const editTexts = () => mockInteraction.editReply.mock.calls.map(c =>
+      (typeof c[0] === 'string' ? c[0] : c[0].content) || '');
+    const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+    const advance = async (ms) => { jest.advanceTimersByTime(ms); await flush(); };
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('edits the placeholder with a still-working status after 30s, then replaces it with the answer', async () => {
+      let finish;
+      mockChatService.chat.mockReturnValue(new Promise(r => { finish = r; }));
+      const run = command.execute(mockInteraction, {});
+      await flush();
+
+      await advance(29000);
+      expect(mockInteraction.editReply).not.toHaveBeenCalled();
+
+      await advance(1000);
+      expect(editTexts()).toHaveLength(1);
+      expect(editTexts()[0]).toContain('Still working');
+      expect(editTexts()[0]).toContain('30s');
+      expect(editTexts()[0]).toContain('No need to resend');
+
+      await advance(15000);
+      expect(editTexts()[1]).toContain('45s');
+
+      finish({ success: true, message: 'Pen distance basically casts a damage cone.' });
+      await run;
+      const texts = editTexts();
+      expect(texts[texts.length - 1]).toContain('Pen distance basically casts a damage cone.');
+      const calls = mockInteraction.editReply.mock.calls.length;
+
+      await advance(60000);
+      expect(mockInteraction.editReply.mock.calls.length).toBe(calls);
+    });
+
+    it('a fast turn shows no status message', async () => {
+      const run = command.execute(mockInteraction, {});
+      await flush();
+      await run;
+      await advance(60000);
+      expect(editTexts().some(t => t.includes('Still working'))).toBe(false);
+      expect(editTexts()).toHaveLength(1);
+    });
+
+    it('a failed slow turn stops the status updates before the error is reported', async () => {
+      let fail;
+      mockChatService.chat.mockReturnValue(new Promise((_, rej) => { fail = rej; }));
+      const run = command.execute(mockInteraction, {});
+      await flush();
+      await advance(31000);
+      expect(editTexts()[0]).toContain('Still working');
+
+      fail(new Error('agent exploded'));
+      await expect(run).rejects.toThrow('agent exploded');
+      const calls = mockInteraction.editReply.mock.calls.length;
+      await advance(60000);
+      expect(mockInteraction.editReply.mock.calls.length).toBe(calls);
+    });
+  });
 });
