@@ -36,6 +36,7 @@ process.on('uncaughtException', error => {
 const SummarizationService = require('./services/SummarizationService');
 const ReactionHandler = require('./handlers/ReactionHandler');
 const ReplyHandler = require('./handlers/ReplyHandler');
+const { startTypingKeepAlive, startSlowTurnNotice, SLOW_TURN_REACTION } = require('./utils/chatProgress');
 const RssService = require('./services/RssService');
 const FollowUpService = require('./services/FollowUpService');
 const MessageService = require('./services/MessageService');
@@ -988,80 +989,105 @@ class DiscordBot {
       'chat.personality.id': DEFAULT_PERSONALITY,
       'chat.trigger': 'mention',
     }, async () => {
-      // Show typing indicator
-      await message.channel.sendTyping();
+      // Progress for the WHOLE turn. A single sendTyping() expires after
+      // ~10s, and a turn that runs a grounded web search can take minutes, so
+      // users saw nothing and resent. Typing is kept alive while the model
+      // works (stopped BEFORE replying, so it can't reappear after the answer),
+      // and a turn past ~30s gets a ⏳ reaction on the user's message, removed
+      // once the reply is out. Neither signal can fail the turn.
+      const stopTyping = startTypingKeepAlive(message.channel);
+      let slowReaction = null;
+      const slowNotice = startSlowTurnNotice({
+        onSlow: async () => { slowReaction = await message.react(SLOW_TURN_REACTION); },
+      });
 
-      const channelId = message.channel.id;
-      const guildId = message.guild?.id || null;
+      try {
+        const channelId = message.channel.id;
+        const guildId = message.guild?.id || null;
 
-      // Call ChatService with the friendly personality
-      // A plain mention calls chat() exactly as before; only a reply carries
-      // the referenced bot message through as options.
-      const chatArgs = [DEFAULT_PERSONALITY, userMessage, message.author, channelId, guildId];
-      if (referencedMessage) chatArgs.push(null, { referencedMessage });
-      const result = await this.chatService.chat(...chatArgs);
+        // Call ChatService with the friendly personality
+        // A plain mention calls chat() exactly as before; only a reply carries
+        // the referenced bot message through as options.
+        const chatArgs = [DEFAULT_PERSONALITY, userMessage, message.author, channelId, guildId];
+        if (referencedMessage) chatArgs.push(null, { referencedMessage });
+        let result;
+        try {
+          result = await this.chatService.chat(...chatArgs);
+        } finally {
+          stopTyping();
+          await slowNotice.stop();
+        }
 
-      if (!result.success) {
-        if (result.availablePersonalities) {
+        if (!result.success) {
+          if (result.availablePersonalities) {
+            return message.reply({
+              content: `Something went wrong. Please try again.`,
+              allowedMentions: { repliedUser: false }
+            });
+          }
           return message.reply({
-            content: `Something went wrong. Please try again.`,
+            content: result.error,
             allowedMentions: { repliedUser: false }
           });
         }
-        return message.reply({
-          content: result.error,
-          allowedMentions: { repliedUser: false }
-        });
+
+        // Format response and wrap URLs (no personality header \u2014 channel-voice is the only personality)
+        // Describe what actually degraded. This used to hardcode the local-LLM
+        // case, which mislabelled every other fallback (agent sidecar down, agent
+        // running without the channel personality) as a local-LLM problem \u2014 a
+        // different feature entirely. ChatService supplies the wording.
+        const fallbackNotice = TextUtils.fallbackNotice(result.fallback);
+        const response = TextUtils.wrapUrls(`${fallbackNotice}${result.message}`);
+
+        // Convert any generated images to Discord attachments
+        const imageAttachments = this._createImageAttachments(result.images);
+
+        // Split if too long for Discord (2000 char limit). Capture the last sent
+        // message so we can persist it as an assistant turn (and, when this turn
+        // ran sandbox code, attach executionIds for reaction-reveal lookups).
+        const executionIds = result.executionSummary?.executionIds || [];
+        let lastReply = null;
+        if (response.length > 2000) {
+          const chunks = this._splitMessage(response, 2000);
+          for (let i = 0; i < chunks.length; i++) {
+            lastReply = await message.channel.send(chunks[i]);
+          }
+          if (imageAttachments.length > 0) {
+            await message.channel.send({ files: imageAttachments });
+          }
+        } else {
+          lastReply = await message.reply({
+            content: response,
+            allowedMentions: { repliedUser: false }
+          });
+          if (imageAttachments.length > 0) {
+            await message.channel.send({ files: imageAttachments });
+          }
+        }
+
+        // Persist this channel-voice reply as an assistant turn in channel_messages
+        // (ChatService.buildTurnContext maps isBot -> assistant), carrying any
+        // sandbox executionIds so a later 🔍/📜/🐛 reaction can resolve them.
+        //
+        // Store `result.message` (the raw model output), NOT `response` (the
+        // Discord payload). `response` carries two display-only transformations:
+        // the ⚠️ fallback blockquote and wrapUrls' <https://…> embed-suppression
+        // syntax. Both get replayed to the model as its OWN previous turn on the
+        // next message, so it reads an apology it never wrote and URL syntax no
+        // model emits. This matters more now that the fallback notice fires on
+        // every agent RPC failure, empty turn, and context-degraded turn: a
+        // sidecar outage would stamp the banner into every stored assistant turn,
+        // and channel_messages is deliberately retained forever.
+        await this._recordBotReply(lastReply, result.message, channelId, guildId, executionIds);
+      } finally {
+        if (slowReaction) {
+          try {
+            await slowReaction.users.remove(this.client.user.id);
+          } catch (err) {
+            logger.debug(`chat progress: could not remove ${SLOW_TURN_REACTION} reaction: ${err.message}`);
+          }
+        }
       }
-
-      // Format response and wrap URLs (no personality header \u2014 channel-voice is the only personality)
-      // Describe what actually degraded. This used to hardcode the local-LLM
-      // case, which mislabelled every other fallback (agent sidecar down, agent
-      // running without the channel personality) as a local-LLM problem \u2014 a
-      // different feature entirely. ChatService supplies the wording.
-      const fallbackNotice = TextUtils.fallbackNotice(result.fallback);
-      const response = TextUtils.wrapUrls(`${fallbackNotice}${result.message}`);
-
-      // Convert any generated images to Discord attachments
-      const imageAttachments = this._createImageAttachments(result.images);
-
-      // Split if too long for Discord (2000 char limit). Capture the last sent
-      // message so we can persist it as an assistant turn (and, when this turn
-      // ran sandbox code, attach executionIds for reaction-reveal lookups).
-      const executionIds = result.executionSummary?.executionIds || [];
-      let lastReply = null;
-      if (response.length > 2000) {
-        const chunks = this._splitMessage(response, 2000);
-        for (let i = 0; i < chunks.length; i++) {
-          lastReply = await message.channel.send(chunks[i]);
-        }
-        if (imageAttachments.length > 0) {
-          await message.channel.send({ files: imageAttachments });
-        }
-      } else {
-        lastReply = await message.reply({
-          content: response,
-          allowedMentions: { repliedUser: false }
-        });
-        if (imageAttachments.length > 0) {
-          await message.channel.send({ files: imageAttachments });
-        }
-      }
-
-      // Persist this channel-voice reply as an assistant turn in channel_messages
-      // (ChatService.buildTurnContext maps isBot -> assistant), carrying any
-      // sandbox executionIds so a later 🔍/📜/🐛 reaction can resolve them.
-      //
-      // Store `result.message` (the raw model output), NOT `response` (the
-      // Discord payload). `response` carries two display-only transformations:
-      // the ⚠️ fallback blockquote and wrapUrls' <https://…> embed-suppression
-      // syntax. Both get replayed to the model as its OWN previous turn on the
-      // next message, so it reads an apology it never wrote and URL syntax no
-      // model emits. This matters more now that the fallback notice fires on
-      // every agent RPC failure, empty turn, and context-degraded turn: a
-      // sidecar outage would stamp the banner into every stored assistant turn,
-      // and channel_messages is deliberately retained forever.
-      await this._recordBotReply(lastReply, result.message, channelId, guildId, executionIds);
     });
   }
 
