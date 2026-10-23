@@ -96,7 +96,7 @@ def _agent(monkeypatch, *, model="gemini-3.8-flash", flag="true", events=None, s
         return object()
     monkeypatch.setattr(A, "Agent", fake_agent)
     monkeypatch.setattr(A, "InMemoryRunner", _runner_factory(events or [_Event("the reply")]))
-    monkeypatch.setattr(A, "_build_generate_content_config", lambda: None)
+    monkeypatch.setattr(A, "_build_generate_content_config", lambda *_a, **_k: None)
     ag = ChannelVoiceAgent(config=load(), orchestrator=None, base_system_prompt="BASE", sc_tools=sc_tools)
     return ag, captured
 
@@ -133,7 +133,7 @@ def test_google_search_not_attached_for_a_non_gemini_model_object(monkeypatch):
     # Decided on the model actually built, not the spec string: ADK raises
     # "Google search tool is not supported for model X" for anything else.
     ag, cap = _agent(monkeypatch)
-    monkeypatch.setattr(A, "_build_model", lambda spec: object())
+    monkeypatch.setattr(A, "_build_model", lambda spec, *_a, **_k: object())
     _chat(ag)
     assert google_search not in cap["tools"]
     assert "google_search" not in cap["instruction"]
@@ -143,7 +143,7 @@ def test_google_search_not_attached_for_gemini_object_with_non_gemini_name(monke
     # ADK's google_search raises "not supported" unless is_gemini_model(model.model).
     from google.adk.models import Gemini
     ag, cap = _agent(monkeypatch)
-    monkeypatch.setattr(A, "_build_model", lambda spec: Gemini(model="my-tuned-endpoint"))
+    monkeypatch.setattr(A, "_build_model", lambda spec, *_a, **_k: Gemini(model="my-tuned-endpoint"))
     _chat(ag)
     assert google_search not in cap["tools"]
     assert "google_search" not in cap["instruction"]

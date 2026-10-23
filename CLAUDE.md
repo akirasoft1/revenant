@@ -184,7 +184,7 @@ Built by one shared method: `ChatService.buildTurnContext({...}) -> { systemProm
 
 **Sidecar:** single-replica `Recreate` Deployment — concurrency state is in-process; **do not scale**.
 
-**Tunables (sandbox-config ConfigMap):** `SANDBOX_INLINE_OUTPUT_CHARS`, `SANDBOX_WALL_CLOCK_SECONDS`, `SANDBOX_PER_USER_CONCURRENCY`, `SANDBOX_GLOBAL_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`, `SANDBOX_BASE_IMAGE`, `SANDBOX_TRACE_RETENTION_PER_USER`, `SANDBOX_AGENT_TURN_CALL_BUDGET`. Health-breaker knobs (sidecar env, defaults are sane): `AGENT_HEALTH_FAILURE_THRESHOLD` (3), `AGENT_HEALTH_COOLDOWN_SECONDS` (60), `AGENT_CHAT_TIMEOUT_SECONDS` (540 — must stay under the bot's 600s `chatDeadlineMs`).
+**Tunables (sandbox-config ConfigMap):** `SANDBOX_INLINE_OUTPUT_CHARS`, `SANDBOX_WALL_CLOCK_SECONDS`, `SANDBOX_PER_USER_CONCURRENCY`, `SANDBOX_GLOBAL_CONCURRENCY`, `SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`, `SANDBOX_BASE_IMAGE`, `SANDBOX_TRACE_RETENTION_PER_USER`, `SANDBOX_AGENT_TURN_CALL_BUDGET`. Health-breaker knobs (sidecar env, defaults are sane): `AGENT_HEALTH_FAILURE_THRESHOLD` (3), `AGENT_HEALTH_COOLDOWN_SECONDS` (60), `AGENT_CHAT_TIMEOUT_SECONDS` (540 — must stay under the bot's 600s `chatDeadlineMs`). Gemini request knobs (sandbox-config): `AGENT_REQUEST_TIMEOUT_SECONDS` (300, per model request) + `AGENT_REQUEST_TIMEOUT_RETRIES` (1), and `AGENT_RETRY_*` (SDK backoff; actually read since 2026-10-23). See `agent-sidecar/CLAUDE.md` "Gemini backend and retries".
 
 **Reaction reveal:** on a bot reply that ran code, react with 🔍 (source code), 📜 (stdout + stderr if non-empty), or 🐛 (stderr only) to get the artifact attached.
 

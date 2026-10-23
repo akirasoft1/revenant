@@ -120,7 +120,7 @@ def _summarize_llm_error(exc: BaseException, model_spec: str) -> str:
     return " ".join(parts)
 
 
-def _build_generate_content_config():
+def _build_generate_content_config(request_timeout_seconds: float | None = None):
     """Gemini-side safety thresholds for this Discord-bot use case.
 
     The bot serves a private channel of four offensive-security technologists
@@ -136,8 +136,19 @@ def _build_generate_content_config():
     google.genai client when the model is Gemini-native. For LiteLlm-wrapped
     OpenAI/Anthropic models the safety_settings are silently ignored; the
     hint is harmless on the non-Gemini path.
+
+    `request_timeout_seconds` bounds each model request (http_options.timeout,
+    milliseconds on the wire; google-genai also sends it as X-Server-Timeout).
+    ADK keeps a request-level http_options and only merges its tracking
+    headers into it; google-genai patches it over the client's options, so the
+    client's retry_options survive. None leaves requests unbounded.
     """
+    http_options = (
+        types.HttpOptions(timeout=int(request_timeout_seconds * 1000))
+        if request_timeout_seconds else None
+    )
     return types.GenerateContentConfig(
+        http_options=http_options,
         safety_settings=[
             types.SafetySetting(
                 category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
@@ -159,7 +170,7 @@ def _build_generate_content_config():
     )
 
 
-def _gemini_retry_options():
+def _gemini_retry_options(config=None):
     """SDK-level exponential backoff for the Gemini-native path.
 
     google-genai does NOT retry transient server errors by default, so a
@@ -171,17 +182,68 @@ def _gemini_retry_options():
     turn could re-execute sandbox tools). Last resort after exhausting these
     attempts is still the bot's OpenAI fallback.
 
-    Budget: 0.5s, 1s, 2s, 4s (+jitter) ≈ up to ~8s before giving up. The
-    bot's AgentClient gRPC deadline must exceed this (see AgentClient.js).
+    Values come from the AGENT_RETRY_* sandbox-config keys via Config (they
+    were documented as live-tunable but never read until 2026-10-23); without
+    a config the defaults are the original 4 attempts, 0.5s -> 8s, jitter 0.3.
+    The bot's AgentClient gRPC deadline must exceed the retry budget (see
+    AgentClient.js), and the whole turn is bounded by AGENT_CHAT_TIMEOUT_SECONDS.
     """
+    if config is None:
+        return types.HttpRetryOptions(
+            attempts=4,
+            initial_delay=0.5,
+            max_delay=8.0,
+            exp_base=2.0,
+            jitter=0.3,
+            http_status_codes=[429, 500, 502, 503, 504],
+        )
     return types.HttpRetryOptions(
-        attempts=4,
-        initial_delay=0.5,
-        max_delay=8.0,
-        exp_base=2.0,
-        jitter=0.3,
-        http_status_codes=[429, 500, 502, 503, 504],
+        attempts=config.agent_retry_attempts,
+        initial_delay=config.agent_retry_initial_delay,
+        max_delay=config.agent_retry_max_delay,
+        exp_base=config.agent_retry_exp_base,
+        jitter=config.agent_retry_jitter,
+        http_status_codes=list(config.agent_retry_status_codes),
     )
+
+
+class TimeoutRetryingGemini(Gemini):
+    """`Gemini` that retries a model request which timed out before producing
+    any response.
+
+    Why this exists: the per-request timeout (AGENT_REQUEST_TIMEOUT_SECONDS)
+    bounds a hung request, but in production google-genai sends async requests
+    over aiohttp, whose total timeout raises a plain `TimeoutError` -- and the
+    SDK's retry predicate only covers APIError status codes and httpx errors.
+    Without this, a timed-out request would fail the turn (OpenAI fallback)
+    instead of being retried. 2026-10-23: one request on Vertex `global` hung
+    ~534s, then 429'd, and took the whole 540s turn budget with it.
+
+    Only the model REQUEST is retried, never the agent turn, so tools are
+    never re-executed. A timeout after a response was already yielded is NOT
+    retried (that would duplicate a partial stream). Cancellation
+    (`asyncio.CancelledError`, e.g. the sidecar's own turn timeout) is a
+    BaseException and always propagates.
+    """
+
+    timeout_retries: int = 0
+
+    async def generate_content_async(self, llm_request, stream: bool = False):
+        attempt = 0
+        while True:
+            yielded = False
+            try:
+                async for response in super().generate_content_async(llm_request, stream=stream):
+                    yielded = True
+                    yield response
+                return
+            except TimeoutError:
+                if yielded or attempt >= self.timeout_retries:
+                    raise
+                attempt += 1
+                log.warning(
+                    "gemini request timed out before any response (model=%s); "
+                    "retrying (%d/%d)", self.model, attempt, self.timeout_retries)
 
 
 def _normalize_model_spec(model_spec: str) -> str:
@@ -199,7 +261,7 @@ def _is_gemini_native(model_spec: str) -> bool:
     return spec.startswith("gemini") or "/" not in spec
 
 
-def _build_model(model_spec: str):
+def _build_model(model_spec: str, config=None):
     """Map an `AGENT_MODEL` env value to whatever ADK's `Agent(model=…)`
     expects. For Gemini we return a `Gemini` model wired with SDK-level
     retry (see _gemini_retry_options); for any other provider we wrap in
@@ -213,7 +275,11 @@ def _build_model(model_spec: str):
     """
     spec = _normalize_model_spec(model_spec)
     if _is_gemini_native(model_spec):
-        return Gemini(model=spec, retry_options=_gemini_retry_options())
+        return TimeoutRetryingGemini(
+            model=spec,
+            retry_options=_gemini_retry_options(config),
+            timeout_retries=config.agent_request_timeout_retries if config is not None else 0,
+        )
     # Non-Gemini providers go through LiteLlm. Imported lazily so we don't
     # require the litellm dependency just to run the default Gemini path.
     from google.adk.models.lite_llm import LiteLlm
@@ -641,7 +707,7 @@ class ChannelVoiceAgent:
             if self._hangar_edits is not None and sc_state != "off" else None
         )
 
-        model = _build_model(self._config.agent_model)
+        model = _build_model(self._config.agent_model, self._config)
         web_search = self._web_search_attached(model)
         tools = [run_in_sandbox] + (
             [_PerTurnToolsetProxy(ts) for ts in self._sc_tools.toolsets]
@@ -663,7 +729,7 @@ class ChannelVoiceAgent:
             ),
             tools=tools,
             model=model,
-            generate_content_config=_build_generate_content_config(),
+            generate_content_config=_build_generate_content_config(request_timeout_seconds=self._config.agent_request_timeout_seconds),
         )
         runner = InMemoryRunner(agent=agent, app_name=_APP_NAME)
         await runner.session_service.create_session(

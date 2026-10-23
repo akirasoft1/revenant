@@ -371,8 +371,8 @@ async def test_chat_succeeds_and_breaker_records_success_when_sc_tools_unavailab
 
     monkeypatch.setattr(A, "InMemoryRunner", _FakeRunner)
     monkeypatch.setattr(A, "Agent", _fake_agent_ctor)
-    monkeypatch.setattr(A, "_build_model", lambda spec: object())
-    monkeypatch.setattr(A, "_build_generate_content_config", lambda: None)
+    monkeypatch.setattr(A, "_build_model", lambda spec, *_a, **_k: object())
+    monkeypatch.setattr(A, "_build_generate_content_config", lambda *_a, **_k: None)
 
     async def _never_up(url):
         return False

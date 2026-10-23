@@ -72,7 +72,7 @@ def _run_turn(monkeypatch, events):
     monkeypatch.setenv("SANDBOX_BASE_IMAGE", "img")
     monkeypatch.setattr(A, "Agent", lambda **kw: object())
     monkeypatch.setattr(A, "InMemoryRunner", _runner_factory(events))
-    monkeypatch.setattr(A, "_build_generate_content_config", lambda: None)
+    monkeypatch.setattr(A, "_build_generate_content_config", lambda *_a, **_k: None)
     ag = ChannelVoiceAgent(config=load(), orchestrator=None, base_system_prompt="BASE")
     return asyncio.run(ag.process_chat(user_id="u", user_message="hi", system_prompt="SYS"))
 
