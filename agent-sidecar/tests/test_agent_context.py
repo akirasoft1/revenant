@@ -74,8 +74,8 @@ def _patch_adk(monkeypatch):
     import src.agent as A
     monkeypatch.setattr(A, "InMemoryRunner", _FakeRunner)
     monkeypatch.setattr(A, "Agent", lambda **kw: object())
-    monkeypatch.setattr(A, "_build_model", lambda spec: object())
-    monkeypatch.setattr(A, "_build_generate_content_config", lambda: None)
+    monkeypatch.setattr(A, "_build_model", lambda spec, *_a, **_k: object())
+    monkeypatch.setattr(A, "_build_generate_content_config", lambda *_a, **_k: None)
 
 
 def test_process_chat_flags_fallback_when_no_system_prompt_supplied(monkeypatch):

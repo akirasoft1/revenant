@@ -49,8 +49,8 @@ class ObservabilityAgent:
             description="Read-only Dynatrace observability agent.",
             instruction=_OBS_INSTRUCTION,
             tools=toolsets,
-            model=_build_model(self._config.agent_model),
-            generate_content_config=_build_generate_content_config(),
+            model=_build_model(self._config.agent_model, self._config),
+            generate_content_config=_build_generate_content_config(request_timeout_seconds=self._config.agent_request_timeout_seconds),
         )
         runner = InMemoryRunner(agent=agent, app_name=_APP_NAME)
         await runner.session_service.create_session(

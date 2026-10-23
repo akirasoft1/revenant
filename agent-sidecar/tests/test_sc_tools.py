@@ -163,7 +163,7 @@ def _agent_with_sc(monkeypatch, sc_tools):
     monkeypatch.setenv("MONGO_URI", "mongodb://x")
     monkeypatch.setenv("SANDBOX_BASE_IMAGE", "img")
     monkeypatch.setenv("AGENT_MODEL", "gemini-3.8-flash")
-    monkeypatch.setattr(agent_module, "_build_model", lambda spec: _FakeLlm(model="fake"))
+    monkeypatch.setattr(agent_module, "_build_model", lambda spec, *_a, **_k: _FakeLlm(model="fake"))
     return ChannelVoiceAgent(
         config=load_config(), orchestrator=None, base_system_prompt="FALLBACK", sc_tools=sc_tools,
     )

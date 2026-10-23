@@ -42,3 +42,11 @@ data:
   # working on an abandoned turn, and the breaker never learns the turn failed.
   # If you raise this past 600s, change chatDeadlineMs in the same commit.
   AGENT_CHAT_TIMEOUT_SECONDS: "540"
+  # --- Per-request Gemini timeout (2026-10-23 incident) ---
+  # Bounds ONE model request so a hung call can't eat the whole 540s turn.
+  # A request that times out before any response is retried
+  # AGENT_REQUEST_TIMEOUT_RETRIES times (agent.TimeoutRetryingGemini); the
+  # turn as a whole is still capped by AGENT_CHAT_TIMEOUT_SECONDS, so with
+  # 300s the retry gets at most ~240s. 0/empty disables the bound.
+  AGENT_REQUEST_TIMEOUT_SECONDS: "300"
+  AGENT_REQUEST_TIMEOUT_RETRIES: "1"

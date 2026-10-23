@@ -93,7 +93,7 @@ def _agent(monkeypatch, *, sc_tools=None, hangar=None, flag="true", call=None):
 
     monkeypatch.setattr(A, "Agent", fake_agent)
     monkeypatch.setattr(A, "InMemoryRunner", _Runner)
-    monkeypatch.setattr(A, "_build_generate_content_config", lambda: None)
+    monkeypatch.setattr(A, "_build_generate_content_config", lambda *_a, **_k: None)
     ag = ChannelVoiceAgent(config=load(), orchestrator=None, base_system_prompt="BASE",
                            sc_tools=sc_tools, hangar_edits=hangar)
     return ag, captured
