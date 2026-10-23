@@ -56,8 +56,23 @@ Secondary option, and not a substitute for the above: **Priority PayGo** on glob
 - `HttpOptions` carries `base_url`, `api_version`, `headers`, `timeout` (milliseconds) and `retry_options` [src: `google/genai/types.py`].
 - Discrepancy: `_gemini_retry_options` on `origin/main` is **4 attempts, 0.5 s to 8 s**, matching `agent-sidecar/CLAUDE.md` [repo]. The brief for this spike said 5 attempts, 0.5 s to 15 s, which presumably comes from the in-flight timeout branch. Reconcile when merging.
 
-### 2.6 Probe
-**Not run.** Local `gcloud auth print-access-token` fails ("Reauthentication failed. cannot prompt during non-interactive execution"), so I sent no requests. The probe to run, from inside the cluster (local latency would not be representative anyway), is at most 6 calls to each of `https://aiplatform.googleapis.com/v1/projects/revenant-discord-bot-2/locations/global/publishers/google/models/gemini-3.8-flash:generateContent` and `https://aiplatform.us.rep.googleapis.com/v1/projects/revenant-discord-bot-2/locations/us/publishers/google/models/gemini-3.8-flash:generateContent`. Do one more call to `https://us-central1-aiplatform.googleapis.com/...locations/us-central1/...` to confirm the 404. Then make one call to `us` with `tools:[{googleSearch:{}}]` to answer Q2.
+### 2.6 Probe (run 2026-10-23 ~16:50–17:05 UTC, from inside the agent pod)
+Run with the production SA, network path and SDK (google-genai 2.33, sync `generate_content`, prompt "Reply with exactly: OK"). google-genai maps `location="us"` to `https://aiplatform.us.rep.googleapis.com/` by itself, so failover is only a `location` change.
+
+| Round | Endpoint | OK / errors | p50 | Worst | Notes |
+|---|---|---|---|---|---|
+| 1 (120s deadline) | `global` | 5 / 1 | 3.4s | **107.6s** | two calls >100s; one 504; **grounded call 504** |
+| 1 (120s deadline) | `us` | 6 / 0 | 4.5s | 13.0s | grounded call OK: 9.3s, 2 search queries |
+| 1 | `us-central1` | 0 / 1 | | | **404**: model not served there (confirmed) |
+| 2 (60s, interleaved) | `global` | 3 / **5** | 11.8s | 26.7s | every error a 504 at ~57s |
+| 2 (60s, interleaved) | `us` | 8 / 0 | 11.2s | 44.8s | slower than round 1 but no failures |
+
+**Verified:**
+- `us` serves `gemini-3.8-flash` with Google Search grounding (this answers Q2).
+- `us` stayed healthy while `global` was degraded at the same moment (errors 0/14 on `us` vs 6/14 plain plus a failed grounded call on `global`). Capacity looks genuinely separate in practice.
+- **Vertex honours the deadline we send** (`X-Server-Timeout`, set from `http_options.timeout`) and returns **504 DEADLINE_EXCEEDED a few seconds before the client gives up** (~57s for a 60s deadline). Consequence for the per-request timeout (PR #132): in production a hung request usually ends as a server 504, which the SDK's own retry (504 in `AGENT_RETRY_STATUS_CODES`) retries on the same endpoint. `TimeoutRetryingGemini` is the backstop for when the server doesn't answer at all. A failover design should key on that 504 as well as on 429 and client timeouts.
+
+**Caveat:** a small sample taken during an ongoing `global` degradation (the 15:55–16:11 incident, then a recurrence). It shows `us` is a viable second pool. It does not show `us` is better on an ordinary day.
 
 ## 3. Design sketch (recommended option)
 
