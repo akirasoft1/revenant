@@ -450,6 +450,20 @@ _SC_MEMORY_FALLBACK = (
 )
 
 
+def _sc_guide_rule(*, web_search: bool) -> str:
+    """Guide/list requests are researched per item before writing (2026-10-25:
+    a Wikelo shopping-guide request, then "elaborate", got four thin lines).
+    The persona allows long answers when asked; this makes the agent fetch
+    what a long answer needs instead of padding one lookup or memory."""
+    uncovered = (" and google_search for whatever the tools don't cover" if web_search else "")
+    return (
+        "When someone asks for a guide, a full list, a shopping route or a step-by-step plan, research it before writing: "
+        "call sc_location_shops for every location involved and sc_find_item for every item that needs a price or a source"
+        f"{uncovered}, then answer from those results with the specifics (where, price, quantity, order and why). "
+        "Several tool calls are expected here; one lookup is not enough for a guide."
+    )
+
+
 def sc_tools_preamble(*, web_search: bool, hangar_edits: bool = False) -> str:
     """Star Citizen tools note for a turn where the sc_* tools are attached.
     The ordered fallback policy only names google_search when it is attached;
@@ -478,6 +492,7 @@ def sc_tools_preamble(*, web_search: bool, hangar_edits: bool = False) -> str:
         f"For ANY Star Citizen question, in order: {policy} "
         f"{_sc_memory_rule(web_search=web_search)} "
         f"{_sc_dispute_rule(web_search=web_search)} "
+        f"{_sc_guide_rule(web_search=web_search)} "
         "Tool numbers are already ranked and computed; never write code or use run_in_sandbox to fetch, compute, or re-rank Star Citizen data. "
         "Mention the data's patch or age when prices or availability matter. "
         "If a tool returns an error or candidates, say so or ask which one was meant — do not invent values."
