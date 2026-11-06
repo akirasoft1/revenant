@@ -72,3 +72,8 @@ tools/**/__pycache__/
 
 # HangarXPLOR exports hold personal pledge data (never commit)
 shiplist.json
+
+# Local agent tooling scratch (subagent briefs/reports/diffs) and Gemini CLI
+# project memory -- per-machine, never committed to this PUBLIC repo.
+.superpowers/
+GEMINI.md
