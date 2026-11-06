@@ -75,6 +75,7 @@ For larger features, commit checkpoints along the way:
 - **Container name**: The deployment container is named `bot`, not `discord-article-bot`
 - **Source of truth**: `k8s/overlays/deployed/` (gitignored, contains real secrets)
 - **Do NOT use kustomize**: The `k8s/base/` and `k8s/overlays/prod/` are out of sync and contain placeholder secrets
+- **Images are PUBLIC; secrets never go in the repo tree.** Docker ignore patterns are root-anchored, so every build context carries `**/`-prefixed secret patterns (`**/.env*`, `**/*key*.json`, `**/*.pem`, `**/*.key`, `**/credentials*.json`, `**/*service_account*`), pinned by `__tests__/dockerignoreSecrets.test.js`. Mint SA keys outside the repo, load them straight into the k8s Secret, and shred the local copy. Why: in Aug 2026 a bare `*-key.json` missed `agent-sidecar/genai-sa-key.json`, which shipped in public bot images (tags built 2026-08-05 to 08-14) and was used for Vertex billing abuse in Nov 2026.
 
 ### Deployment Steps
 
