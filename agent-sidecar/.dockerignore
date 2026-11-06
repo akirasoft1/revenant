@@ -3,3 +3,11 @@ __pycache__
 *.pyc
 tests
 .pytest_cache
+
+# Secrets at any depth (Docker patterns are root-anchored; see __tests__/dockerignoreSecrets.test.js)
+**/.env*
+**/*key*.json
+**/*.pem
+**/*.key
+**/credentials*.json
+**/*service_account*

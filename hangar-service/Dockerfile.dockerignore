@@ -23,6 +23,8 @@ hangar-editor/coverage
 **/*.pem
 **/*.key
 **/credentials.json
+**/credentials*.json
+**/*service_account*
 OrgGuides
 **/OrgGuides
 **/*.swf.gz
