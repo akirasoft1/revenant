@@ -77,11 +77,20 @@ location with it. A 2026-10-10 smoke spike chose it over 2.5-flash: no
 `end_conversation`, one `sc_*` call per question. Both are non-secret, so
 they're baked in here.
 
-## No new secrets
+## Secrets
 
-Both `agent-genai-sa` (mounted at `/var/secrets/genai/key.json` for GEAP
-ADC) and `agent-sa` (`serviceAccountName`) are reused verbatim from the
-agent sidecar. Nothing new to create in the cluster for this Deployment.
+`voice-genai-sa` holds the key for the voice sidecar's OWN GCP service
+account, `voice-sidecar-genai@revenant-discord-bot-2`
+(`roles/aiplatform.user`), mounted at `/var/secrets/genai/key.json` for
+GEAP ADC. It is deliberately separate from the agent sidecar's
+`agent-genai-sa` (SA `agent-sidecar-genai@`), so Vertex request metrics
+show per-sidecar traffic. Create it from a key minted OUTSIDE the repo,
+then shred the local copy:
+
+    kubectl create secret generic voice-genai-sa -n discord-article-bot \
+      --from-file=key.json=<path-outside-repo>/key.json
+
+`agent-sa` (`serviceAccountName`) is still reused from the agent sidecar.
 
 ## Required modifications to existing manifests
 

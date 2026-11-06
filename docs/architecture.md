@@ -483,7 +483,7 @@ flowchart TB
             end
 
             CM[ConfigMaps<br/>discord-article-bot-config,<br/>sandbox-config, discord-article-bot-prompt,<br/>sc-org-guides]
-            Sec[Secrets<br/>discord-article-bot-secrets,<br/>google-cloud-service-account,<br/>agent-genai-sa, hangar-api-sa,<br/>sc-knowledge-secrets]
+            Sec[Secrets<br/>discord-article-bot-secrets,<br/>google-cloud-service-account,<br/>agent-genai-sa, voice-genai-sa, hangar-api-sa,<br/>sc-knowledge-secrets]
             NP[NetworkPolicies<br/>discord-article-bot, agent-egress,<br/>voice-egress, sc-knowledge,<br/>sandbox-egress]
         end
     end
@@ -528,7 +528,7 @@ flowchart TB
 - **`k8s/overlays/deployed/` is the source of truth and is gitignored** (it holds real secrets). Tracked manifests in `k8s/sandbox/`, `k8s/voice/` and `k8s/sc-knowledge/` carry placeholders (e.g. `REPLACE_WITH_SHA`) — never apply them directly. Do not use kustomize; `k8s/base/` and `k8s/overlays/prod/` are out of sync. Infra manifests: `k8s/mem0/qdrant.yaml`, `k8s/mem0/postgres.yaml`, and `mongo.yml` at the repo root.
 - **Image tags.** The bot image is tagged with its npm semver (`2.25.0`); every other image is tagged with a git short SHA, never `:latest`. The agent sidecar and `sandbox-base` move in lockstep (the agent's `SANDBOX_BASE_IMAGE` env and its own image are bumped together). hangar-service images go to Artifact Registry in `revenant-discord-bot-2`.
 - **Strategies.** The bot and the agent sidecar are single-replica `Recreate` (in-process state: the bot's Discord session, the agent's sandbox concurrency budget) — do not scale either. The voice sidecar is `RollingUpdate` so a rollout doesn't drop live calls. sc-knowledge is stateless, `RollingUpdate`.
-- **Gemini runs on GEAP (Vertex).** Both sidecars authenticate with the `agent-genai-sa` key. The agent uses location `global`; the voice sidecar must use `us-central1` (the only location serving `gemini-3.8-live` on this project). The bot's image and music generation still use the consumer `GEMINI_API_KEY`.
+- **Gemini runs on GEAP (Vertex).** Each sidecar has its own service account and key: agent `agent-sidecar-genai@` (Secret `agent-genai-sa`), voice `voice-sidecar-genai@` (Secret `voice-genai-sa`), so Vertex traffic is attributable per sidecar. The agent uses location `global`; the voice sidecar must use `us-central1` (the only location serving `gemini-3.8-live` on this project). The bot's image and music generation still use the consumer `GEMINI_API_KEY`.
 - **Hangar credentials.** All four callers (bot, agent, voice, sc-knowledge) mount Secret `hangar-api-sa`, readable by uid 1000. Key rotation needs pod restarts.
 - **Sandbox isolation is Kata, not gVisor** (switched 2026-04-29: Harvester's immutable SLE Micro host makes `runsc` impractical). Cold start adds ~1.5–3 s per call. Sandbox pods carry `dynatrace.com/inject: "false"`; without it OneAgent held PID 1 and executions took ~120 s.
 - **NetworkPolicy posture** (default-deny; RFC1918 excluded from every "public" rule):
