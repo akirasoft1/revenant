@@ -35,6 +35,7 @@ ReadError) and a non-JSON 5xx (a gateway 502/504) are `maybe_applied`. `prewarm(
 at startup so the first edit doesn't pay for it inside the voice bound.
 """
 import asyncio
+import json
 import logging
 import re
 import time
@@ -76,7 +77,40 @@ class HangarUnavailable(Exception):
     """Could not mint an ID token for hangar-service."""
 
 
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_IMPERSONATION_URL_RE = re.compile(r"/serviceAccounts/([^/:]+):generateAccessToken$")
+
+
 def _default_credentials_factory(key_path: str, audience: str):
+    """ID-token credentials for `audience` from the file at `key_path`.
+
+    The file's `type` picks the flow: a service-account key signs the ID token
+    itself; a federated (`external_account`) credential file is the source for
+    impersonating the caller service account, whose email is parsed from the
+    file's `service_account_impersonation_url`. `include_email` is required --
+    the service rejects a token without the email claim.
+    """
+    with open(key_path, encoding="utf-8") as f:
+        info = json.load(f)
+    if isinstance(info, dict) and info.get("type") == "external_account":
+        from google.auth import identity_pool, impersonated_credentials
+        match = _IMPERSONATION_URL_RE.search(str(info.get("service_account_impersonation_url") or ""))
+        if not match:
+            raise ValueError(
+                f"{key_path}: external_account credential file has no usable "
+                "service_account_impersonation_url (expected .../serviceAccounts/<email>:generateAccessToken)")
+        # One impersonation hop: the source is the plain federated token (the
+        # impersonation settings removed), so the target SA is impersonated
+        # exactly once. from_info, not load_credentials_from_file, which would
+        # also look up the project id (extra egress).
+        plain = {k: v for k, v in info.items()
+                 if k not in ("service_account_impersonation_url", "service_account_impersonation")}
+        source = identity_pool.Credentials.from_info(plain, scopes=[_CLOUD_PLATFORM_SCOPE])
+        target = impersonated_credentials.Credentials(
+            source_credentials=source, target_principal=match.group(1),
+            target_scopes=[_CLOUD_PLATFORM_SCOPE])
+        return impersonated_credentials.IDTokenCredentials(
+            target, target_audience=audience, include_email=True)
     from google.oauth2 import service_account
     return service_account.IDTokenCredentials.from_service_account_file(
         key_path, target_audience=audience)

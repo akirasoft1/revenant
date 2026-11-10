@@ -57,13 +57,6 @@ class FakeHangar:
         self.raise_exc = raise_exc
         self.calls = []
 
-    async def pledge_leaderboard(self):
-        if self.raise_exc:
-            raise self.raise_exc
-        return {"entries": [{"member": AKIRA, "displayName": "Akira", "totals": {"USD": 1234.5}, "pledges": 3,
-                             "ships": 4, "lti": 2, "topPledge": {"name": "Idris", "amount": 1500, "currency": "USD"},
-                             "lastImport": "2026-10-01"}], "caveat": "per HangarXPLOR imports"}
-
     async def get_hangar(self, member_id):
         self.calls.append(member_id)
         if self.raise_exc:
@@ -494,18 +487,19 @@ def _rsi_tools(hangars, exc=None):
     return HangarTools(_C(raise_exc=exc), FakeItems())
 
 
-async def test_member_hangar_passes_rsi_pledge_fields_and_summary():
+async def test_member_hangar_passes_rsi_fields_but_never_pledge_cost_or_summary():
     summary = {"totals": {"USD": 250.0}, "pledges": 1, "ships": 1, "lti": 1}
     t = _rsi_tools({AKIRA: {"member": AKIRA, "ships": [RSI_HARBINGER, TAURUS], "pledgeSummary": summary}})
     out = await t.member_hangar(AKIRA)
-    assert out["pledgeSummary"] == summary
+    assert "pledgeSummary" not in out
     h = next(s for s in out["ships"] if s["vehicle"] == "Vanguard Harbinger")
     assert h["rsi"] == {"pledgeName": "Standalone Ship - Harbinger", "pledgeDate": "2025-01-02",
-                        "pledgeCost": "$250.00 USD", "lti": True, "warbond": False,
-                        "rsiName": "Vanguard Harbinger"}
+                        "lti": True, "warbond": False, "rsiName": "Vanguard Harbinger"}
+    assert "pledgeCost" not in str(out)
     assert "rsi" not in next(s for s in out["ships"] if s["vehicle"] == "Constellation Taurus")
     one = await t.member_hangar(AKIRA, "Harbinger")
-    assert one["ship"]["rsi"]["lti"] is True and one["pledgeSummary"] == summary
+    assert one["ship"]["rsi"]["lti"] is True
+    assert "pledgeSummary" not in one and "pledgeCost" not in str(one)
 
 
 async def test_member_hangar_without_pledge_data_has_no_pledge_keys():
@@ -514,16 +508,5 @@ async def test_member_hangar_without_pledge_data_has_no_pledge_keys():
     assert all("rsi" not in s for s in out["ships"])
 
 
-async def test_pledge_leaderboard_ok():
-    out = await HangarTools(FakeHangar(), FakeItems()).pledge_leaderboard()
-    assert out["entries"][0]["totals"] == {"USD": 1234.5}
-    assert out["entries"][0]["displayName"] == "Akira"
-    assert out["caveat"] == "per HangarXPLOR imports"
-    assert "error" not in out
-
-
-async def test_pledge_leaderboard_unavailable():
-    out = await HangarTools(FakeHangar(raise_exc=HangarUnavailable("down")), FakeItems()).pledge_leaderboard()
-    assert out["error"] == "unavailable"
-    out = await HangarTools(None, FakeItems()).pledge_leaderboard()
-    assert out["error"] == "unavailable"
+def test_hangar_tools_has_no_pledge_leaderboard():
+    assert not hasattr(HangarTools, "pledge_leaderboard")

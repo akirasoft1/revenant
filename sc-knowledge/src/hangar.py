@@ -6,9 +6,11 @@ client is driven by a language model's tool calls. So it exposes GETs only --
 no write route is reachable from here, and tests pin that (no write-shaped
 method, no write verb or acting-member header anywhere in this module).
 
-Auth: Cloud Run invoker IAM is on, so EVERY call (even /health) carries a
-Google-signed ID token minted from the mounted service-account key with
-`target_audience` = HANGAR_API_URL. Minting is blocking (google-auth +
+Auth: Cloud Run's invoker IAM check is OFF; the app's own authentication is
+the only gate, and it requires a Google-signed ID token on EVERY call (even
+/health), minted from the mounted credential file (a service-account key or
+a federated external_account config) with `target_audience` = HANGAR_API_URL.
+Minting is blocking (google-auth +
 requests), so it runs in a thread, single-flight, and the token is cached
 until 5 minutes before it expires.
 
@@ -16,7 +18,9 @@ Bounds: one call (token + request) is capped at `timeout_s` (3s -- the voice
 sidecar bounds a whole tool call at 6s). Successful responses are cached 30s.
 """
 import asyncio
+import json
 import logging
+import re
 import time
 from datetime import timezone
 from typing import Any, Callable
@@ -48,7 +52,40 @@ class HangarError(Exception):
         self.message = message
 
 
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_IMPERSONATION_URL_RE = re.compile(r"/serviceAccounts/([^/:]+):generateAccessToken$")
+
+
 def _default_credentials_factory(key_path: str, audience: str):
+    """ID-token credentials for `audience` from the file at `key_path`.
+
+    The file's `type` picks the flow: a service-account key signs the ID token
+    itself; a federated (`external_account`) credential file is the source for
+    impersonating the caller service account, whose email is parsed from the
+    file's `service_account_impersonation_url`. `include_email` is required --
+    the service rejects a token without the email claim.
+    """
+    with open(key_path, encoding="utf-8") as f:
+        info = json.load(f)
+    if isinstance(info, dict) and info.get("type") == "external_account":
+        from google.auth import identity_pool, impersonated_credentials
+        match = _IMPERSONATION_URL_RE.search(str(info.get("service_account_impersonation_url") or ""))
+        if not match:
+            raise ValueError(
+                f"{key_path}: external_account credential file has no usable "
+                "service_account_impersonation_url (expected .../serviceAccounts/<email>:generateAccessToken)")
+        # One impersonation hop: the source is the plain federated token (the
+        # impersonation settings removed), so the target SA is impersonated
+        # exactly once. from_info, not load_credentials_from_file, which would
+        # also look up the project id (extra egress).
+        plain = {k: v for k, v in info.items()
+                 if k not in ("service_account_impersonation_url", "service_account_impersonation")}
+        source = identity_pool.Credentials.from_info(plain, scopes=[_CLOUD_PLATFORM_SCOPE])
+        target = impersonated_credentials.Credentials(
+            source_credentials=source, target_principal=match.group(1),
+            target_scopes=[_CLOUD_PLATFORM_SCOPE])
+        return impersonated_credentials.IDTokenCredentials(
+            target, target_audience=audience, include_email=True)
     from google.oauth2 import service_account
     return service_account.IDTokenCredentials.from_service_account_file(
         key_path, target_audience=audience)
@@ -171,10 +208,6 @@ class HangarClient:
     async def get_hangar(self, member_id: str) -> dict:
         """`GET /v1/members/{id}/hangar` -> {member, ships: [Ship]}."""
         return await self._get(f"/v1/members/{member_id}/hangar")
-
-    async def pledge_leaderboard(self) -> dict:
-        """`GET /v1/pledges/leaderboard` -> {entries: [...], caveat}."""
-        return await self._get("/v1/pledges/leaderboard")
 
     async def aclose(self) -> None:
         await self._http.aclose()

@@ -3,10 +3,15 @@ jest.mock('google-auth-library', () => {
   const getIdTokenClient = jest.fn();
   const GoogleAuth = jest.fn(() => ({ getIdTokenClient }));
   GoogleAuth.__getIdTokenClient = getIdTokenClient;
-  return { GoogleAuth };
+  const ExternalAccountClient = { fromJSON: jest.fn() };
+  const Impersonated = jest.fn();
+  return { GoogleAuth, ExternalAccountClient, Impersonated };
 });
 
-const { GoogleAuth } = require('google-auth-library');
+const { GoogleAuth, ExternalAccountClient, Impersonated } = require('google-auth-library');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const logger = require('../../logger');
 const HangarClient = require('../../services/HangarClient');
 
@@ -213,19 +218,8 @@ describe('HangarClient', () => {
     expect(res).toMatchObject({ ok: false, error: 'unavailable' });
   });
 
-  test('getPledgeLeaderboard GETs /v1/pledges/leaderboard with no acting member', async () => {
-    fetchImpl.mockResolvedValue(jsonResponse(200, { entries: [], caveat: 'c' }));
-    const res = await make().getPledgeLeaderboard();
-    expect(res).toEqual({ ok: true, data: { entries: [], caveat: 'c' } });
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe(`${API}/v1/pledges/leaderboard`);
-    expect(init.method).toBe('GET');
-    expect(init.headers['X-Acting-Member']).toBeUndefined();
-  });
-
-  test('getPledgeLeaderboard never throws', async () => {
-    fetchImpl.mockRejectedValue(new Error('boom'));
-    expect(await make().getPledgeLeaderboard()).toMatchObject({ ok: false, error: 'unavailable' });
+  test('has no pledge leaderboard method', () => {
+    expect(make().getPledgeLeaderboard).toBeUndefined();
   });
 
   test('not configured -> unavailable without any call', async () => {
@@ -233,5 +227,98 @@ describe('HangarClient', () => {
     expect(res).toMatchObject({ ok: false, error: 'unavailable' });
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(authFactory).not.toHaveBeenCalled();
+  });
+
+  test('getHangar sends X-Acting-Member only when an actingMember is given', async () => {
+    await make().getHangar('111', { actingMember: '999' });
+    expect(fetchImpl.mock.calls[0][1].headers['X-Acting-Member']).toBe('999');
+    await make().getHangar('111');
+    expect(fetchImpl.mock.calls[1][1].headers['X-Acting-Member']).toBeUndefined();
+  });
+});
+
+describe('defaultAuthClientFactory', () => {
+  const EMAIL = 'caller-sa@proj.iam.gserviceaccount.com';
+  const URL_ = `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${EMAIL}:generateAccessToken`;
+  let dir;
+  let nowSpy;
+  let fetchIdToken;
+
+  const jwt = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
+  const write = (obj) => {
+    const f = path.join(dir, 'cred.json');
+    fs.writeFileSync(f, JSON.stringify(obj));
+    return f;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hangar-cred-'));
+    nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_000_000_000_000);
+    fetchIdToken = jest.fn();
+    Impersonated.mockImplementation(() => ({ fetchIdToken }));
+    ExternalAccountClient.fromJSON.mockReturnValue({ source: true });
+  });
+  afterEach(() => {
+    nowSpy.mockRestore();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('service_account key keeps the GoogleAuth ID-token client path', async () => {
+    const idClient = { getRequestHeaders: jest.fn() };
+    GoogleAuth.__getIdTokenClient.mockResolvedValue(idClient);
+    const f = write({ type: 'service_account', client_email: 'x@y' });
+    expect(await HangarClient.defaultAuthClientFactory(f, API)).toBe(idClient);
+    expect(GoogleAuth).toHaveBeenCalledWith({ keyFile: f });
+    expect(GoogleAuth.__getIdTokenClient).toHaveBeenCalledWith(API);
+    expect(Impersonated).not.toHaveBeenCalled();
+  });
+
+  test('external_account impersonates the URL-parsed SA and fetches an ID token with the email claim', async () => {
+    const exp = 1_000_000_000 + 3600;
+    fetchIdToken.mockResolvedValue(jwt(exp));
+    const info = { type: 'external_account', audience: 'aud', service_account_impersonation_url: URL_,
+      service_account_impersonation: { token_lifetime_seconds: 600 } };
+    const client = await HangarClient.defaultAuthClientFactory(write(info), API);
+    // The source is built WITHOUT the impersonation settings (one hop only).
+    expect(ExternalAccountClient.fromJSON).toHaveBeenCalledWith({ type: 'external_account', audience: 'aud' });
+    expect(Impersonated).toHaveBeenCalledWith({
+      sourceClient: { source: true },
+      targetPrincipal: EMAIL,
+      targetScopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    expect(await client.getRequestHeaders()).toEqual({ Authorization: `Bearer ${jwt(exp)}` });
+    expect(fetchIdToken).toHaveBeenCalledWith(API, { includeEmail: true });
+  });
+
+  test('external_account that ExternalAccountClient.fromJSON rejects (null) fails naming the file', async () => {
+    ExternalAccountClient.fromJSON.mockReturnValue(null);
+    const f = write({ type: 'external_account', service_account_impersonation_url: URL_ });
+    await expect(HangarClient.defaultAuthClientFactory(f, API))
+      .rejects.toThrow(`${f}: unsupported external_account credential file`);
+    expect(Impersonated).not.toHaveBeenCalled();
+  });
+
+  test('the ID token is cached until 5 minutes before exp, then re-minted', async () => {
+    const nowS = 1_000_000_000;
+    fetchIdToken.mockResolvedValueOnce(jwt(nowS + 3600)).mockResolvedValueOnce(jwt(nowS + 7200));
+    const client = await HangarClient.defaultAuthClientFactory(
+      write({ type: 'external_account', service_account_impersonation_url: URL_ }), API);
+    await client.getRequestHeaders();
+    nowSpy.mockReturnValue((nowS + 3600 - 301) * 1000);
+    await client.getRequestHeaders();
+    expect(fetchIdToken).toHaveBeenCalledTimes(1);
+    nowSpy.mockReturnValue((nowS + 3600 - 299) * 1000);
+    expect((await client.getRequestHeaders()).Authorization).toBe(`Bearer ${jwt(nowS + 7200)}`);
+    expect(fetchIdToken).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['unparseable', 'https://example.test/nope'],
+  ])('external_account with a %s impersonation url fails naming the file path only', async (_n, url) => {
+    const f = write({ type: 'external_account', client_secret: 'sekret', service_account_impersonation_url: url });
+    await expect(HangarClient.defaultAuthClientFactory(f, API)).rejects.toThrow(f);
+    await expect(HangarClient.defaultAuthClientFactory(f, API)).rejects.not.toThrow(/sekret/);
   });
 });

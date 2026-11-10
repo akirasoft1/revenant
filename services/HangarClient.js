@@ -1,17 +1,22 @@
 // services/HangarClient.js
 // HTTP client for hangar-service (Cloud Run): members' Star Citizen ships.
 //
-// Cloud Run invoker IAM is on, so every request carries a Google ID token
-// minted from the caller SA key (HANGAR_SA_KEY_PATH) for the audience
-// HANGAR_API_URL -- which must equal the service's HANGAR_AUDIENCE byte for
-// byte (no trailing slash). The IdTokenClient caches the token until expiry.
+// Cloud Run's invoker IAM check is OFF; the app's own authentication is the
+// only gate. Every request carries a Google ID token (with the email claim)
+// for the audience HANGAR_API_URL -- which must equal the service's
+// HANGAR_AUDIENCE byte for byte (no trailing slash). The credential file
+// (HANGAR_SA_KEY_PATH) is either a service-account key or a federated
+// (`external_account`) credential file, chosen by its `type`; the latter
+// impersonates the caller service account to mint the token. Either way the
+// token is cached until shortly before it expires.
 //
 // Never throws to callers: every method resolves to
 //   { ok: true, data }  or  { ok: false, error, message, candidates? }
 // where `error` is the service's envelope code (unavailable, not_found,
 // ambiguous, incompatible, forbidden, unauthenticated, invalid_request).
 // Network failures, timeouts and token-mint failures are `unavailable`.
-// Writes always send X-Acting-Member (the invoking Discord user).
+// Writes always send X-Acting-Member (the invoking Discord user); reads send
+// it only when the caller passes {actingMember} (the invoker, never an option).
 'use strict';
 
 const logger = require('../logger');
@@ -27,9 +32,71 @@ const STATUS_CODES = {
   422: 'incompatible',
 };
 
-function defaultAuthClientFactory(keyFile, audience) {
-  const { GoogleAuth } = require('google-auth-library');
-  return new GoogleAuth({ keyFile }).getIdTokenClient(audience);
+const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+const IMPERSONATION_URL_RE = /\/serviceAccounts\/([^/:]+):generateAccessToken$/;
+const TOKEN_REFRESH_MARGIN_S = 300;
+
+// exp (seconds) from a JWT payload, unverified; null when unreadable.
+function jwtExp(token) {
+  try {
+    const exp = JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')).exp;
+    return Number.isFinite(exp) ? exp : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// getRequestHeaders() client over an Impersonated client: mints an ID token
+// (email claim included -- the service rejects one without) and caches it
+// until 5 minutes before its exp.
+function impersonatedIdTokenClient(impersonated, audience) {
+  let token = null;
+  let expiresAtMs = 0;
+  return {
+    async getRequestHeaders() {
+      if (!token || Date.now() >= expiresAtMs - TOKEN_REFRESH_MARGIN_S * 1000) {
+        const fresh = await impersonated.fetchIdToken(audience, { includeEmail: true });
+        const exp = jwtExp(fresh);
+        token = fresh;
+        // An unreadable exp is not cached past this call.
+        expiresAtMs = exp ? exp * 1000 : 0;
+      }
+      return { Authorization: `Bearer ${token}` };
+    },
+  };
+}
+
+async function defaultAuthClientFactory(keyFile, audience) {
+  let info = null;
+  try {
+    info = JSON.parse(require('fs').readFileSync(keyFile, 'utf8'));
+  } catch (_) {
+    // Unreadable/unparseable: GoogleAuth below reports it in its own words.
+  }
+  const lib = require('google-auth-library');
+  if (info && info.type === 'external_account') {
+    const match = IMPERSONATION_URL_RE.exec(String(info.service_account_impersonation_url || ''));
+    if (!match) {
+      throw new Error(`${keyFile}: external_account credential file has no usable service_account_impersonation_url `
+        + '(expected .../serviceAccounts/<email>:generateAccessToken)');
+    }
+    // One impersonation hop: the source is the plain federated token (the
+    // impersonation settings removed); the target SA is impersonated once.
+    const plain = { ...info };
+    delete plain.service_account_impersonation_url;
+    delete plain.service_account_impersonation;
+    const sourceClient = lib.ExternalAccountClient.fromJSON(plain);
+    if (!sourceClient) {
+      throw new Error(`${keyFile}: unsupported external_account credential file`);
+    }
+    const impersonated = new lib.Impersonated({
+      sourceClient,
+      targetPrincipal: match[1],
+      targetScopes: [CLOUD_PLATFORM_SCOPE],
+    });
+    return impersonatedIdTokenClient(impersonated, audience);
+  }
+  return new lib.GoogleAuth({ keyFile }).getIdTokenClient(audience);
 }
 
 function describe(err) {
@@ -59,8 +126,8 @@ class HangarClient {
     return Boolean(this.apiUrl);
   }
 
-  getHangar(memberId, { timeoutMs } = {}) {
-    return this._request('GET', `/v1/members/${encodeURIComponent(memberId)}/hangar`, { timeoutMs });
+  getHangar(memberId, { timeoutMs, actingMember } = {}) {
+    return this._request('GET', `/v1/members/${encodeURIComponent(memberId)}/hangar`, { timeoutMs, actingMember });
   }
 
   addShip(memberId, { vehicle, nickname } = {}, actingMember) {
@@ -84,10 +151,6 @@ class HangarClient {
       actingMember,
       write: true,
     });
-  }
-
-  getPledgeLeaderboard({ timeoutMs } = {}) {
-    return this._request('GET', '/v1/pledges/leaderboard', { timeoutMs });
   }
 
   searchVehicles(q, { limit = 25, timeoutMs } = {}) {
@@ -184,4 +247,5 @@ class HangarClient {
 }
 
 HangarClient.DEFAULT_TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
+HangarClient.defaultAuthClientFactory = defaultAuthClientFactory;
 module.exports = HangarClient;
