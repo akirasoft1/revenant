@@ -58,3 +58,22 @@ def test_external_account_without_parsable_impersonation_url_names_the_path(tmp_
         _default_credentials_factory(str(path), URL)
     assert str(path) in str(e.value)
     assert "subject-token" not in str(e.value)
+
+
+def test_service_account_key_still_builds_service_account_id_token_credentials(tmp_path):
+    """type=service_account keeps the original path (no network: not refreshed)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from google.oauth2 import service_account
+
+    pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+    key = tmp_path / "key.json"
+    key.write_text(json.dumps({
+        "type": "service_account", "project_id": "p", "private_key_id": "k1",
+        "private_key": pem, "client_email": EMAIL,
+        "client_id": "1", "token_uri": "https://oauth2.googleapis.com/token"}))
+    creds = _default_credentials_factory(str(key), URL)
+    assert isinstance(creds, service_account.IDTokenCredentials)
+    assert creds._target_audience == URL
