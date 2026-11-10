@@ -66,14 +66,19 @@ def _default_credentials_factory(key_path: str, audience: str):
     with open(key_path, encoding="utf-8") as f:
         info = json.load(f)
     if isinstance(info, dict) and info.get("type") == "external_account":
-        import google.auth
-        from google.auth import impersonated_credentials
+        from google.auth import identity_pool, impersonated_credentials
         match = _IMPERSONATION_URL_RE.search(str(info.get("service_account_impersonation_url") or ""))
         if not match:
             raise ValueError(
                 f"{key_path}: external_account credential file has no usable "
                 "service_account_impersonation_url (expected .../serviceAccounts/<email>:generateAccessToken)")
-        source, _ = google.auth.load_credentials_from_file(key_path, scopes=[_CLOUD_PLATFORM_SCOPE])
+        # One impersonation hop: the source is the plain federated token (the
+        # impersonation settings removed), so the target SA is impersonated
+        # exactly once. from_info, not load_credentials_from_file, which would
+        # also look up the project id (extra egress).
+        plain = {k: v for k, v in info.items()
+                 if k not in ("service_account_impersonation_url", "service_account_impersonation")}
+        source = identity_pool.Credentials.from_info(plain, scopes=[_CLOUD_PLATFORM_SCOPE])
         target = impersonated_credentials.Credentials(
             source_credentials=source, target_principal=match.group(1),
             target_scopes=[_CLOUD_PLATFORM_SCOPE])

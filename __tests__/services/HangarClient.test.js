@@ -288,9 +288,11 @@ describe('defaultAuthClientFactory', () => {
   test('external_account impersonates the URL-parsed SA and fetches an ID token with the email claim', async () => {
     const exp = 1_000_000_000 + 3600;
     fetchIdToken.mockResolvedValue(jwt(exp));
-    const info = { type: 'external_account', service_account_impersonation_url: URL_ };
+    const info = { type: 'external_account', audience: 'aud', service_account_impersonation_url: URL_,
+      service_account_impersonation: { token_lifetime_seconds: 600 } };
     const client = await HangarClient.defaultAuthClientFactory(write(info), API);
-    expect(ExternalAccountClient.fromJSON).toHaveBeenCalledWith(info);
+    // The source is built WITHOUT the impersonation settings (one hop only).
+    expect(ExternalAccountClient.fromJSON).toHaveBeenCalledWith({ type: 'external_account', audience: 'aud' });
     expect(Impersonated).toHaveBeenCalledWith({
       sourceClient: { source: true },
       targetPrincipal: EMAIL,

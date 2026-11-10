@@ -33,10 +33,11 @@ def _external(tmp_path, url=IMPERSONATION):
 
 
 def test_external_account_impersonates_target_with_email_claim(tmp_path, monkeypatch):
-    # load_credentials_from_file asks the credential for its project id, which
-    # would call STS; there is no network in this test.
-    from google.auth import external_account
-    monkeypatch.setattr(external_account.Credentials, "get_project_id", lambda self, request=None: None)
+    import google.auth
+
+    def _boom(*a, **k):  # would do a project-id lookup (extra egress)
+        raise AssertionError("load_credentials_from_file must not be used")
+    monkeypatch.setattr(google.auth, "load_credentials_from_file", _boom)
     creds = _default_credentials_factory(str(_external(tmp_path)), URL)
     assert isinstance(creds, impersonated_credentials.IDTokenCredentials)
     assert creds._target_audience == URL
@@ -45,6 +46,9 @@ def test_external_account_impersonates_target_with_email_claim(tmp_path, monkeyp
     assert isinstance(target, impersonated_credentials.Credentials)
     assert target._target_principal == EMAIL
     assert target._target_scopes == ["https://www.googleapis.com/auth/cloud-platform"]
+    # One hop: the source is the plain federated credential, with no
+    # impersonation of its own.
+    assert target._source_credentials._service_account_impersonation_url is None
 
 
 @pytest.mark.parametrize("url", [None, "https://example.test/not-an-sa-url"])

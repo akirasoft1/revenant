@@ -80,7 +80,12 @@ async function defaultAuthClientFactory(keyFile, audience) {
       throw new Error(`${keyFile}: external_account credential file has no usable service_account_impersonation_url `
         + '(expected .../serviceAccounts/<email>:generateAccessToken)');
     }
-    const sourceClient = lib.ExternalAccountClient.fromJSON(info);
+    // One impersonation hop: the source is the plain federated token (the
+    // impersonation settings removed); the target SA is impersonated once.
+    const plain = { ...info };
+    delete plain.service_account_impersonation_url;
+    delete plain.service_account_impersonation;
+    const sourceClient = lib.ExternalAccountClient.fromJSON(plain);
     const impersonated = new lib.Impersonated({
       sourceClient,
       targetPrincipal: match[1],
