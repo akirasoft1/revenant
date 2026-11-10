@@ -29,6 +29,7 @@ model verbatim; transport failures, timeouts, non-JSON replies and token
 problems become `{error: "unavailable", message}`.
 """
 import asyncio
+import json
 import logging
 import re
 import time
@@ -51,7 +52,35 @@ class HangarTokenError(Exception):
     """Could not mint an ID token (missing/bad key, Google unreachable)."""
 
 
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_IMPERSONATION_URL_RE = re.compile(r"/serviceAccounts/([^/:]+):generateAccessToken$")
+
+
 def _default_credentials_factory(key_path: str, audience: str):
+    """ID-token credentials for `audience` from the file at `key_path`.
+
+    The file's `type` picks the flow: a service-account key signs the ID token
+    itself; a federated (`external_account`) credential file is the source for
+    impersonating the caller service account, whose email is parsed from the
+    file's `service_account_impersonation_url`. `include_email` is required --
+    the service rejects a token without the email claim.
+    """
+    with open(key_path, encoding="utf-8") as f:
+        info = json.load(f)
+    if isinstance(info, dict) and info.get("type") == "external_account":
+        import google.auth
+        from google.auth import impersonated_credentials
+        match = _IMPERSONATION_URL_RE.search(str(info.get("service_account_impersonation_url") or ""))
+        if not match:
+            raise ValueError(
+                f"{key_path}: external_account credential file has no usable "
+                "service_account_impersonation_url (expected .../serviceAccounts/<email>:generateAccessToken)")
+        source, _ = google.auth.load_credentials_from_file(key_path, scopes=[_CLOUD_PLATFORM_SCOPE])
+        target = impersonated_credentials.Credentials(
+            source_credentials=source, target_principal=match.group(1),
+            target_scopes=[_CLOUD_PLATFORM_SCOPE])
+        return impersonated_credentials.IDTokenCredentials(
+            target, target_audience=audience, include_email=True)
     from google.oauth2 import service_account
     return service_account.IDTokenCredentials.from_service_account_file(
         key_path, target_audience=audience)

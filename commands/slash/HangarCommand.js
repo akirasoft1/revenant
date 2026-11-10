@@ -213,7 +213,9 @@ class HangarSlashCommand extends BaseSlashCommand {
   }
 
   async _list(interaction, who) {
-    const res = await this.hangarClient.getHangar(who.targetId);
+    // The invoker (trusted interaction plumbing, never an option) is the acting
+    // member: the service shows them their own hidden ships when it is them.
+    const res = await this.hangarClient.getHangar(who.targetId, { actingMember: interaction.user.id });
     if (!res.ok) {
       await this._say(interaction, res.error === 'invalid_request' ? this._failure(res, who) : UNAVAILABLE);
       return;

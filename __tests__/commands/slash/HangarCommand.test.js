@@ -93,7 +93,7 @@ describe('/hangar', () => {
     test('empty hangar for self', async () => {
       const i = fakeInteraction();
       await cmd.execute(i, ctx);
-      expect(client.getHangar).toHaveBeenCalledWith(SELF);
+      expect(client.getHangar).toHaveBeenCalledWith(SELF, { actingMember: SELF });
       expect(replyText(i)).toMatch(/no ships/i);
       expect(replyText(i)).toContain('/hangar add');
       expect(lastReply(i).ephemeral).toBe(true);
@@ -213,7 +213,7 @@ describe('/hangar', () => {
       const i = fakeInteraction({ target: { id: OTHER } });
       client.getHangar.mockResolvedValue({ ok: true, data: { ships: [ship()] } });
       await cmd.execute(i, ctx);
-      expect(client.getHangar).toHaveBeenCalledWith(OTHER);
+      expect(client.getHangar).toHaveBeenCalledWith(OTHER, { actingMember: SELF });
       expect(replyText(i)).toContain(`<@${OTHER}>`);
     });
 
