@@ -652,7 +652,7 @@ class DiscordBot {
       const HangarClient = require('./services/HangarClient');
       const HangarSlashCommand = require('./commands/slash/HangarCommand');
       this.hangarClient = new HangarClient({ apiUrl: config.hangar.apiUrl, saKeyPath: config.hangar.saKeyPath });
-      this.slashCommandHandler.register(new HangarSlashCommand(this.hangarClient, { editorUrl: config.hangar.editorUrl, memberIdentity: this.memberIdentity, speakerNames: this.speakerNames }));
+      this.slashCommandHandler.register(new HangarSlashCommand(this.hangarClient, { editorUrl: config.hangar.editorUrl }));
       logger.info(`Hangar slash command registered (${config.hangar.apiUrl})`);
     }
 

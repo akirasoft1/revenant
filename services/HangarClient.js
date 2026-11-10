@@ -86,6 +86,9 @@ async function defaultAuthClientFactory(keyFile, audience) {
     delete plain.service_account_impersonation_url;
     delete plain.service_account_impersonation;
     const sourceClient = lib.ExternalAccountClient.fromJSON(plain);
+    if (!sourceClient) {
+      throw new Error(`${keyFile}: unsupported external_account credential file`);
+    }
     const impersonated = new lib.Impersonated({
       sourceClient,
       targetPrincipal: match[1],
@@ -148,10 +151,6 @@ class HangarClient {
       actingMember,
       write: true,
     });
-  }
-
-  getPledgeLeaderboard({ timeoutMs } = {}) {
-    return this._request('GET', '/v1/pledges/leaderboard', { timeoutMs });
   }
 
   searchVehicles(q, { limit = 25, timeoutMs } = {}) {

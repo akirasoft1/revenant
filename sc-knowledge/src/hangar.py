@@ -6,9 +6,11 @@ client is driven by a language model's tool calls. So it exposes GETs only --
 no write route is reachable from here, and tests pin that (no write-shaped
 method, no write verb or acting-member header anywhere in this module).
 
-Auth: Cloud Run invoker IAM is on, so EVERY call (even /health) carries a
-Google-signed ID token minted from the mounted service-account key with
-`target_audience` = HANGAR_API_URL. Minting is blocking (google-auth +
+Auth: Cloud Run's invoker IAM check is OFF; the app's own authentication is
+the only gate, and it requires a Google-signed ID token on EVERY call (even
+/health), minted from the mounted credential file (a service-account key or
+a federated external_account config) with `target_audience` = HANGAR_API_URL.
+Minting is blocking (google-auth +
 requests), so it runs in a thread, single-flight, and the token is cached
 until 5 minutes before it expires.
 
@@ -206,10 +208,6 @@ class HangarClient:
     async def get_hangar(self, member_id: str) -> dict:
         """`GET /v1/members/{id}/hangar` -> {member, ships: [Ship]}."""
         return await self._get(f"/v1/members/{member_id}/hangar")
-
-    async def pledge_leaderboard(self) -> dict:
-        """`GET /v1/pledges/leaderboard` -> {entries: [...], caveat}."""
-        return await self._get("/v1/pledges/leaderboard")
 
     async def aclose(self) -> None:
         await self._http.aclose()

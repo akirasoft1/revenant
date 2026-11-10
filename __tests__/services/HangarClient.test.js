@@ -218,19 +218,8 @@ describe('HangarClient', () => {
     expect(res).toMatchObject({ ok: false, error: 'unavailable' });
   });
 
-  test('getPledgeLeaderboard GETs /v1/pledges/leaderboard with no acting member', async () => {
-    fetchImpl.mockResolvedValue(jsonResponse(200, { entries: [], caveat: 'c' }));
-    const res = await make().getPledgeLeaderboard();
-    expect(res).toEqual({ ok: true, data: { entries: [], caveat: 'c' } });
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe(`${API}/v1/pledges/leaderboard`);
-    expect(init.method).toBe('GET');
-    expect(init.headers['X-Acting-Member']).toBeUndefined();
-  });
-
-  test('getPledgeLeaderboard never throws', async () => {
-    fetchImpl.mockRejectedValue(new Error('boom'));
-    expect(await make().getPledgeLeaderboard()).toMatchObject({ ok: false, error: 'unavailable' });
+  test('has no pledge leaderboard method', () => {
+    expect(make().getPledgeLeaderboard).toBeUndefined();
   });
 
   test('not configured -> unavailable without any call', async () => {
@@ -300,6 +289,14 @@ describe('defaultAuthClientFactory', () => {
     });
     expect(await client.getRequestHeaders()).toEqual({ Authorization: `Bearer ${jwt(exp)}` });
     expect(fetchIdToken).toHaveBeenCalledWith(API, { includeEmail: true });
+  });
+
+  test('external_account that ExternalAccountClient.fromJSON rejects (null) fails naming the file', async () => {
+    ExternalAccountClient.fromJSON.mockReturnValue(null);
+    const f = write({ type: 'external_account', service_account_impersonation_url: URL_ });
+    await expect(HangarClient.defaultAuthClientFactory(f, API))
+      .rejects.toThrow(`${f}: unsupported external_account credential file`);
+    expect(Impersonated).not.toHaveBeenCalled();
   });
 
   test('the ID token is cached until 5 minutes before exp, then re-minted', async () => {
