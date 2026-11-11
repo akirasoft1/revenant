@@ -389,11 +389,11 @@ Requires Node.js v22.12.0+ (see Prerequisites). Wake-word detection uses [openWa
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_WEB_SEARCH_ENABLED` | `true` | Attach ADK's native `google_search` tool to the text agent (Gemini-native models only) alongside `run_in_sandbox`, so current/external facts are answered via search instead of sandbox scraping; see `agent-sidecar/CLAUDE.md` "Sandbox disposition and web search" for full details |
+| `AGENT_WEB_SEARCH_ENABLED` | `true` | Attach ADK's native `google_search` tool to the text agent (Gemini-native models only) alongside `run_in_sandbox`, so current/external facts are answered via search instead of sandbox scraping; see `agent-sidecar/AGENTS.md` "Sandbox disposition and web search" for full details |
 
 ### Star Citizen Knowledge Configuration
 
-Backs channel-voice text chat and voice sessions with live Star Citizen data (items, ships/vehicles, factions/missions, trade routes, commodity prices, what a location's shops sell and what's unique to it, and the org's own curated guides) via a dedicated `sc-knowledge` MCP service. Set independently on the agent sidecar (text chat) and the voice sidecar (voice sessions) — see `CLAUDE.md`'s "Star Citizen Knowledge (sc-knowledge)" section for full details.
+Backs channel-voice text chat and voice sessions with live Star Citizen data (items, ships/vehicles, factions/missions, trade routes, commodity prices, what a location's shops sell and what's unique to it, and the org's own curated guides) via a dedicated `sc-knowledge` MCP service. Set independently on the agent sidecar (text chat) and the voice sidecar (voice sessions) — see `docs/agents/star-citizen.md` for full details.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -403,7 +403,7 @@ Backs channel-voice text chat and voice sessions with live Star Citizen data (it
 
 ### Member Hangar Configuration
 
-Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `CLAUDE.md`'s "Member hangar" section, `docs/hangar.md` and `hangar-service/README.md`.
+Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `docs/agents/member-hangar.md`, `docs/hangar.md` and `hangar-service/README.md`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

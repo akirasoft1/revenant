@@ -14,7 +14,7 @@
 //   - Port-forward the voice sidecar:
 //       kubectl port-forward svc/discord-article-bot-voice 50051:50051 -n discord-article-bot &
 //   - The voice sidecar must be running with SC_KNOWLEDGE_ENABLED=true and a
-//     reachable SC_KNOWLEDGE_URL (see CLAUDE.md "Star Citizen Knowledge").
+//     reachable SC_KNOWLEDGE_URL (see docs/agents/star-citizen.md).
 //   - This script only observes whether the ANSWER is correct. It does NOT
 //     itself confirm an sc_* tool was actually invoked (vs. the model
 //     answering from parametric knowledge) -- cross-check the sidecar logs

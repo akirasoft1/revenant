@@ -66,7 +66,7 @@ every call will 421.
 
 `sc_member_hangar` and `sc_member_fit_check` read per-member ship loadouts
 from **hangar-service** (Cloud Run, see `hangar-service/README.md` and the
-"Member hangar" section of the repo `CLAUDE.md`). They are for questions
+"Member hangar" section of `docs/agents/member-hangar.md`). They are for questions
 about a member's OWN ships only; `member_id` is the numeric Discord ID from
 the bot's `[Name · id]` message labels or the "People in this conversation"
 roster ("my" = the labelled speaker). A non-numeric `member_id` returns

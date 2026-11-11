@@ -310,7 +310,7 @@ def _is_session_drop(exc) -> bool:
 def _reconnect_backoff_delay(attempt: int) -> float:
     """Exponential backoff with jitter for retrying a FAILED (re)open of the
     Live session (expired/consumed resumption handle, a transient GEAP 503
-    spike -- see CLAUDE.md's agent-sidecar `_gemini_retry_options` note on
+    spike -- see agent-sidecar/AGENTS.md's `_gemini_retry_options` note on
     this same error class). Shape: 0.5s, 1s, 2s, capped at 4s, +/-30% jitter.
     `attempt` is 0-based (0 -> ~0.5s, 1 -> ~1s, 2 -> ~2s, 3+ -> ~4s).
     """

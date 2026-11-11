@@ -8,13 +8,14 @@ Where to go deeper (each file is the source of truth for its area; this page onl
 
 | Area | Detail lives in |
 |---|---|
+| Agent/contributor rules (tool-neutral; `CLAUDE.md` only imports them) | [AGENTS.md](../AGENTS.md), [docs/agents/](agents/) |
 | Per-feature behaviour | [features.md](../features.md) |
 | Deploy commands, runbook | [kubernetes.md](../kubernetes.md), [k8s/sandbox/README.md](../k8s/sandbox/README.md), [k8s/voice/README.md](../k8s/voice/README.md) |
 | Voice, bot side | [docs/voice.md](voice.md) |
-| Voice, sidecar side | [voice-sidecar/CLAUDE.md](../voice-sidecar/CLAUDE.md) |
-| Agent sidecar internals | [agent-sidecar/CLAUDE.md](../agent-sidecar/CLAUDE.md) |
-| Star Citizen knowledge server | [sc-knowledge/CLAUDE.md](../sc-knowledge/CLAUDE.md) |
-| Member hangar | [docs/hangar.md](hangar.md), [hangar-service/CLAUDE.md](../hangar-service/CLAUDE.md), [hangar-editor/CLAUDE.md](../hangar-editor/CLAUDE.md), [tools/wireframes/CLAUDE.md](../tools/wireframes/CLAUDE.md) |
+| Voice, sidecar side | [voice-sidecar/AGENTS.md](../voice-sidecar/AGENTS.md) |
+| Agent sidecar internals | [agent-sidecar/AGENTS.md](../agent-sidecar/AGENTS.md) |
+| Star Citizen knowledge server | [sc-knowledge/AGENTS.md](../sc-knowledge/AGENTS.md) |
+| Member hangar | [docs/hangar.md](hangar.md), [hangar-service/AGENTS.md](../hangar-service/AGENTS.md), [hangar-editor/AGENTS.md](../hangar-editor/AGENTS.md), [tools/wireframes/AGENTS.md](../tools/wireframes/AGENTS.md) |
 
 ---
 
@@ -282,7 +283,7 @@ sequenceDiagram
 - **Replies name their target.** A reply to a bot message prefixes the current turn with `[Replying to your earlier message: "…"]` so the model can't attach the reply to a newer, unrelated question.
 - **Slow turns are announced too.** A grounded web search can hold one Gemini call for minutes. `/chat` edits its deferred placeholder to a "still working, no need to resend" status after ~30s (updated with elapsed time); mention/reply turns keep the typing indicator alive and add a ⏳ reaction to the user's message after ~30s, removed when the answer posts (`utils/chatProgress.js`).
 - **Degradation is announced, never silent:** an agent RPC failure (OpenAI substitute named), a sidecar turn that ran on the generic `base.txt` (`fallback_occurred`), and a `buildTurnContext` failure each surface a notice.
-- **Agent sidecar tools.** `run_in_sandbox` (gated as a last resort by `TOOL_AVAILABILITY_PREAMBLE`), ADK's plain `google_search`, the sc-knowledge MCP toolset (attached per turn only while a probe says it is healthy), and the three hangar edit tools. Health is a consecutive-failure breaker over real `Chat` outcomes — details in [agent-sidecar/CLAUDE.md](../agent-sidecar/CLAUDE.md).
+- **Agent sidecar tools.** `run_in_sandbox` (gated as a last resort by `TOOL_AVAILABILITY_PREAMBLE`), ADK's plain `google_search`, the sc-knowledge MCP toolset (attached per turn only while a probe says it is healthy), and the three hangar edit tools. Health is a consecutive-failure breaker over real `Chat` outcomes — details in [agent-sidecar/AGENTS.md](../agent-sidecar/AGENTS.md).
 - **Sandbox.** Each `run_in_sandbox` call spawns a Kubernetes Job whose pod is a QEMU/KVM guest (`runtimeClassName: kata-qemu-runtime-rs`), 2 vCPU / 2 GiB / 300 s, public-internet-only egress. Calls whose code targets Star Citizen data hosts are refused before a pod is spawned (`exit_code -4`, `use_sc_tools`).
 
 ---

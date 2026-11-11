@@ -400,7 +400,7 @@ ${context}`;
     // for small-window models — isn't needed; recall volume is already bounded
     // upstream by RecallService's own budget (`maxItems`/`tokenBudget`) and by
     // the `channelContext.promptRecentCount` history cap above. Not DRY debt —
-    // see CLAUDE.md's Agentic Sandbox section for the split rationale.
+    // see docs/agents/sandbox.md for the split rationale.
     return { systemPrompt, memoryBlock: memoryContext || '', historyTurns, currentTurn };
   }
 
