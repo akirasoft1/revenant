@@ -206,6 +206,7 @@ Parallel music generation surface via ElevenLabs' `POST /v1/music` (Compose Musi
 ### Monitoring & Observability
 - **OpenTelemetry Tracing**: Distributed tracing for Dynatrace
 - **OpenLLMetry Integration**: Captures full LLM request/response content in traces via `gen_ai.*` attributes
+- **Agent sidecar GenAI content**: ADK's Gemini calls emit `gen_ai.input.messages` / `gen_ai.output.messages` on `generate_content` spans (both OTel GenAI opt-ins defaulted on by the sidecar; overridable by env)
 - **Token Usage Tracking**: Per-user consumption in MongoDB
 - **Cost Tracking**: Real-time token and cost breakdown
 

@@ -553,11 +553,14 @@ The bot includes OpenTelemetry tracing for Dynatrace integration:
 - Spans for OpenAI API calls with token counts
 - Auto-instrumentation for HTTP and MongoDB
 - **OpenLLMetry GenAI instrumentation**: Captures full request/response content for LLM calls
-  - `gen_ai.prompt.N.content` - Full prompt messages sent to the LLM
-  - `gen_ai.completion.N.content` - Full completion responses
-  - `gen_ai.usage.prompt_tokens` / `gen_ai.usage.completion_tokens` - Token usage
+  - `gen_ai.input.messages` - Full prompt messages sent to the LLM
+  - `gen_ai.output.messages` - Full completion responses
+  - `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` - Token usage
   - `gen_ai.request.model` / `gen_ai.response.model` - Model information
   - Set `TRACELOOP_TRACE_CONTENT=false` to disable content capture for privacy
+  - Streaming Responses API calls are not instrumented by OpenLLMetry yet (no content on those)
+- **Agent sidecar (ADK/Gemini)**: `generate_content <model>` spans carry the same `gen_ai.input.messages` / `gen_ai.output.messages` attributes (defaulted on in `agent-sidecar/src/tracing.py`; set `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT` on the sidecar to turn content off)
+- **Voice sidecar**: no prompt content in spans yet (only `voice.*` session metadata)
 
 ### Health Check Endpoints
 
