@@ -112,7 +112,7 @@ def test_agent_health_breaker_env_overrides(monkeypatch):
 
 # --- hangar chat edits (2026-10-09 hangar-chat-edits spec) -------------------
 
-_HANGAR_URL = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+_HANGAR_URL = "https://hangar.aklabs.io"
 
 
 @pytest.fixture

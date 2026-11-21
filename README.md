@@ -99,9 +99,9 @@ For the system-level overview (software architecture, text chat and voice flows,
 ### Member Hangar (Star Citizen)
 
 - Each member's ships and their component loadouts, stored in `hangar-service` (Cloud Run + Firestore) and managed with `/hangar` or the web editor
-- **Web editor at https://hangar.aklabs.io**: sign in with Discord (members of the org's Discord server only), add/rename/remove ships, fit components slot by slot from only-compatible items (ranked by key stat, with the cheapest shop price), reset to stock, browse other members' hangars, import saved loadouts from spviewer.eu, and import your RSI pledge hangar from HangarXPLOR (pledge name/date, LTI). Source in `hangar-editor/`; served by `hangar-service` behind a GCP load balancer
+- **Web editor at https://hangar.aklabs.io**: sign in with Discord (members of the org's Discord server only), add/rename/remove ships, fit components slot by slot from only-compatible items (ranked by key stat, with the cheapest shop price), reset to stock, browse other members' hangars, import saved loadouts from spviewer.eu, and import your RSI pledge hangar from HangarXPLOR (pledge name/date, LTI). The service and editor live in the private repo `akirasoft1/sc-hangar`
 - **Terminal view** (desktop): an in-game-style ship terminal layout with component images and stats, switchable with the classic table; images come from unofficial Star Citizen fansites
-- **Ship wireframes**: in the Terminal view each ship is a rotatable wireframe with markers at its real hardpoint positions (switchable to the render). Wireframes are built locally from StarBreaker exports with `tools/wireframes` and uploaded by admins at `/admin/models`; the extracted game data is never committed to this repo
+- **Ship wireframes**: in the Terminal view each ship is a rotatable wireframe with markers at its real hardpoint positions (switchable to the render). Wireframes are built from StarBreaker exports by a pipeline in a private repo and uploaded by admins at `/admin/models`; the extracted game data is never committed to this repo
 - Ask in chat or voice: "what's a purchasable upgraded shield for my Harbinger?", "I just looted a Hemera quantum drive, is it a usable upgrade for any of my ships?", "can Micro use it?", "what's on my Connie?"
 - Ship data is looked up only for questions about a member's own ships — never mentioned unprompted
 - **Chat edits (text and voice)**: tell the bot what you did — "I put the Hemera in my Connie", "I just bought a Cutlass Black", "I put my Harbinger's shields back to stock" — and it records it right away and says what changed ("Connie's quantum drive: Bolon → Hemera"). Only your own hangar: the speaker is taken from Discord (the message author, or the current voice speaker), never from what's said. Asking it to update your own hangar ("mark my Connie as having a Hemera") works too; advice questions like "should I…?" never write; if a ship, item or slot is ambiguous the bot asks which
@@ -403,12 +403,12 @@ Backs channel-voice text chat and voice sessions with live Star Citizen data (it
 
 ### Member Hangar Configuration
 
-Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `docs/agents/member-hangar.md`, `docs/hangar.md` and `hangar-service/README.md`.
+Set on the **bot** (for `/hangar`), on **sc-knowledge** (for the `sc_member_hangar` / `sc_member_fit_check` tools), and on the **agent** and **voice** sidecars (for chat edits: `hangar_fit` / `hangar_add_ship` / `hangar_reset`). See `docs/agents/member-hangar.md` and `docs/hangar.md`; the service itself is documented in the private repo `akirasoft1/sc-hangar`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HANGAR_API_URL` | `` | hangar-service URL, also the ID-token audience — must equal the service's `HANGAR_AUDIENCE` exactly (`https://hangar-service-hvmf2jpuca-uc.a.run.app`, no trailing slash). Unset on the bot → `/hangar` is not registered; unset on sc-knowledge → the hangar tools answer "unavailable" |
-| `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | `hangar-api@` service-account key (Secret `hangar-api-sa`) used to mint the ID token |
+| `HANGAR_API_URL` | `` | hangar-service URL, also the ID-token audience — must be exactly `https://hangar.aklabs.io` (no trailing slash), the service's only accepted audience. Unset on the bot → `/hangar` is not registered; unset on sc-knowledge → the hangar tools answer "unavailable" |
+| `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | Caller credential file. Production: the Workload Identity Federation credential file (ConfigMap `hangar-wif-credentials`) that mints the ID token as `hangar-caller@`; a service-account JSON key also works |
 | `HANGAR_EDITS_ENABLED` | `true` when `HANGAR_API_URL` is set | Agent + voice sidecars: chat edits of the speaker's own hangar. `false` turns them off; without `HANGAR_API_URL` they are always off. On the agent sidecar they only attach when `SC_KNOWLEDGE_ENABLED=true` |
 | `HANGAR_EDITOR_URL` | `` | Bot only: web editor URL (`https://hangar.aklabs.io`). When set, `/hangar list` ends with "Edit in the browser: <url>" |
 

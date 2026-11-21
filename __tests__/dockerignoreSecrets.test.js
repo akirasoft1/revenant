@@ -13,7 +13,6 @@ const CONTEXTS = [
   'agent-sidecar/.dockerignore',
   'voice-sidecar/.dockerignore',
   'sc-knowledge/.dockerignore',
-  'hangar-service/Dockerfile.dockerignore',
 ];
 
 const REQUIRED = [

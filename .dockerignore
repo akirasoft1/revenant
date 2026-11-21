@@ -40,11 +40,6 @@ k8s/overlays/deployed/
 agent-sidecar/
 voice-sidecar/
 sc-knowledge/
-# The member-hangar service + web editor ship in their own image (built from the
-# repo root with hangar-service/Dockerfile.dockerignore). Without these lines the
-# bot's `COPY . .` would bake hangar-editor/node_modules and the hangar venv in.
-hangar-service/
-hangar-editor/
 **/venv/
 **/.venv/
 **/__pycache__/
@@ -70,6 +65,8 @@ OrgGuides/
 
 # Extracted game geometry and wireframe bundles: private, never in an image
 # (same rule as .gitignore). tools/ is desktop-only tooling, not part of the bot.
+# The hangar service, editor and wireframe pipeline moved to private repos
+# (akirasoft1/sc-hangar, akirasoft1/sc-gamedata); these patterns stay regardless.
 **/*.swf.gz
 **/*.glb
 tools/

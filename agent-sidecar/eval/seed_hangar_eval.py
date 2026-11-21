@@ -3,9 +3,10 @@
 Standalone on purpose (stdlib + google-auth only, no `src`/`eval` imports) so
 it can be piped into a pod over stdin. Run it in the AGENT sidecar pod -- the
 same place eval_sc.py now runs, because the hangar chat-edit cases need the
-hangar-api@ key in the eval's own process -- which (once the deployed overlay
-mounts Secret `hangar-api-sa` at /var/secrets/hangar/key.json and sets
-HANGAR_API_URL) has Python + google-auth. (The sc-knowledge pod also works
+hangar caller credential in the eval's own process -- the deployed overlay
+mounts it (the WIF credential file at /var/secrets/hangar/key.json, ConfigMap
+`hangar-wif-credentials`, replacing the old Secret `hangar-api-sa`) and sets
+HANGAR_API_URL, and the pod has Python + google-auth. (The sc-knowledge pod also works
 for this standalone script; the bot pod does not: its image is Node-only.)
 
   kubectl exec -i -n discord-article-bot deploy/discord-article-bot-agent -- \

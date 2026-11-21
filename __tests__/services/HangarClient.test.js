@@ -15,7 +15,7 @@ const path = require('path');
 const logger = require('../../logger');
 const HangarClient = require('../../services/HangarClient');
 
-const API = 'https://hangar-service-hvmf2jpuca-uc.a.run.app';
+const API = 'https://hangar.aklabs.io';
 
 function jsonResponse(status, body) {
   return {

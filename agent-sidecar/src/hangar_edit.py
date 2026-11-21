@@ -13,9 +13,11 @@ can only ever touch the speaker's hangar (the ship text then fails to resolve
 there). An empty or non-numeric user_id means we can't tell whose hangar it
 is: every tool refuses with `unknown_speaker` without calling the service.
 
-Auth: hangar-service is a Cloud Run service with invoker IAM on; every call
-carries a Google ID token minted from the `hangar-api@` service-account key
-(`HANGAR_SA_KEY_PATH`) with audience exactly `HANGAR_API_URL`, plus
+Auth: hangar-service (Cloud Run, private repo akirasoft1/sc-hangar) checks
+every call itself; each carries a Google ID token minted from the credential
+file at `HANGAR_SA_KEY_PATH` (in production a Workload Identity Federation
+`external_account` file that impersonates `hangar-caller@`) with audience
+exactly `HANGAR_API_URL`, plus
 `X-Acting-Member: <bound user_id>` -- the service only lets a member write
 their own hangar. Minting is blocking (google-auth), so it runs in a thread,
 single-flight, cached until 5 minutes before expiry (same pattern as

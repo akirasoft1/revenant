@@ -11,7 +11,7 @@ from src.hangar import (HangarClient, HangarError, HangarUnavailable, IdTokenPro
                         build_hangar_client)
 from src.config import load
 
-URL = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+URL = "https://hangar.aklabs.io"
 
 
 class _Clock:

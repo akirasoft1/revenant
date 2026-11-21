@@ -3,8 +3,8 @@
 Assessment only, written 2026-11-14. Nothing has been converted yet. Scope: the Node
 bot (`bot.js`, `services/`, `commands/`, `handlers/`, `utils/`, `config/`,
 `personalities/`, `scripts/`, `logger.js`, `tracing*.js`, `__tests__/`).
-`hangar-editor/` is already TypeScript (Vite + tsc + Vitest) and the Python
-sidecars are out of scope.
+The hangar web editor (already TypeScript) moved to the private repo
+`akirasoft1/sc-hangar`, and the Python sidecars are out of scope.
 
 ## Current state (as of v2.27.0)
 

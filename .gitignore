@@ -61,14 +61,10 @@ OrgGuides/
 .env_*
 .env-*
 
-# Extracted game geometry and wireframe bundles (never commit -- this repo is public)
+# Extracted game geometry and wireframe bundles (never commit -- this repo is public).
+# The wireframe pipeline moved to the private repo akirasoft1/sc-gamedata; keep these anyway.
 *.swf.gz
 *.glb
-tools/wireframes/out/
-# Local tooling for the wireframe pipeline (virtualenv, Python caches)
-tools/.venv/
-tools/.pytest_cache/
-tools/**/__pycache__/
 
 # HangarXPLOR exports hold personal pledge data (never commit)
 shiplist.json

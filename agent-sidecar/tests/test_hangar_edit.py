@@ -19,7 +19,7 @@ from src.hangar_edit import (
 )
 
 AKIRA = "100000000000000001"
-BASE = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+BASE = "https://hangar.aklabs.io"
 
 
 class _Tokens:
