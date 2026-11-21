@@ -7,7 +7,7 @@ nickname fuzzy -> owned model name/token (with community shorthand like
 `ambiguous` with display-label candidates; nothing -> `not_found` with the
 member's owned ships listed.
 
-KEEP IN SYNC with hangar-service/src/ship_resolve.py: ``resolve_ship``,
+KEEP IN SYNC with hangar-service/src/ship_resolve.py (private repo akirasoft1/sc-hangar): ``resolve_ship``,
 ``_labels`` (``ship_labels`` there), ``_tokens``, ``_query_tokens``,
 ``_best_fuzzy``, ``_token_hit``, ``SHIP_SHORTHAND``, ``_LEADING_STOPWORDS``
 and the fuzzy thresholds are duplicated there for chat edits (POST .../fit,
@@ -59,7 +59,8 @@ _ITEM_TIMEOUT_S = 3.0
 _LOOKUP_TIMEOUT_S = 2.0
 
 # Component types hangar-service tracks as slots (its catalog SLOT_TYPES).
-# KEEP IN SYNC with SLOT_TYPES in hangar-service/src/catalog.py: if they drift,
+# KEEP IN SYNC with SLOT_TYPES in hangar-service/src/catalog.py (private repo
+# akirasoft1/sc-hangar): if they drift,
 # fit-check silently reports not_tracked/no_slot for types the hangar does hold.
 # Missiles (ordnance on racks) are not tracked -- a known limitation.
 TRACKED_TYPES = frozenset({"QuantumDrive", "Shield", "PowerPlant", "Cooler", "Radar", "WeaponGun",

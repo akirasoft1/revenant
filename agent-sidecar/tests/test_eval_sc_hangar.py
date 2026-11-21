@@ -346,5 +346,5 @@ def test_seed_script_docs_name_the_agent_pod():
     import eval.seed_hangar_eval as seed_mod
     doc = seed_mod.__doc__
     assert "deploy/discord-article-bot-agent" in doc
-    assert "hangar-api-sa" in doc
+    assert "hangar-wif-credentials" in doc
     assert "Node-only" in doc  # says why not the bot pod

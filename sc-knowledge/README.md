@@ -65,8 +65,8 @@ every call will 421.
 ## Member hangar tools
 
 `sc_member_hangar` and `sc_member_fit_check` read per-member ship loadouts
-from **hangar-service** (Cloud Run, see `hangar-service/README.md` and the
-"Member hangar" section of `docs/agents/member-hangar.md`). They are for questions
+from **hangar-service** (Cloud Run, private repo `akirasoft1/sc-hangar`; the
+client contract is in `docs/agents/member-hangar.md`). They are for questions
 about a member's OWN ships only; `member_id` is the numeric Discord ID from
 the bot's `[Name · id]` message labels or the "People in this conversation"
 roster ("my" = the labelled speaker). A non-numeric `member_id` returns
@@ -75,9 +75,10 @@ it?"); there is no write path here.
 
 - **Read-only client** (`src/hangar.py`): only `GET /v1/members/{id}/hangar`,
   never an `X-Acting-Member` header (a test pins the absence of any write
-  verb). Auth is a Google ID token minted from the `hangar-api@` key at
-  `HANGAR_SA_KEY_PATH` (`service_account.IDTokenCredentials`, audience =
-  `HANGAR_API_URL`), single-flight, cached until 5 minutes before expiry.
+  verb). Auth is a Google ID token (audience = `HANGAR_API_URL`) minted from the
+  credential file at `HANGAR_SA_KEY_PATH`: in production an `external_account`
+  (Workload Identity Federation) file that impersonates `hangar-caller@`, or a
+  service-account key. Single-flight, cached until 5 minutes before expiry.
   Token + request are bounded at 3s; successful bodies are cached 30s per
   member (errors are not).
 - **Deadlines:** each tool has a 5s overall deadline (the voice sidecar
@@ -129,8 +130,8 @@ immediately, so an outage does not cost every caller the full retry budget.
 | `SC_KNOWLEDGE_VERSION` | `dev` | Sent as `User-Agent: revenant-discord-bot/<version>` and `X-Client-Version: revenant-sc-knowledge/<version>`; also the `/healthz` `version` field. Set to the deployed image's git short-SHA. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP gRPC endpoint for traces; unset -> tracing is a no-op. |
 | `SC_ALLOWED_HOSTS` | the in-cluster Service names + loopback, each `:*` | Comma-separated `Host` header allow-list for `/mcp` (`name:*` = any port, otherwise exact match). Anything else gets `421`. |
-| `HANGAR_API_URL` | unset | hangar-service base URL, ALSO the ID-token audience: must equal the service's `HANGAR_AUDIENCE` byte for byte (`https://hangar-service-hvmf2jpuca-uc.a.run.app`); whitespace and a trailing `/` are stripped. Unset → the hangar tools return `unavailable`. |
-| `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | `hangar-api@` service-account key (Secret `hangar-api-sa`). The image runs as uid 1000, so the mount must be readable by it (the default 0644 secret mode works; `defaultMode: 0400` breaks it → `unavailable` + a WARNING naming the path). Rotating the key needs a pod restart. |
+| `HANGAR_API_URL` | unset | hangar-service base URL, ALSO the ID-token audience: must be exactly `https://hangar.aklabs.io`, the service's only accepted audience; whitespace and a trailing `/` are stripped. Unset → the hangar tools return `unavailable`. |
+| `HANGAR_SA_KEY_PATH` | `/var/secrets/hangar/key.json` | Caller credential file: in production the Workload Identity Federation credential file (ConfigMap `hangar-wif-credentials`), or a service-account key. The image runs as uid 1000, so the mount must be readable by it (`defaultMode: 0400` breaks it → `unavailable` + a WARNING naming the path). A credential change needs a pod restart. |
 | `SC_GUIDES_DIR` | `/guides` | Directory of `*.txt` org guides (mounted ConfigMap in-cluster). Missing/empty -> `sc_org_guides` returns `{"sections": [], "note": "no org guides loaded"}`, never an error. |
 
 ## Cache TTLs (seconds)

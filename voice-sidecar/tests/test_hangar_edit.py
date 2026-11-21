@@ -10,7 +10,7 @@ import pytest
 from src import hangar_edit
 from src.hangar_edit import HangarEditClient, IdTokenProvider
 
-URL = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+URL = "https://hangar.aklabs.io"
 
 
 class FakeTokens:

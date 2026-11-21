@@ -88,7 +88,7 @@ def test_control_tools_flag_falsey_spellings(monkeypatch):
         assert cfg.load().control_tools_enabled is True, value
 
 
-HANGAR_URL = "https://hangar-service-hvmf2jpuca-uc.a.run.app"
+HANGAR_URL = "https://hangar.aklabs.io"
 
 
 def _clear_hangar_env(monkeypatch):

@@ -14,7 +14,7 @@ Usage:
 The member-hangar cases read two fake members from the real hangar-service:
 seed them first with eval/seed_hangar_eval.py --seed (and --cleanup after);
 see eval/README.md. The hangar chat-edit cases additionally need
-HANGAR_API_URL + HANGAR_SA_KEY_PATH (the hangar-api@ key) in this process --
+HANGAR_API_URL + HANGAR_SA_KEY_PATH (the hangar caller credential) in this process --
 they really write, and the run resets the fixture itself (seed()) before
 starting and after every edit-case run; pass --no-hangar-edits to skip them.
 """
@@ -258,7 +258,7 @@ async def _run(runs: int, *, hangar_edits: bool = True) -> list[tuple[dict, Agen
         if edit_client is None:
             print("eval_sc: PREFLIGHT FAILED -- hangar edits are not configured (HANGAR_API_URL "
                   "unset or HANGAR_EDITS_ENABLED=false); set HANGAR_API_URL + HANGAR_SA_KEY_PATH "
-                  "(the hangar-api@ key) or pass --no-hangar-edits", file=sys.stderr)
+                  "(the hangar caller credential) or pass --no-hangar-edits", file=sys.stderr)
             sys.exit(2)
         await asyncio.to_thread(reset_hangar_fixture, config)
     records: list[tuple[dict, AgentChatResult]] = []
@@ -347,7 +347,7 @@ def main():
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--min-hit", type=float, default=0.9)
     ap.add_argument("--no-hangar-edits", action="store_true",
-                    help="drop the hangar chat-edit cases (no hangar-api@ key available)")
+                    help="drop the hangar chat-edit cases (no hangar caller credential available)")
     args = ap.parse_args()
 
     records = asyncio.run(_run(args.runs, hangar_edits=not args.no_hangar_edits))

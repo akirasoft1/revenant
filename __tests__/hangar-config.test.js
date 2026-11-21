@@ -23,10 +23,10 @@ describe('hangar config', () => {
   });
 
   it('reads HANGAR_API_URL and HANGAR_SA_KEY_PATH', () => {
-    process.env.HANGAR_API_URL = 'https://hangar-service-hvmf2jpuca-uc.a.run.app';
+    process.env.HANGAR_API_URL = 'https://hangar.aklabs.io';
     process.env.HANGAR_SA_KEY_PATH = '/tmp/k.json';
     const config = require('../config/config');
-    expect(config.hangar.apiUrl).toBe('https://hangar-service-hvmf2jpuca-uc.a.run.app');
+    expect(config.hangar.apiUrl).toBe('https://hangar.aklabs.io');
     expect(config.hangar.saKeyPath).toBe('/tmp/k.json');
   });
 

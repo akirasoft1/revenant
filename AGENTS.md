@@ -163,17 +163,17 @@ This file stays under the 24 KB per-file limit that Antigravity enforces, so the
 |---|---|---|
 | Agent path, `buildTurnContext`, sandbox (Kata), degradation notices | `docs/agents/sandbox.md` | `agent-sidecar/AGENTS.md` |
 | Star Citizen knowledge (sc-knowledge MCP, sandbox avoidance, dispute rule) | `docs/agents/star-citizen.md` | `sc-knowledge/AGENTS.md` |
-| Member hangar (Cloud Run service, editor, wireframes, chat edits) | `docs/agents/member-hangar.md`, `docs/hangar.md` | `hangar-service/AGENTS.md`, `hangar-editor/AGENTS.md`, `tools/wireframes/AGENTS.md` |
+| Member hangar callers (`/hangar`, sc-knowledge tools, chat edits; the service lives in private repo `akirasoft1/sc-hangar`) | `docs/agents/member-hangar.md`, `docs/hangar.md` | — |
 | Voice (bot side + Live sidecar) | `docs/agents/voice-overview.md`, `docs/voice.md` | `voice-sidecar/AGENTS.md`, `services/voice/AGENTS.md` |
 | Member identity registry, `/whois`, speaker labels and roster | `docs/agents/member-identity.md` | — |
 
 **Rules that hold everywhere (short form; the reasons are in the guides):**
-- **HARD RULE — extracted game data never enters the repo or an image.** `.glb` exports, `.swf.gz` bundles, anything derived from them, and HangarXPLOR `shiplist.json` exports stay on the owner's machine and in the private model store. Both Docker contexts carry `**/`-prefixed ignore patterns for them; tests build all geometry in code. Never force-add. Details: `docs/agents/member-hangar.md`.
+- **HARD RULE — extracted game data never enters the repo or an image.** `.glb` exports, `.swf.gz` bundles, anything derived from them, and HangarXPLOR `shiplist.json` exports stay on the owner's machine and in the private model store. The root `.dockerignore` and `.gitignore` carry ignore patterns for them (`**/`-prefixed in Docker). Never add one as a fixture. Never force-add. Details: `docs/agents/member-hangar.md`.
 - **Org guides are PRIVATE.** The PDFs in repo-root `OrgGuides/` are synced to a ConfigMap by `scripts/sync-org-guides.sh`. Never commit, bake into an image, or quote their text (titles included) in any doc. Details: `docs/agents/star-citizen.md`.
 - **Agent sidecar: single-replica `Recreate`, do not scale** (concurrency state is in-process). `AGENT_ENABLED=false` reverts channel-voice to direct OpenAI. The sandbox is a last-resort tool. Never use `GoogleSearchTool(bypass_multi_tools_limit=True)`, which crashes ADK 2.10.
 - **Voice sidecar is `RollingUpdate`**, and its Live model `gemini-3.8-live` serves only in `us-central1` (the agent sidecar stays on `global`). Do NOT `kubectl apply -f k8s/voice/` (placeholder tag); deploy from `k8s/overlays/deployed/`. Restart the voice sidecar after adding or changing an `sc_*` tool.
 - **sc-knowledge:** deploy only from the deployed overlay; an in-cluster `421 Invalid Host header` is the server's `SC_ALLOWED_HOSTS` list, not the NetworkPolicy.
-- **hangar-service runs on Cloud Run, not the cluster** (project `revenant-discord-bot-2`, `us-central1`). Its invoker IAM check is OFF on purpose, so do not re-enable it. The acting member of a chat edit comes from trusted plumbing, never a tool argument. Running `scripts/registerCommands.js` without `HANGAR_API_URL` silently drops `/hangar`.
+- **The hangar service is not in this repo** (private repo `akirasoft1/sc-hangar`, Cloud Run in GCP project `aklabs-sc-hangar`). Callers use `https://hangar.aklabs.io` as both URL and token audience, authenticated by Workload Identity Federation. Contract changes must be made in both repos. The acting member of a chat edit comes from trusted plumbing, never a tool argument. Running `scripts/registerCommands.js` without `HANGAR_API_URL` silently drops `/hangar`.
 - **Images are pinned to a git short SHA or a version, never `:latest`.**
 
 ## AI Models (updated 2026-09-26)

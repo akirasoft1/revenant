@@ -15,7 +15,7 @@ Where to go deeper (each file is the source of truth for its area; this page onl
 | Voice, sidecar side | [voice-sidecar/AGENTS.md](../voice-sidecar/AGENTS.md) |
 | Agent sidecar internals | [agent-sidecar/AGENTS.md](../agent-sidecar/AGENTS.md) |
 | Star Citizen knowledge server | [sc-knowledge/AGENTS.md](../sc-knowledge/AGENTS.md) |
-| Member hangar | [docs/hangar.md](hangar.md), [hangar-service/AGENTS.md](../hangar-service/AGENTS.md), [hangar-editor/AGENTS.md](../hangar-editor/AGENTS.md), [tools/wireframes/AGENTS.md](../tools/wireframes/AGENTS.md) |
+| Member hangar (callers; the service lives in private repo `akirasoft1/sc-hangar`) | [docs/agents/member-hangar.md](agents/member-hangar.md), [docs/hangar.md](hangar.md) |
 
 ---
 
@@ -39,7 +39,7 @@ flowchart LR
 
     subgraph GCP[Google Cloud]
         GEAP[Gemini on GEAP / Vertex<br/>3.8-flash global<br/>3.8-live us-central1]
-        Hangar[hangar-service<br/>Cloud Run + Firestore<br/>hangar.aklabs.io]
+        Hangar[hangar-service<br/>Cloud Run + Firestore<br/>hangar.aklabs.io<br/>private repo sc-hangar]
         GeminiAPI[Gemini consumer API<br/>image, music]
     end
 
@@ -362,39 +362,39 @@ Two services give chat and voice live Star Citizen data: **sc-knowledge** (in-cl
 ```mermaid
 flowchart LR
     subgraph Callers[In-cluster callers]
-        BotH["Bot<br/>/hangar list, add, rename,<br/>remove, leaderboard"]
+        BotH["Bot<br/>/hangar list, add, rename,<br/>remove"]
         AgentH["Agent sidecar<br/>sc_* tools + hangar_* edits<br/>member = ChatRequest.user_id"]
         VoiceH["Voice sidecar<br/>sc_* tools + hangar_* edits<br/>member = SetSpeaker.user_id"]
     end
 
     subgraph SCK[sc-knowledge - FastMCP :8080/mcp]
         GameTools["7 game-data tools<br/>sc_find_item, sc_compare_components,<br/>sc_faction_missions, sc_trade_routes,<br/>sc_commodity_prices, sc_location_shops,<br/>sc_org_guides"]
-        HangarTools["3 hangar tools - read-only<br/>sc_member_hangar, sc_member_fit_check,<br/>sc_pledge_leaderboard"]
+        HangarTools["2 hangar tools - read-only<br/>sc_member_hangar, sc_member_fit_check"]
         Guides[("ConfigMap sc-org-guides<br/>private, hot-reloaded")]
     end
 
-    subgraph CloudRun["GCP revenant-discord-bot-2 - us-central1"]
+    subgraph CloudRun["GCP aklabs-sc-hangar - us-central1 (private repo akirasoft1/sc-hangar)"]
         LB["hangar.aklabs.io<br/>global HTTPS LB → serverless NEG"]
-        HS["hangar-service - FastAPI<br/>/v1 service API (Google ID token)<br/>/api/v1 + /api/auth browser (Discord session)<br/>serves the hangar-editor SPA"]
-        FS[("Firestore<br/>members/*/ships, rsiPledges,<br/>models, vehiclePositions")]
+        HS["hangar-service - FastAPI<br/>/v1 service API (Google ID token via WIF)<br/>/api/v1 + /api/auth browser (Discord session)<br/>serves the hangar-editor SPA"]
+        FS[("Firestore<br/>members/*/ships, orgs, memberships,<br/>models, vehiclePositions")]
         GCS[("Private GCS bucket<br/>.swf.gz wireframe bundles")]
     end
 
     Browser["Member's browser<br/>React SPA: my hangar, members,<br/>ship (Classic / Terminal + wireframe),<br/>import, admin models"]
-    DiscordOAuth["Discord OAuth2<br/>guild-gated login"]
+    DiscordOAuth["Discord OAuth2<br/>org-gated login"]
     UEX["UEX API<br/>prices, trade, vehicles"]
     Wiki["Star Citizen Wiki API<br/>items, vehicles, ports"]
-    Owner["Owner's machine<br/>tools/wireframes<br/>StarBreaker GLB → .swf.gz"]
+    Owner["Wireframe pipeline<br/>private repo akirasoft1/sc-gamedata<br/>StarBreaker GLB → .swf.gz"]
 
     AgentH -->|MCP| SCK
     VoiceH -->|MCP| SCK
     GameTools --> UEX
     GameTools --> Wiki
     GameTools --> Guides
-    HangarTools -->|GET only| HS
-    BotH -->|ID token + X-Acting-Member| HS
-    AgentH -->|edits| HS
-    VoiceH -->|edits| HS
+    BotH -->|ID token + X-Acting-Member| LB
+    AgentH -->|edits| LB
+    VoiceH -->|edits| LB
+    HangarTools -->|GET only| LB
     Browser --> LB --> HS
     Browser -.login.-> DiscordOAuth
     HS --> DiscordOAuth
@@ -419,15 +419,10 @@ flowchart LR
 
 ### Member hangar notes
 
-- **Cloud Run, not the cluster.** `hangar-service` runs in GCP project `revenant-discord-bot-2`, `us-central1`, min-instances 1, image tagged with the git short SHA, Firestore Native as its datastore. The same container serves the API and the built `hangar-editor` SPA (React 18 + Vite + TypeScript, three.js for wireframes) at `https://hangar.aklabs.io` through a global HTTPS load balancer.
-- **Two authentication modes, one service.**
-  - *Service callers* (bot, sc-knowledge, agent sidecar, voice sidecar) present a Google ID token minted from the `hangar-api@` service-account key (Secret `hangar-api-sa`, mounted at `/var/secrets/hangar/key.json`). The audience is exactly `https://hangar-service-hvmf2jpuca-uc.a.run.app`. The acting member travels in `X-Acting-Member`, set by trusted plumbing — never a model tool argument.
-  - *Browsers* log in with Discord OAuth2 (gated to the main guild at login) and get a signed `__Host-hangar_session` cookie; writes also need a matching Origin (CSRF).
-  - Writes require acting member = path member, or an admin ID. Reads of any member are allowed. Cloud Run's invoker IAM check is **off on purpose** — the app's auth is the only gate.
-- **Data model.** A ship stores only the slots changed from stock (`fitted`); stock loadouts come from the Wiki vehicle `ports[]` catalog, with UEX for prices and items the Wiki misses (catalog cached 12 h, stale-while-revalidate).
-- **Imports.** spviewer loadout import (replaces the fitted map), and RSI pledge import via HangarXPLOR (HTF), which also writes the `rsiPledges` ledger behind the pledge leaderboard. Pledge costs are visible to every signed-in member by the owner's choice.
-- **Wireframes.** Ship wireframes with real hardpoint positions come from a local-only pipeline (`tools/wireframes/`: StarBreaker GLB → welded, culled, quantised `.swf.gz`). Bundles are uploaded by an admin, stored in a private GCS bucket, and served only to signed-in members. **Extracted game data never enters this repo or any image** (both Docker contexts ignore `**/*.glb` and `**/*.swf.gz`).
+- **The service is not in this repo.** `hangar-service` (FastAPI + Firestore on Cloud Run, which also serves the React web editor at `https://hangar.aklabs.io` behind a global HTTPS load balancer) lives in the private repo `akirasoft1/sc-hangar`, in GCP project `aklabs-sc-hangar` since the 2026-11-10 cutover. Its internals (data model, catalog and slot rules, orgs and visibility, imports, wireframes) are documented there. The wireframe pipeline lives in the private repo `akirasoft1/sc-gamedata`. This repo holds the four callers.
+- **Service callers** (bot, sc-knowledge, agent sidecar, voice sidecar) present a Google ID token for the exact audience `https://hangar.aklabs.io`, minted through Workload Identity Federation as `hangar-caller@aklabs-sc-hangar` (projected service-account token → STS → `generateIdToken`). That caller is bound to the org cAd, so it sees members who share that org. The acting member travels in `X-Acting-Member`, set by trusted plumbing, never a model tool argument. Details: `docs/agents/member-hangar.md`.
 - **Ship data is tool-called, never injected into prompts.** sc-knowledge's hangar client is read-only; edits go through the sidecars' `hangar_fit` / `hangar_add_ship` / `hangar_reset`, and a `maybe_applied` result is never retried blindly.
+- **Extracted game data never enters this repo or any image.** The root `.gitignore` and `.dockerignore` still ignore `**/*.glb`, `**/*.swf.gz` and `shiplist.json`.
 
 ---
 
@@ -441,8 +436,11 @@ flowchart TB
     Ollama2[Ollama @ 192.168.1.164<br/>home network - disabled]
 
     subgraph GCPP[GCP revenant-discord-bot-2]
-        CR[Cloud Run: hangar-service<br/>+ Firestore, GCS, LB]
         GEAPD[Vertex / GEAP<br/>Gemini 3.8 Flash + 3.8 Live]
+    end
+
+    subgraph GCPH[GCP aklabs-sc-hangar - private repo akirasoft1/sc-hangar]
+        CR[Cloud Run: hangar-service<br/>+ Firestore, GCS, LB<br/>callers auth via WIF]
     end
 
     subgraph Cluster[Kubernetes cluster - Harvester / RKE2]
@@ -483,8 +481,8 @@ flowchart TB
                 PG2[(postgres-mem0 :5432<br/>pgvector:pg16 - unused)]
             end
 
-            CM[ConfigMaps<br/>discord-article-bot-config,<br/>sandbox-config, discord-article-bot-prompt,<br/>sc-org-guides]
-            Sec[Secrets<br/>discord-article-bot-secrets,<br/>google-cloud-service-account,<br/>agent-genai-sa, voice-genai-sa, hangar-api-sa,<br/>sc-knowledge-secrets]
+            CM[ConfigMaps<br/>discord-article-bot-config,<br/>sandbox-config, discord-article-bot-prompt,<br/>sc-org-guides, hangar-wif-credentials]
+            Sec[Secrets<br/>discord-article-bot-secrets,<br/>google-cloud-service-account,<br/>agent-genai-sa, voice-genai-sa,<br/>sc-knowledge-secrets]
             NP[NetworkPolicies<br/>discord-article-bot, agent-egress,<br/>voice-egress, sc-knowledge,<br/>sandbox-egress]
         end
     end
@@ -527,10 +525,10 @@ flowchart TB
 ### Deployment notes
 
 - **`k8s/overlays/deployed/` is the source of truth and is gitignored** (it holds real secrets). Tracked manifests in `k8s/sandbox/`, `k8s/voice/` and `k8s/sc-knowledge/` carry placeholders (e.g. `REPLACE_WITH_SHA`) — never apply them directly. Do not use kustomize; `k8s/base/` and `k8s/overlays/prod/` are out of sync. Infra manifests: `k8s/mem0/qdrant.yaml`, `k8s/mem0/postgres.yaml`, and `mongo.yml` at the repo root.
-- **Image tags.** The bot image is tagged with its npm semver (`2.25.0`); every other image is tagged with a git short SHA, never `:latest`. The agent sidecar and `sandbox-base` move in lockstep (the agent's `SANDBOX_BASE_IMAGE` env and its own image are bumped together). hangar-service images go to Artifact Registry in `revenant-discord-bot-2`.
+- **Image tags.** The bot image is tagged with its npm semver (`2.25.0`); every other image is tagged with a git short SHA, never `:latest`. The agent sidecar and `sandbox-base` move in lockstep (the agent's `SANDBOX_BASE_IMAGE` env and its own image are bumped together).
 - **Strategies.** The bot and the agent sidecar are single-replica `Recreate` (in-process state: the bot's Discord session, the agent's sandbox concurrency budget) — do not scale either. The voice sidecar is `RollingUpdate` so a rollout doesn't drop live calls. sc-knowledge is stateless, `RollingUpdate`.
 - **Gemini runs on GEAP (Vertex).** Each sidecar has its own service account and key: agent `agent-sidecar-genai@` (Secret `agent-genai-sa`), voice `voice-sidecar-genai@` (Secret `voice-genai-sa`), so Vertex traffic is attributable per sidecar. The agent uses location `global`; the voice sidecar must use `us-central1` (the only location serving `gemini-3.8-live` on this project). The bot's image and music generation still use the consumer `GEMINI_API_KEY`.
-- **Hangar credentials.** All four callers (bot, agent, voice, sc-knowledge) mount Secret `hangar-api-sa`, readable by uid 1000. Key rotation needs pod restarts.
+- **Hangar credentials.** All four callers (bot, agent, voice, sc-knowledge) mount ConfigMap `hangar-wif-credentials` at `/var/secrets/hangar` and a projected token at `/var/run/secrets/hangar-wif/token` (Workload Identity Federation; no key exists). The file must be readable by uid 1000. A credential change needs pod restarts.
 - **Sandbox isolation is Kata, not gVisor** (switched 2026-04-29: Harvester's immutable SLE Micro host makes `runsc` impractical). Cold start adds ~1.5–3 s per call. Sandbox pods carry `dynatrace.com/inject: "false"`; without it OneAgent held PID 1 and executions took ~120 s.
 - **NetworkPolicy posture** (default-deny; RFC1918 excluded from every "public" rule):
   - **Bot:** DNS, MongoDB :27017, Qdrant :6333/:6334, agent :50051, voice :50051, Dynatrace :4317/:4318, Linkwarden :3000, Ollama `192.168.1.164:11434`, and public internet on all TCP/UDP ports (Discord voice uses UDP).

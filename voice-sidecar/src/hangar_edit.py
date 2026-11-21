@@ -13,7 +13,8 @@ member) makes these calls unable to touch anyone else's hangar.
 Auth: hangar-service runs with Cloud Run's invoker IAM check OFF
 (`--no-invoker-iam-check`, since the web editor) -- the APP authenticates every
 `/v1` call itself, so every call still carries a Google-signed ID token minted
-from the mounted `hangar-api-sa` key with `target_audience` = HANGAR_API_URL
+from the mounted credential file (in production a Workload Identity Federation
+`external_account` file that impersonates `hangar-caller@`) with audience = HANGAR_API_URL
 exactly (the app checks audience + allow-listed caller email). Minting is blocking (google-auth + requests), so it
 runs in a thread, single-flight, cached until 5 minutes before expiry. (Same
 shape as sc-knowledge/src/hangar.py, which is the read-only side.)

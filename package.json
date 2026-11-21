@@ -55,11 +55,7 @@
   },
   "jest": {
     "testPathIgnorePatterns": [
-      "/node_modules/",
-      "<rootDir>/hangar-editor/"
-    ],
-    "modulePathIgnorePatterns": [
-      "<rootDir>/hangar-editor/"
+      "/node_modules/"
     ]
   }
 }

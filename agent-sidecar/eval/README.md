@@ -244,9 +244,10 @@ control); together with every other non-hangar case they feed
 
 **Seed before, clean up after — in the AGENT pod.** The eval and the seed
 script both run in the agent sidecar pod (`deploy/discord-article-bot-agent`):
-the hangar chat-edit cases need the hangar-api@ key in the eval's own process,
-so the deployed agent overlay must mount Secret `hangar-api-sa` at
-`/var/secrets/hangar/key.json` and set `HANGAR_API_URL`. The agent image
+the hangar chat-edit cases need the hangar caller credential in the eval's own
+process, and the deployed agent overlay mounts it (ConfigMap
+`hangar-wif-credentials` at `/var/secrets/hangar/key.json` plus the projected
+WIF token) and sets `HANGAR_API_URL`. The agent image
 ships only `src/` + `proto/`, so copy `eval/` in for the run (e.g.
 `tar c eval | kubectl exec -i … -- tar x -C /tmp/agent-eval`, then run
 `python -m eval.eval_sc` from a directory where `src` and `eval` are both
@@ -313,10 +314,9 @@ refuses instead of calling a tool at all.
 calls `seed_hangar_eval.seed()` (reset to the fixture) once before the run
 and after every run of an edit case, so each run starts from the same
 hangar and the read-only hangar cases never see a leftover Hemera or Cutlass.
-That needs the hangar-api@ key in the eval's own process: set
-`HANGAR_API_URL=https://hangar-service-hvmf2jpuca-uc.a.run.app` and
-`HANGAR_SA_KEY_PATH` (or run where `/var/secrets/hangar/key.json` is mounted,
-i.e. the agent sidecar pod once it mounts `hangar-api-sa`). A trailing `/` on
+That needs the hangar caller credential in the eval's own process: set
+`HANGAR_API_URL=https://hangar.aklabs.io` and `HANGAR_SA_KEY_PATH` (or run
+where `/var/secrets/hangar/key.json` is mounted, i.e. the agent sidecar pod). A trailing `/` on
 `HANGAR_API_URL` is stripped (config logs a WARNING) and the one stripped form
 is used as both ID-token audience and request base. Without them the
 run fails preflight (exit 2); `--no-hangar-edits` drops the five edit cases.
